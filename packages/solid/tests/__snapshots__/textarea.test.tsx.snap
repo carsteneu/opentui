@@ -1,0 +1,693 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Textarea Layout Tests Basic Textarea Rendering should render simple textarea correctly 1`] = `
+"Hello World                   
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+"
+`;
+
+exports[`Textarea Layout Tests Basic Textarea Rendering should render multiline textarea content 1`] = `
+"Line 1                        
+Line 2                        
+Line 3                        
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+"
+`;
+
+exports[`Textarea Layout Tests Basic Textarea Rendering should render textarea with word wrapping 1`] = `
+"This is a very long           
+line that should              
+wrap to multiple              
+lines when word               
+wrapping is enabled           
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+"
+`;
+
+exports[`Textarea Layout Tests Basic Textarea Rendering should render textarea with placeholder 1`] = `
+"Type something here...                  
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+"
+`;
+
+exports[`Textarea Layout Tests Prompt-like Layout should render textarea in prompt-style layout with indicator 1`] = `
+"┌──────────────────────────────────────────────────────────┐
+│                                                          │
+│ > Hello from the prompt                                  │
+│                                                          │
+│provider model-name                        ctrl+p commands│
+└──────────────────────────────────────────────────────────┘
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+"
+`;
+
+exports[`Textarea Layout Tests Prompt-like Layout should render textarea with long wrapping text in prompt layout 1`] = `
+"┌────────────────────────────────────────────────┐
+│                                                │
+│   This is a very long prompt that will wrap    │
+│ > across multiple lines in the textarea. It    │
+│   should maintain proper layout with the       │
+│   indicator on the left.                       │
+│                                                │
+│openai gpt-4                                    │
+└────────────────────────────────────────────────┘
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Prompt-like Layout should render textarea in shell mode with different indicator 1`] = `
+"┌────────────────────────────────────────────────┐
+│                                                │
+│ ! ls -la                                       │
+│                                                │
+│shell mode                                      │
+└────────────────────────────────────────────────┘
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Reactive Textarea Updates should update textarea content reactively 1`] = `
+"┌────────────────────────────────────────────────┐
+│                                                │
+│ > Initial text                                 │
+│                                                │
+└────────────────────────────────────────────────┘
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Reactive Textarea Updates should update textarea content reactively 2`] = `
+"┌────────────────────────────────────────────────┐
+│                                                │
+│   Updated text that is much longer and should  │
+│ > wrap to multiple lines if word wrapping is   │
+│   enabled                                      │
+│                                                │
+└────────────────────────────────────────────────┘
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Reactive Textarea Updates should handle textarea growth with word wrapping 1`] = `
+"┌──────────────────────────────────────┐
+│>                                     │
+│   Short                              │
+│                                      │
+│Status line below textarea            │
+└──────────────────────────────────────┘
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+"
+`;
+
+exports[`Textarea Layout Tests Reactive Textarea Updates should handle textarea growth with word wrapping 2`] = `
+"┌──────────────────────────────────────┐
+│>                                     │
+│   This is a very long text that will │
+│   definitely wrap to multiple lines  │
+│   and cause the textarea to grow in  │
+│   height. It should push down the    │
+│   status line below it.              │
+│                                      │
+│Status line below textarea            │
+└──────────────────────────────────────┘
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+"
+`;
+
+exports[`Textarea Layout Tests Complex Layouts with Multiple Textareas should render multiple textareas in a column layout 1`] = `
+"┌─Chat─────────────────────────────────────────────────────┐
+│┌────────────────────────────────────────────────────────┐│
+││User  What is the weather like today?                   ││
+│└────────────────────────────────────────────────────────┘│
+│                                                          │
+│┌────────────────────────────────────────────────────────┐│
+││AI    I don't have access to real-time weather data,    ││
+││      but I can help you find that information through  ││
+││      various weather services.                         ││
+│└────────────────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────┘
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+"
+`;
+
+exports[`Textarea Layout Tests Complex Layouts with Multiple Textareas should handle nested boxes with textareas at different positions 1`] = `
+"┌─Layout Test────────────────────────────────────┐     
+│┌──────────────────┐ ┌─────────────────────────┐│     
+││Input 1:          │ │Input 2:                 ││     
+││Left panel content│ │Right panel with longer  ││     
+││                  │ │content that may wrap    ││     
+│└──────────────────┘ └─────────────────────────┘│     
+│                                                │     
+│┌──────────────────────────────────────────────┐│     
+││Bottom input:                                 ││     
+││Bottom panel spanning full width              ││     
+│└──────────────────────────────────────────────┘│     
+└────────────────────────────────────────────────┘     
+                                                       
+                                                       
+                                                       
+                                                       
+                                                       
+                                                       
+                                                       
+                                                       
+                                                       
+                                                       
+                                                       
+                                                       
+                                                       
+"
+`;
+
+exports[`Textarea Layout Tests Text Component Comparison should render text in prompt-style layout with indicator 1`] = `
+"┌──────────────────────────────────────────────────────────┐
+│                                                          │
+│ > Hello from the prompt                                  │
+│                                                          │
+│provider model-name                        ctrl+p commands│
+└──────────────────────────────────────────────────────────┘
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+"
+`;
+
+exports[`Textarea Layout Tests Text Component Comparison should render text with long wrapping content in prompt layout 1`] = `
+"┌────────────────────────────────────────────────┐
+│                                                │
+│   This is a very long prompt that will wrap    │
+│ > across multiple lines in the text component. │
+│    It should maintain proper layout with the   │
+│   indicator on the left.                       │
+│                                                │
+│openai gpt-4                                    │
+└────────────────────────────────────────────────┘
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Text Component Comparison should update text content reactively in prompt layout 1`] = `
+"┌────────────────────────────────────────────────┐
+│                                                │
+│ > Initial text                                 │
+│                                                │
+└────────────────────────────────────────────────┘
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Text Component Comparison should update text content reactively in prompt layout 2`] = `
+"┌────────────────────────────────────────────────┐
+│                                                │
+│   Updated text that is much longer and should  │
+│ > wrap to multiple lines if word wrapping is   │
+│   enabled                                      │
+│                                                │
+└────────────────────────────────────────────────┘
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Text Component Comparison should render text in shell mode with different indicator 1`] = `
+"┌────────────────────────────────────────────────┐
+│                                                │
+│ ! ls -la                                       │
+│                                                │
+│shell mode                                      │
+└────────────────────────────────────────────────┘
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Text Component Comparison should render full prompt layout with text component 1`] = `
+"┌────────────────────────────────────────────────────────────────────┐
+│                                                                    │
+│ > Explain how async/await works in JavaScript and provide some     │
+│   examples                                                         │
+│                                                                    │
+│openai gpt-4-turbo                                   ctrl+p commands│
+└────────────────────────────────────────────────────────────────────┘
+                                                                      
+Tip: Use arrow keys to navigate through history when cursor is at the 
+start                                                                 
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+"
+`;
+
+exports[`Textarea Layout Tests Text Component Comparison should handle very long single-line text in prompt layout 1`] = `
+"┌──────────────────────────────────────┐
+│>                                     │
+│   ThisIsAVeryLongLineWithNoSpacesThat│
+│   WillWrapByCharacterWhenCharWrapping│
+│   IsEnabled                          │
+│                                      │
+└──────────────────────────────────────┘
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+"
+`;
+
+exports[`Textarea Layout Tests Text Component Comparison should render multiline text in prompt layout 1`] = `
+"┌────────────────────────────────────────────────┐
+│                                                │
+│   Line 1: First line of text                   │
+│ > Line 2: Second line of text                  │
+│   Line 3: Third line of text                   │
+│                                                │
+│multiline example                               │
+└────────────────────────────────────────────────┘
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests FlexShrink Regression Tests should not shrink box when width is set via setter 1`] = `
+"┌────────────────────────────┐
+│>    Content that takes up  │
+│     space                  │
+└────────────────────────────┘
+                              
+"
+`;
+
+exports[`Textarea Layout Tests FlexShrink Regression Tests should not shrink box when height is set via setter in column layout 1`] = `
+"┌───────────────────────┐     
+│Header                 │     
+│                       │     
+│                       │     
+│Line1                  │     
+│Line2                  │     
+│Line3                  │     
+│Footer                 │     
+│                       │     
+└───────────────────────┘     
+                              
+                              
+                              
+                              
+                              
+"
+`;
+
+exports[`Textarea Layout Tests Edge Cases and Styling should render textarea with focused colors 1`] = `
+"┌──────────────────────────────────────┐
+│>                                     │
+│   Focused textarea                   │
+│                                      │
+└──────────────────────────────────────┘
+                                        
+                                        
+                                        
+                                        
+                                        
+"
+`;
+
+exports[`Textarea Layout Tests Edge Cases and Styling should render empty textarea with placeholder in prompt layout 1`] = `
+"┌────────────────────────────────────────────────┐
+│                                                │
+│ > Enter your prompt here...                    │
+│                                                │
+│Ready to chat                                   │
+└────────────────────────────────────────────────┘
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Edge Cases and Styling should render textarea with very long single line 1`] = `
+"┌──────────────────────────────────────┐
+│>                                     │
+│   ThisIsAVeryLongLineWithNoSpacesThat│
+│   WillWrapByCharacterWhenCharWrapping│
+│   IsEnabled                          │
+│                                      │
+└──────────────────────────────────────┘
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+"
+`;
+
+exports[`Textarea Layout Tests Edge Cases and Styling should render full prompt-like layout with all components 1`] = `
+"┌────────────────────────────────────────────────────────────────────┐
+│                                                                    │
+│ > Explain how async/await works in JavaScript and provide some     │
+│   examples                                                         │
+│                                                                    │
+│openai gpt-4-turbo                                   ctrl+p commands│
+└────────────────────────────────────────────────────────────────────┘
+                                                                      
+Tip: Use arrow keys to navigate through history when cursor is at the 
+start                                                                 
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+                                                                      
+"
+`;
+
+exports[`Textarea Layout Tests Measure Cache Edge Cases should correctly measure text after content change 1`] = `
+"┌──────────────────────────────────────┐          
+│Short text                            │          
+└──────────────────────────────────────┘          
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Measure Cache Edge Cases should correctly measure text after content change 2`] = `
+"┌──────────────────────────────────────┐          
+│This is a much longer text that will  │          
+│definitely wrap to multiple lines     │          
+│when rendered                         │          
+└──────────────────────────────────────┘          
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Measure Cache Edge Cases should handle rapid content updates correctly 1`] = `
+"┌────────────────────────────┐          
+│Update 4: some text here    │          
+└────────────────────────────┘          
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+"
+`;
+
+exports[`Textarea Layout Tests Measure Cache Edge Cases should handle width changes with cached measures 1`] = `
+"┌────────────────────────────┐                              
+│Content that will wrap      │                              
+│differently at different    │                              
+│widths                      │                              
+└────────────────────────────┘                              
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+"
+`;
+
+exports[`Textarea Layout Tests Measure Cache Edge Cases should handle width changes with cached measures 2`] = `
+"┌────────────────────────────────────────────────┐          
+│Content that will wrap differently at different │          
+│widths                                          │          
+└────────────────────────────────────────────────┘          
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+"
+`;
+
+exports[`Textarea Layout Tests Measure Cache Edge Cases should handle width changes with cached measures 3`] = `
+"┌──────────────────┐                                        
+│Content that will │                                        
+│wrap differently  │                                        
+│at different      │                                        
+│widths            │                                        
+└──────────────────┘                                        
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+"
+`;
+
+exports[`Textarea Layout Tests Measure Cache Edge Cases should handle empty to non-empty content transition 1`] = `
+"┌──────────────────────────────────────┐          
+│                                      │          
+└──────────────────────────────────────┘          
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Measure Cache Edge Cases should handle empty to non-empty content transition 2`] = `
+"┌──────────────────────────────────────┐          
+│Now with content                      │          
+└──────────────────────────────────────┘          
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Measure Cache Edge Cases should handle empty to non-empty content transition 3`] = `
+"┌──────────────────────────────────────┐          
+│                                      │          
+└──────────────────────────────────────┘          
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+                                                  
+"
+`;
+
+exports[`Textarea Layout Tests Measure Cache Edge Cases should correctly measure multiline content with unicode 1`] = `
+"┌────────────────────────────┐          
+│Hello 世界                  │          
+│こんにちは                  │          
+│🌟 Emoji 🚀                 │          
+└────────────────────────────┘          
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+"
+`;
