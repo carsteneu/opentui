@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Run opencode
         uses: sst/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a # latest
