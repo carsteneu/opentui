@@ -68,6 +68,7 @@ jobs:
           cd ../solid && bun run build
           cd ../react && bun run build
           cd ../keymap && bun run build
+          cd ../ssh && bun run build
 
       - name: Run packed Node smoke tests
         run: |
@@ -76,6 +77,8 @@ jobs:
           cd ../solid
           bun run test:dist --skip-build
           cd ../keymap
+          bun run test:dist --skip-build
+          cd ../ssh
           bun run test:dist --skip-build
 
       - name: Publish packages
