@@ -1361,6 +1361,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public addToHitGrid(x: number, y: number, width: number, height: number, id: number) {
+    if (!this._useMouse) return
     if (id !== this.capturedRenderable?.num) {
       this.lib.addToHitGrid(this.rendererPtr, x, y, width, height, id)
     }
@@ -1647,6 +1648,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     if (useMouse) {
       this.enableMouse()
+      this.requestRender()
     } else {
       this.disableMouse()
     }
