@@ -777,6 +777,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _controlState: RendererControlState = RendererControlState.IDLE
 
   private frameCallbacks: ((deltaTime: number) => Promise<void>)[] = []
+
+  // Partial-render fast path. Renderables that opted in via
+  // setPartialEligible(true) land here when they requestRender(). The next
+  // loop() may draw only these into the persistent buffer and skip the full
+  // root tree walk, provided no guard fires (layout dirty, other dirty
+  // renderables, console output pending, split-footer active, resize).
+  private partialRequests: Set<Renderable> = new Set()
+  private partialFramePending: boolean = false
   private renderStats: {
     frameCount: number
     fps: number
@@ -1453,7 +1461,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private reportNativeRenderFailure(): "failed" {
-    console.error("[CliRenderer] Native frame render failed; waiting for the next render request to force repaint")
+    // Frame bytes were dropped (see renderer-output.zig endFrame). Cells emitted
+    // during the diff pass were already synced into currentRenderBuffer, so the
+    // buffer now claims content the terminal never received. Only a forced full
+    // repaint repairs that desync — arm it here; the loop schedules the retry.
+    this.forceFullRepaintRequested = true
+    console.error("[CliRenderer] Native frame render failed; forcing a full repaint on the next frame")
     return "failed"
   }
 
@@ -1484,6 +1497,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
+    // A pending partial frame is superseded by any full-render request.
+    // Drop the partial queue so the next loop() runs a normal full frame.
+    if (this.partialFramePending) {
+      this.partialFramePending = false
+      this.partialRequests.clear()
+    }
+
     // A skipped feed-backed frame already owns the next scheduling attempt through
     // feed.idle(). Coalesce normal invalidations into that retry so split-footer
     // output and UI updates cannot start competing render passes while the feed is busy.
@@ -1504,6 +1524,68 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     // NOTE: Using a frame callback that causes a re-render while already rendering
     // leads to a continuous loop of renders.
+    if (this.rendering) {
+      this.immediateRerenderRequested = true
+      return
+    }
+
+    if (!this.updateScheduled && !this.renderTimeout) {
+      this.updateScheduled = true
+      const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
+      const elapsed = this.getElapsedMs(now, this.lastTime)
+      const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
+
+      if (delay === 0) {
+        process.nextTick(() => this.activateFrame())
+        return
+      }
+
+      this.clock.setTimeout(() => this.activateFrame(), delay)
+    }
+  }
+
+  /**
+   * Request a partial render frame for the given renderable. The next loop()
+   * may draw only this renderable into the persistent frame buffer and skip
+   * the full root tree walk, provided all safety guards hold. If any other
+   * renderable also requests a render this frame (partial or full), or the
+   * layout is dirty, or console output is pending, or split-footer mode is
+   * active, the frame upgrades to a normal full render.
+   *
+   * Additive API: no effect unless a renderable opts in via
+   * setPartialEligible(true). Coalesces multiple requests from the same
+   * renderable into one entry.
+   */
+  public requestPartialRender(renderable: Renderable) {
+    if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED) {
+      return
+    }
+
+    if (renderable.isDestroyed) {
+      return
+    }
+
+    this.partialRequests.add(renderable)
+    this.partialFramePending = true
+
+    // Schedule the frame using the same path as requestRender() but without
+    // clearing the partial queue. We bypass requestRender() to avoid the
+    // upgrade-on-touch logic, then mirror its scheduling rules.
+    if (this.feedIdleRenderScheduled) {
+      return
+    }
+
+    if (this._isRunning) {
+      if (!this.rendering && !this.renderTimeout && !this.ordinaryFrameWaitingForFeed) {
+        this.scheduleRenderTimer()
+      }
+      return
+    }
+
+    if (this.ordinaryFrameWaitingForFeed) {
+      return
+    }
+
     if (this.rendering) {
       this.immediateRerenderRequested = true
       return
@@ -4413,10 +4495,24 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const end = performance.now()
       this.renderStats.frameCallbackTime = end - start
 
-      this.root.render(this.nextRenderBuffer, deltaTime)
+      // Partial-render fast path: when the only invalidation since the last
+      // frame is from renderables that opted into the partial path, skip the
+      // full root tree walk and redraw just those renderables into the
+      // persistent buffer. The native diff then emits only the changed cells.
+      // Any guard failure upgrades to a normal full frame.
+      let didPartial = false
+      if (this.partialFramePending && this.canPartialRender()) {
+        didPartial = this.renderPartialFrame(deltaTime)
+      }
+      this.partialFramePending = false
+      this.partialRequests.clear()
 
-      for (const postProcessFn of this.postProcessFns) {
-        postProcessFn(this.nextRenderBuffer, deltaTime)
+      if (!didPartial) {
+        this.root.render(this.nextRenderBuffer, deltaTime)
+
+        for (const postProcessFn of this.postProcessFns) {
+          postProcessFn(this.nextRenderBuffer, deltaTime)
+        }
       }
 
       this._console.renderToBuffer(this.nextRenderBuffer)
@@ -4493,6 +4589,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         } else if (nativeStatus === "failed") {
           this.immediateRerenderRequested = false
           this.renderTimeout = null
+          // A failed frame armed forceFullRepaintRequested; without a scheduled
+          // retry the repaint would wait for an unrelated render request.
+          this.scheduleRenderTimer()
         }
       }
     } finally {
@@ -4507,6 +4606,102 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   public intermediateRender(): void {
     this.immediateRerenderRequested = true
     this.loop()
+  }
+
+  /**
+   * Guard for the partial-render fast path. Returns true only when every
+   * safety condition holds. Any failure upgrades the frame to a full render.
+   *
+   * Conditions:
+   *  - At least one partial-eligible renderable is pending
+   *  - All pending requests are alive (not destroyed mid-flight)
+   *  - Layout tree is not dirty (yoga would need a relayout pass)
+   *  - No split-footer / capture-stdout mode (different buffer pipeline)
+   *  - No pending force-full-repaint latch
+   *  - Console overlay is not visible (new console output must be composited)
+   *  - No other dirty renderables exist outside the partial set
+   *
+   * The "no other dirty renderables" check is what makes this safe: if any
+   * renderable outside the partial set is dirty, we MUST walk the full tree
+   * to render it, so the partial path buys nothing and risks missing updates.
+   */
+  private canPartialRender(): boolean {
+    if (this.partialRequests.size === 0) return false
+    if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") return false
+    if (this.forceFullRepaintRequested) return false
+    if (this._console.visible) return false
+    if (this.root.getLayoutNode().isDirty()) return false
+
+    // Verify all partial requests are still alive and would actually be
+    // drawn by a full frame. A culled/invisible pending renderable must not
+    // be drawn by the partial path (a full render would skip it).
+    for (const renderable of this.partialRequests) {
+      if (renderable.isDestroyed) return false
+      if (!renderable.isInRenderPath()) return false
+    }
+
+    // Verify no OTHER renderable is dirty. We check the root's subtree.
+    // The partial-eligible renderable itself is expected to be dirty (it
+    // just called requestRender), so we allow exactly the pending set.
+    // Any exception in the walk must degrade to a full frame, never kill
+    // the render loop.
+    try {
+      if (this.findDirtyRenderableOutside(this.partialRequests)) return false
+    } catch {
+      return false
+    }
+    return true
+  }
+
+  /**
+   * Walk the live renderable tree and return true if any renderable that is
+   * NOT in `allowedDirty` is currently dirty. Used by the partial path to
+   * detect when other UI elements need a full frame.
+   */
+  private hasDirtyRenderablesOutside(allowedDirty: Set<Renderable>): boolean {
+    return this.findDirtyRenderableOutside(allowedDirty) !== null
+  }
+
+  private findDirtyRenderableOutside(allowedDirty: Set<Renderable>): Renderable | null {
+    // Mirror the render() traversal (visibility + viewport culling) so that
+    // permanently-dirty culled renderables cannot block the partial path; a
+    // full frame would not draw them either. Root's own dirty flag is ignored,
+    // matching the previous whole-tree walk.
+    return this.root.findDirtyInRenderPath(allowedDirty, true)
+  }
+
+  /**
+   * Execute a partial render frame. Draws only the pending partial-eligible
+   * renderables into the persistent nextRenderBuffer, bypassing the full root
+   * tree walk. The console overlay and post-process hooks are skipped (the
+   * caller's guards already ruled out console visibility). Returns true if
+   * the partial path completed, false if it bailed out (caller does a full
+   * frame).
+   *
+   * Safety: this is only called after canPartialRender() returned true, so
+   * the buffer already contains the last full-frame output for every other
+   * cell. The spinner overdraws its own cells; the native diff emits only
+   * those changed cells to the terminal.
+   */
+  private renderPartialFrame(deltaTime: number): boolean {
+    // Clear hit-grid scissor rects to match the full-frame contract; the
+    // next full frame re-establishes them. Partial frames do not push
+    // scissor rects because they skip the render-list walk.
+    this.clearHitGridScissorRects()
+
+    for (const renderable of this.partialRequests) {
+      if (renderable.isDestroyed) continue
+      // Renderable.render() runs renderBefore/renderSelf/renderAfter, updates
+      // the hit grid, and calls markClean(). It draws into nextRenderBuffer
+      // at the renderable's cached absolute screen position.
+      try {
+        renderable.render(this.nextRenderBuffer, deltaTime)
+      } catch (error) {
+        console.error("Error in partial render callback:", error)
+        return false
+      }
+    }
+    return true
   }
 
   private renderNative(): "rendered" | "retryable-skip" | "failed" | "blocked" | "backpressured" {

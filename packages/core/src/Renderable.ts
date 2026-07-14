@@ -140,6 +140,10 @@ export abstract class BaseRenderable extends EventEmitter {
   protected _id: string
   public readonly num: number
   protected _dirty: boolean = false
+  // Opt-in flag for the partial-render fast path. When true, requestRender()
+  // routes through ctx.requestPartialRender (if available) so the renderer can
+  // draw only this renderable instead of walking the full tree. Defaults false.
+  protected _partialEligible: boolean = false
   public parent: BaseRenderable | null = null
   protected _visible: boolean = true
 
@@ -202,6 +206,22 @@ interface LayoutGenerationContext extends RenderContext {
   __otuiRenderListRevision?: number
 }
 
+// Transient per-build render-list collection state. Builds are synchronous and
+// never nested, so module scope is safe and avoids per-node context lookups.
+let activeUpdatables: Renderable[] | null = null
+let activeRenderListReusable = true
+
+function beginRenderListCollection(updatables: Renderable[]): void {
+  activeUpdatables = updatables
+  activeRenderListReusable = true
+}
+
+function endRenderListCollection(): boolean {
+  const reusable = activeRenderListReusable
+  activeUpdatables = null
+  return reusable
+}
+
 function getLayoutGeneration(ctx: RenderContext): number {
   return (ctx as LayoutGenerationContext).__otuiLayoutGeneration ?? 0
 }
@@ -222,10 +242,18 @@ function bumpRenderListRevision(ctx: RenderContext): void {
   generationContext.__otuiRenderListRevision = getRenderListRevision(ctx) + 1
 }
 
+// Monotonic id for RootRenderable's per-frame update pass; lets runFrameUpdate
+// dedupe the pass-driven and build-walk-driven onUpdate invocations.
+let updatePassId = 0
+
 export abstract class Renderable extends BaseRenderable {
   static renderablesByNumber: Map<number, Renderable> = new Map()
 
-  protected _isDestroyed: boolean = false
+  // Public direct-access field: the isDestroyed getter shows up as a
+  // non-inlined megamorphic call in per-frame hot loops (6.4% self in
+  // streaming profiles). Hot loops read the field directly; external
+  // consumers keep using the getter.
+  public _isDestroyed: boolean = false
   protected _ctx: RenderContext
   protected _translateX: number = 0
   protected _translateY: number = 0
@@ -310,6 +338,13 @@ export abstract class Renderable extends BaseRenderable {
     this._live = options.live ?? false
     this._liveCount = this._live && this._visible ? 1 : 0
     this._opacity = options.opacity !== undefined ? Math.max(0, Math.min(1, options.opacity)) : 1.0
+
+    // Cached at construction: every term is class-static (prototype identity
+    // or constant-returning hooks), so per-frame checks reduce to field reads.
+    this._needsFrameUpdate = this.onUpdate !== Renderable.prototype.onUpdate
+    this._reuseScissorOk =
+      this.getScissorRect === Renderable.prototype.getScissorRect || this.isScissorRectReusable()
+    this._reuseFilterOk = !this._hasVisibleChildFilter() || this.isVisibleChildFilterReusable()
 
     this.yogaNode = Yoga.Node.createForOpenTUI()
     this.yogaNode.setDisplay(this._visible ? Display.Flex : Display.None)
@@ -511,7 +546,23 @@ export abstract class Renderable extends BaseRenderable {
 
   public requestRender() {
     this.markDirty()
-    this._ctx.requestRender()
+    if (this._partialEligible && this._ctx.requestPartialRender) {
+      this._ctx.requestPartialRender(this)
+    } else {
+      this._ctx.requestRender()
+    }
+  }
+
+  /**
+   * Opt this renderable into (or out of) the partial-render fast path. When
+   * enabled and the render context supports it, subsequent requestRender()
+   * calls from this renderable request a partial frame instead of a full one.
+   * The renderer may still upgrade to a full frame when safety guards fail
+   * (layout dirty, other renderables dirty, console output pending, etc).
+   * Off by default — no behavior change unless explicitly enabled.
+   */
+  public setPartialEligible(on: boolean): void {
+    this._partialEligible = on
   }
 
   public get translateX(): number {
@@ -763,6 +814,7 @@ export abstract class Renderable extends BaseRenderable {
     if (this._overflow !== "visible") {
       node.setOverflow(parseOverflow(this._overflow))
     }
+    this.recomputeRenderCommandReusable()
 
     // TODO: flatten position properties internally as well
     const hasPositionProps =
@@ -856,6 +908,7 @@ export abstract class Renderable extends BaseRenderable {
     if (!isOverflowType(overflow) || this._overflow === overflow) return
 
     this._overflow = overflow
+    this.recomputeRenderCommandReusable()
     this.yogaNode.setOverflow(parseOverflow(overflow))
     bumpRenderListRevision(this._ctx)
     this.requestRender()
@@ -1382,7 +1435,7 @@ export abstract class Renderable extends BaseRenderable {
   public updateLayout(deltaTime: number, renderList: RenderCommand[] = []): void {
     if (!this.visible) return
 
-    this.onUpdate(deltaTime)
+    if (this._needsFrameUpdate) this.runFrameUpdate(deltaTime)
 
     // If destroyed during onUpdate, don't add to render list
     if (this._isDestroyed) return
@@ -1400,7 +1453,7 @@ export abstract class Renderable extends BaseRenderable {
     // This ensures their positions are current when culling happens
     if (this._shouldUpdateBefore.size > 0) {
       for (const child of this._shouldUpdateBefore) {
-        if (!child.isDestroyed) {
+        if (!child._isDestroyed) {
           child.updateFromLayout()
         }
       }
@@ -1417,6 +1470,10 @@ export abstract class Renderable extends BaseRenderable {
     }
 
     renderList.push({ action: "render", renderable: this })
+    if (activeUpdatables !== null) {
+      if (this._needsFrameUpdate) activeUpdatables.push(this)
+      if (activeRenderListReusable && !this._renderCommandReusable) activeRenderListReusable = false
+    }
 
     this.ensureZIndexSorted()
 
@@ -1445,7 +1502,7 @@ export abstract class Renderable extends BaseRenderable {
       // and drops content that shifted this frame. The per-frame guard in
       // updateFromLayout keeps this at one FFI call per child per frame.
       for (const child of this._childrenInZIndexOrder) {
-        if (child.isDestroyed) continue
+        if (child._isDestroyed) continue
         child.updateFromLayout()
       }
       const visibleChildren = this._getVisibleChildren()
@@ -1505,12 +1562,97 @@ export abstract class Renderable extends BaseRenderable {
     return this._childrenInZIndexOrder.map((child) => child.num)
   }
 
+  /**
+   * Find a dirty renderable in the RENDER PATH of this subtree that is not in
+   * `allowed`. Mirrors the render() traversal: invisible subtrees are skipped
+   * entirely, and renderables with a visible-child filter (viewport culling)
+   * only descend into their visible children. Culled renderables can stay
+   * dirty indefinitely (markClean only runs when they actually render), but a
+   * full frame would not draw them either, so they must not block the partial
+   * render fast path. `skipSelfDirty` lets the renderer exclude the root's own
+   * dirty flag, matching the previous whole-tree walk semantics.
+   */
+  /**
+   * True when this renderable would actually be drawn by a full render pass:
+   * itself visible, every ancestor visible, and not culled by any ancestor's
+   * visible-child filter. Used by the partial-render path to avoid drawing
+   * renderables a full frame would skip.
+   */
+  public isInRenderPath(): boolean {
+    if (!this.visible) return false
+    let node: Renderable = this
+    let parent = this.parent
+    while (parent) {
+      if (!(parent instanceof Renderable)) return false
+      if (!parent.visible) return false
+      if (parent._hasVisibleChildFilter() && !parent._getVisibleChildren().includes(node.num)) return false
+      node = parent
+      parent = parent.parent
+    }
+    return true
+  }
+
+  public findDirtyInRenderPath(allowed: ReadonlySet<Renderable>, skipSelfDirty: boolean = false): Renderable | null {
+    if (!this.visible) return null
+    if (!skipSelfDirty && this._dirty && !allowed.has(this)) return this
+    if (this._hasVisibleChildFilter()) {
+      const visibleChildSet = new Set(this._getVisibleChildren())
+      for (const child of this._childrenInZIndexOrder) {
+        if (!(child instanceof Renderable)) continue
+        if (!visibleChildSet.has(child.num)) continue
+        const found = child.findDirtyInRenderPath(allowed)
+        if (found) return found
+      }
+    } else {
+      for (const child of this._childrenInZIndexOrder) {
+        if (!(child instanceof Renderable)) continue
+        const found = child.findDirtyInRenderPath(allowed)
+        if (found) return found
+      }
+    }
+    return null
+  }
+
   public canReuseRenderCommandList(): boolean {
-    return (
-      this.onUpdate === Renderable.prototype.onUpdate &&
-      (this._overflow === "visible" || this.getScissorRect === Renderable.prototype.getScissorRect) &&
-      !this._hasVisibleChildFilter()
-    )
+    // A custom onUpdate does not block reuse: per-frame updates run through
+    // RootRenderable's updatables pass, and list-affecting mutations bump the
+    // layout/revision counters that gate reuse.
+    return this._renderCommandReusable
+  }
+
+  private recomputeRenderCommandReusable(): void {
+    this._renderCommandReusable = (this._overflow === "visible" || this._reuseScissorOk) && this._reuseFilterOk
+  }
+
+  // A visible-child filter normally forces a per-frame render-list rebuild.
+  // Subclasses whose filter reads only counter-tracked state (layout
+  // generation, render-list revision) can override this to opt back into reuse.
+  protected isVisibleChildFilterReusable(): boolean {
+    return false
+  }
+
+  // Same opt-in as above for custom getScissorRect implementations whose
+  // result is derived purely from counter-tracked state.
+  protected isScissorRectReusable(): boolean {
+    return false
+  }
+
+  private _lastOnUpdatePass = -1
+  private _needsFrameUpdate = false
+  private _reuseScissorOk = false
+  private _reuseFilterOk = false
+  private _renderCommandReusable = true
+
+  public get needsFrameUpdate(): boolean {
+    return this._needsFrameUpdate
+  }
+
+  public runFrameUpdate(deltaTime: number): void {
+    // Deduplicates the two call paths (RootRenderable's updatables pass and
+    // the render-list build walk) so onUpdate runs at most once per frame.
+    if (this._lastOnUpdatePass === updatePassId) return
+    this._lastOnUpdatePass = updatePassId
+    this.onUpdate(deltaTime)
   }
 
   protected onUpdate(deltaTime: number): void {
@@ -1742,6 +1884,7 @@ export class RootRenderable extends Renderable {
   private appliedLayoutGeneration: number = -1
   private appliedRenderListRevision: number = -1
   private renderListReusable: boolean = false
+  private updatables: Renderable[] = []
 
   constructor(ctx: RenderContext) {
     super(ctx, {
@@ -1770,7 +1913,7 @@ export class RootRenderable extends Renderable {
 
     // 0. Run lifecycle pass
     for (const renderable of this._ctx.getLifecyclePasses()) {
-      if (!renderable.isDestroyed) {
+      if (!renderable._isDestroyed) {
         renderable.onLifecyclePass?.call(renderable)
       }
     }
@@ -1789,6 +1932,16 @@ export class RootRenderable extends Renderable {
       this.syncExternalLayoutGeneration()
     }
 
+    // Run per-frame update callbacks decoupled from the render-list build so
+    // a reusable list does not silence onUpdate; mutations made here go
+    // through setters that bump the counters checked below.
+    updatePassId++
+    for (const updatable of this.updatables) {
+      if (!updatable._isDestroyed && updatable.visible) {
+        updatable.runFrameUpdate(deltaTime)
+      }
+    }
+
     // 2. Update layout throughout the tree and collect render list
     const layoutGeneration = getLayoutGeneration(this._ctx)
     const renderListRevision = getRenderListRevision(this._ctx)
@@ -1798,11 +1951,13 @@ export class RootRenderable extends Renderable {
       this.appliedRenderListRevision === renderListRevision
 
     if (!canReuseRenderList) {
+      this.updatables.length = 0
+      beginRenderListCollection(this.updatables)
       this.renderList.length = 0
       super.updateLayout(deltaTime, this.renderList)
       this.appliedLayoutGeneration = layoutGeneration
       this.appliedRenderListRevision = getRenderListRevision(this._ctx)
-      this.renderListReusable = this.canReuseCurrentRenderList()
+      this.renderListReusable = this._liveCount === 0 && endRenderListCollection()
     }
 
     // 3. Render all collected renderables
@@ -1812,7 +1967,7 @@ export class RootRenderable extends Renderable {
       switch (command.action) {
         case "render":
           // Skip if renderable was destroyed during a previous render callback
-          if (!command.renderable.isDestroyed) {
+          if (!command.renderable._isDestroyed) {
             command.renderable.render(buffer, deltaTime)
           }
           break
@@ -1856,17 +2011,6 @@ export class RootRenderable extends Renderable {
     if (!this.yogaNode.hasNewLayout()) return
     bumpLayoutGeneration(this._ctx)
     this.yogaNode.markLayoutSeen()
-  }
-
-  private canReuseCurrentRenderList(): boolean {
-    if (this._liveCount > 0) return false
-
-    for (const command of this.renderList) {
-      if (command.action !== "render") continue
-      if (!command.renderable.canReuseRenderCommandList()) return false
-    }
-
-    return true
   }
 
   public resize(width: number, height: number): void {
