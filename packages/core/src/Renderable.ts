@@ -1562,6 +1562,57 @@ export abstract class Renderable extends BaseRenderable {
     return this._childrenInZIndexOrder.map((child) => child.num)
   }
 
+  /**
+   * Find a dirty renderable in the RENDER PATH of this subtree that is not in
+   * `allowed`. Mirrors the render() traversal: invisible subtrees are skipped
+   * entirely, and renderables with a visible-child filter (viewport culling)
+   * only descend into their visible children. Culled renderables can stay
+   * dirty indefinitely (markClean only runs when they actually render), but a
+   * full frame would not draw them either, so they must not block the partial
+   * render fast path. `skipSelfDirty` lets the renderer exclude the root's own
+   * dirty flag, matching the previous whole-tree walk semantics.
+   */
+  /**
+   * True when this renderable would actually be drawn by a full render pass:
+   * itself visible, every ancestor visible, and not culled by any ancestor's
+   * visible-child filter. Used by the partial-render path to avoid drawing
+   * renderables a full frame would skip.
+   */
+  public isInRenderPath(): boolean {
+    if (!this.visible) return false
+    let node: Renderable = this
+    let parent = this.parent
+    while (parent) {
+      if (!(parent instanceof Renderable)) return false
+      if (!parent.visible) return false
+      if (parent._hasVisibleChildFilter() && !parent._getVisibleChildren().includes(node.num)) return false
+      node = parent
+      parent = parent.parent
+    }
+    return true
+  }
+
+  public findDirtyInRenderPath(allowed: ReadonlySet<Renderable>, skipSelfDirty: boolean = false): Renderable | null {
+    if (!this.visible) return null
+    if (!skipSelfDirty && this._dirty && !allowed.has(this)) return this
+    if (this._hasVisibleChildFilter()) {
+      const visibleChildSet = new Set(this._getVisibleChildren())
+      for (const child of this._childrenInZIndexOrder) {
+        if (!(child instanceof Renderable)) continue
+        if (!visibleChildSet.has(child.num)) continue
+        const found = child.findDirtyInRenderPath(allowed)
+        if (found) return found
+      }
+    } else {
+      for (const child of this._childrenInZIndexOrder) {
+        if (!(child instanceof Renderable)) continue
+        const found = child.findDirtyInRenderPath(allowed)
+        if (found) return found
+      }
+    }
+    return null
+  }
+
   public canReuseRenderCommandList(): boolean {
     // A custom onUpdate does not block reuse: per-frame updates run through
     // RootRenderable's updatables pass, and list-affecting mutations bump the

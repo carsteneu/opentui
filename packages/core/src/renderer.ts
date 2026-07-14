@@ -1,4 +1,5 @@
 import { ANSI } from "./ansi.js"
+import { writeFileSync } from "node:fs"
 import { Renderable, RootRenderable } from "./Renderable.js"
 import { BoxRenderable } from "./renderables/Box.js"
 import { CodeRenderable } from "./renderables/Code.js"
@@ -1461,7 +1462,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private reportNativeRenderFailure(): "failed" {
-    console.error("[CliRenderer] Native frame render failed; waiting for the next render request to force repaint")
+    // Frame bytes were dropped (see renderer-output.zig endFrame). Cells emitted
+    // during the diff pass were already synced into currentRenderBuffer, so the
+    // buffer now claims content the terminal never received. Only a forced full
+    // repaint repairs that desync — arm it here; the loop schedules the retry.
+    this.forceFullRepaintRequested = true
+    this.partialStats.fail++
+    console.error("[CliRenderer] Native frame render failed; forcing a full repaint on the next frame")
     return "failed"
   }
 
@@ -4501,6 +4508,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
       this.partialFramePending = false
       this.partialRequests.clear()
+      if (this.partialDebugPath) {
+        if (didPartial) this.partialStats.partial++
+        else this.partialStats.full++
+        this.dumpPartialStats()
+      }
 
       if (!didPartial) {
         this.root.render(this.nextRenderBuffer, deltaTime)
@@ -4584,6 +4596,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         } else if (nativeStatus === "failed") {
           this.immediateRerenderRequested = false
           this.renderTimeout = null
+          // A failed frame armed forceFullRepaintRequested; without a scheduled
+          // retry the repaint would wait for an unrelated render request.
+          this.scheduleRenderTimer()
         }
       }
     } finally {
@@ -4618,21 +4633,77 @@ export class CliRenderer extends EventEmitter implements RenderContext {
    * to render it, so the partial path buys nothing and risks missing updates.
    */
   private canPartialRender(): boolean {
-    if (this.partialRequests.size === 0) return false
-    if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") return false
-    if (this.forceFullRepaintRequested) return false
-    if (this._console.visible) return false
-    if (this.root.getLayoutNode().isDirty()) return false
+    if (this.partialRequests.size === 0) return this.bailPartial("noRequests")
+    if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") return this.bailPartial("splitCapture")
+    if (this.forceFullRepaintRequested) return this.bailPartial("forceFullRepaint")
+    if (this._console.visible) return this.bailPartial("consoleVisible")
+    if (this.root.getLayoutNode().isDirty()) return this.bailPartial("layoutDirty")
 
-    // Verify all partial requests are still alive
+    // Verify all partial requests are still alive and would actually be
+    // drawn by a full frame. A culled/invisible pending renderable must not
+    // be drawn by the partial path (a full render would skip it).
     for (const renderable of this.partialRequests) {
-      if (renderable.isDestroyed) return false
+      if (renderable.isDestroyed) return this.bailPartial("destroyed")
+      if (!renderable.isInRenderPath()) return this.bailPartial("pendingCulled")
     }
 
     // Verify no OTHER renderable is dirty. We check the root's subtree.
     // The partial-eligible renderable itself is expected to be dirty (it
     // just called requestRender), so we allow exactly the pending set.
-    return !this.hasDirtyRenderablesOutside(this.partialRequests)
+    // Any exception in the walk must degrade to a full frame, never kill
+    // the render loop.
+    let offender: Renderable | null
+    try {
+      offender = this.findDirtyRenderableOutside(this.partialRequests)
+    } catch {
+      return this.bailPartial("walkError")
+    }
+    if (offender) {
+      const oid = String((offender as any).id ?? offender.constructor.name)
+      if (this.partialDebugPath && !this.partialStats.paths[oid]) {
+        const chain: string[] = []
+        let cur: any = offender
+        while (cur && cur !== this.root && chain.length < 12) {
+          chain.push(String(cur.id ?? cur.constructor.name))
+          cur = cur.parent
+        }
+        this.partialStats.paths[oid] = chain.join(" < ")
+      }
+      return this.bailPartial(`otherDirty:${oid}`)
+    }
+    return true
+  }
+
+  // --- partial-render debug instrumentation (uncommitted, diagnosis only) ---
+  private partialDebugPath: string | undefined = process.env.OTUI_PARTIAL_DEBUG
+  private partialStats: {
+    partial: number
+    full: number
+    fail: number
+    bail: Record<string, number>
+    paths: Record<string, string>
+  } = {
+    partial: 0,
+    full: 0,
+    fail: 0,
+    bail: {},
+    paths: {},
+  }
+  private partialStatsLastDump = 0
+  private bailPartial(reason: string): false {
+    if (this.partialDebugPath) {
+      this.partialStats.bail[reason] = (this.partialStats.bail[reason] ?? 0) + 1
+    }
+    return false
+  }
+  private dumpPartialStats(): void {
+    if (!this.partialDebugPath) return
+    const now = performance.now()
+    if (now - this.partialStatsLastDump < 2000) return
+    this.partialStatsLastDump = now
+    try {
+      writeFileSync(this.partialDebugPath, JSON.stringify(this.partialStats))
+    } catch {}
   }
 
   /**
@@ -4641,21 +4712,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
    * detect when other UI elements need a full frame.
    */
   private hasDirtyRenderablesOutside(allowedDirty: Set<Renderable>): boolean {
-    const stack: Renderable[] = [this.root]
-    while (stack.length > 0) {
-      const node = stack.pop()!
-      if (node !== this.root && node.isDirty && !allowedDirty.has(node as Renderable)) {
-        return true
-      }
-      const children = node.getChildren()
-      for (let i = 0; i < children.length; i++) {
-        const child = children[i]
-        if (child instanceof Renderable) {
-          stack.push(child)
-        }
-      }
-    }
-    return false
+    return this.findDirtyRenderableOutside(allowedDirty) !== null
+  }
+
+  private findDirtyRenderableOutside(allowedDirty: Set<Renderable>): Renderable | null {
+    // Mirror the render() traversal (visibility + viewport culling) so that
+    // permanently-dirty culled renderables cannot block the partial path; a
+    // full frame would not draw them either. Root's own dirty flag is ignored,
+    // matching the previous whole-tree walk.
+    return this.root.findDirtyInRenderPath(allowedDirty, true)
   }
 
   /**
