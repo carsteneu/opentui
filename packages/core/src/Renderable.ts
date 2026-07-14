@@ -140,6 +140,10 @@ export abstract class BaseRenderable extends EventEmitter {
   protected _id: string
   public readonly num: number
   protected _dirty: boolean = false
+  // Opt-in flag for the partial-render fast path. When true, requestRender()
+  // routes through ctx.requestPartialRender (if available) so the renderer can
+  // draw only this renderable instead of walking the full tree. Defaults false.
+  protected _partialEligible: boolean = false
   public parent: BaseRenderable | null = null
   protected _visible: boolean = true
 
@@ -542,7 +546,23 @@ export abstract class Renderable extends BaseRenderable {
 
   public requestRender() {
     this.markDirty()
-    this._ctx.requestRender()
+    if (this._partialEligible && this._ctx.requestPartialRender) {
+      this._ctx.requestPartialRender(this)
+    } else {
+      this._ctx.requestRender()
+    }
+  }
+
+  /**
+   * Opt this renderable into (or out of) the partial-render fast path. When
+   * enabled and the render context supports it, subsequent requestRender()
+   * calls from this renderable request a partial frame instead of a full one.
+   * The renderer may still upgrade to a full frame when safety guards fail
+   * (layout dirty, other renderables dirty, console output pending, etc).
+   * Off by default — no behavior change unless explicitly enabled.
+   */
+  public setPartialEligible(on: boolean): void {
+    this._partialEligible = on
   }
 
   public get translateX(): number {
