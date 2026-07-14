@@ -285,6 +285,14 @@ export class BoxRenderable extends Renderable {
     })
   }
 
+  protected isScissorRectReusable(): boolean {
+    // The border inset reads only borderSides (border changes go through yoga
+    // layout, bumping the layout generation) and the layout-derived base rect,
+    // so the baked scissor commands stay valid while the counters checked by
+    // RootRenderable are unchanged.
+    return true
+  }
+
   protected getScissorRect(): { x: number; y: number; width: number; height: number } {
     const baseRect = super.getScissorRect()
 

@@ -1,7 +1,7 @@
 import { type KeyEvent } from "../lib/index.js"
 import { getObjectsInViewport } from "../lib/objects-in-viewport.js"
 import { LinearScrollAccel, MacOSScrollAccel, type ScrollAcceleration } from "../lib/scroll-acceleration.js"
-import type { BaseRenderable, Renderable, RenderableOptions } from "../Renderable.js"
+import { type BaseRenderable, Renderable, type RenderableOptions } from "../Renderable.js"
 import type { MouseEvent } from "../renderer.js"
 import type { RenderContext } from "../types.js"
 import { BoxRenderable, type BoxOptions } from "./Box.js"
@@ -33,6 +33,15 @@ class ContentRenderable extends BoxRenderable {
 
   protected _hasVisibleChildFilter(): boolean {
     return this._viewportCulling
+  }
+
+  protected isVisibleChildFilterReusable(): boolean {
+    // Viewport culling reads only counter-tracked state: scrolling goes
+    // through the translate setters (render-list revision bump), child and
+    // viewport changes go through yoga layout (layout generation bump), so
+    // the culled child set cannot change while the counters checked by
+    // RootRenderable stay unchanged.
+    return true
   }
 
   protected _getVisibleChildren(): number[] {
