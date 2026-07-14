@@ -1,5 +1,4 @@
 import { ANSI } from "./ansi.js"
-import { writeFileSync } from "node:fs"
 import { Renderable, RootRenderable } from "./Renderable.js"
 import { BoxRenderable } from "./renderables/Box.js"
 import { CodeRenderable } from "./renderables/Code.js"
@@ -1467,7 +1466,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // buffer now claims content the terminal never received. Only a forced full
     // repaint repairs that desync — arm it here; the loop schedules the retry.
     this.forceFullRepaintRequested = true
-    this.partialStats.fail++
     console.error("[CliRenderer] Native frame render failed; forcing a full repaint on the next frame")
     return "failed"
   }
@@ -4508,11 +4506,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
       this.partialFramePending = false
       this.partialRequests.clear()
-      if (this.partialDebugPath) {
-        if (didPartial) this.partialStats.partial++
-        else this.partialStats.full++
-        this.dumpPartialStats()
-      }
 
       if (!didPartial) {
         this.root.render(this.nextRenderBuffer, deltaTime)
@@ -4633,18 +4626,18 @@ export class CliRenderer extends EventEmitter implements RenderContext {
    * to render it, so the partial path buys nothing and risks missing updates.
    */
   private canPartialRender(): boolean {
-    if (this.partialRequests.size === 0) return this.bailPartial("noRequests")
-    if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") return this.bailPartial("splitCapture")
-    if (this.forceFullRepaintRequested) return this.bailPartial("forceFullRepaint")
-    if (this._console.visible) return this.bailPartial("consoleVisible")
-    if (this.root.getLayoutNode().isDirty()) return this.bailPartial("layoutDirty")
+    if (this.partialRequests.size === 0) return false
+    if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") return false
+    if (this.forceFullRepaintRequested) return false
+    if (this._console.visible) return false
+    if (this.root.getLayoutNode().isDirty()) return false
 
     // Verify all partial requests are still alive and would actually be
     // drawn by a full frame. A culled/invisible pending renderable must not
     // be drawn by the partial path (a full render would skip it).
     for (const renderable of this.partialRequests) {
-      if (renderable.isDestroyed) return this.bailPartial("destroyed")
-      if (!renderable.isInRenderPath()) return this.bailPartial("pendingCulled")
+      if (renderable.isDestroyed) return false
+      if (!renderable.isInRenderPath()) return false
     }
 
     // Verify no OTHER renderable is dirty. We check the root's subtree.
@@ -4652,58 +4645,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // just called requestRender), so we allow exactly the pending set.
     // Any exception in the walk must degrade to a full frame, never kill
     // the render loop.
-    let offender: Renderable | null
     try {
-      offender = this.findDirtyRenderableOutside(this.partialRequests)
+      if (this.findDirtyRenderableOutside(this.partialRequests)) return false
     } catch {
-      return this.bailPartial("walkError")
-    }
-    if (offender) {
-      const oid = String((offender as any).id ?? offender.constructor.name)
-      if (this.partialDebugPath && !this.partialStats.paths[oid]) {
-        const chain: string[] = []
-        let cur: any = offender
-        while (cur && cur !== this.root && chain.length < 12) {
-          chain.push(String(cur.id ?? cur.constructor.name))
-          cur = cur.parent
-        }
-        this.partialStats.paths[oid] = chain.join(" < ")
-      }
-      return this.bailPartial(`otherDirty:${oid}`)
+      return false
     }
     return true
-  }
-
-  // --- partial-render debug instrumentation (uncommitted, diagnosis only) ---
-  private partialDebugPath: string | undefined = process.env.OTUI_PARTIAL_DEBUG
-  private partialStats: {
-    partial: number
-    full: number
-    fail: number
-    bail: Record<string, number>
-    paths: Record<string, string>
-  } = {
-    partial: 0,
-    full: 0,
-    fail: 0,
-    bail: {},
-    paths: {},
-  }
-  private partialStatsLastDump = 0
-  private bailPartial(reason: string): false {
-    if (this.partialDebugPath) {
-      this.partialStats.bail[reason] = (this.partialStats.bail[reason] ?? 0) + 1
-    }
-    return false
-  }
-  private dumpPartialStats(): void {
-    if (!this.partialDebugPath) return
-    const now = performance.now()
-    if (now - this.partialStatsLastDump < 2000) return
-    this.partialStatsLastDump = now
-    try {
-      writeFileSync(this.partialDebugPath, JSON.stringify(this.partialStats))
-    } catch {}
   }
 
   /**
