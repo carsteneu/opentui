@@ -1510,12 +1510,16 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
-    // A pending partial frame is superseded by any full-render request.
-    // Drop the partial queue so the next loop() runs a normal full frame.
-    if (this.partialFramePending) {
-      this.partialFramePending = false
-      this.partialRequests.clear()
-    }
+    // A pending partial frame is NOT eagerly cleared here. Code blocks and
+    // other non-partial renderables call requestRender() frequently (e.g.
+    // tree-sitter highlighting during streaming). Eagerly dropping the partial
+    // queue made every such call force a full frame, oscillating with the
+    // spinner's partial ticks — visible as a fast minimal flicker on streaming
+    // code blocks. Let the loop decide: canPartialRender() bails to a full
+    // frame via findDirtyRenderableOutside() when a non-partial renderable is
+    // actually dirty, so correctness is preserved. When the caller has already
+    // been rendered clean by the time the loop runs, the partial frame
+    // proceeds and the flicker settles.
 
     // A skipped feed-backed frame already owns the next scheduling attempt through
     // feed.idle(). Coalesce normal invalidations into that retry so split-footer

@@ -126,4 +126,21 @@ describe("partial-render commit guard", () => {
     expect(drawSpy).toHaveBeenCalledWith(0, 0, renderer.currentRenderBuffer)
     expect(restoreCalledBeforeRender).toBe(true)
   })
+
+  test("requestRender does not eagerly clear a pending partial frame", () => {
+    const internals = renderer as unknown as RendererInternals
+    internals.partialFramePending = true
+    internals.partialRequests.add({
+      isDestroyed: false,
+      isInRenderPath: () => true,
+    })
+    expect(internals.partialRequests.size).toBe(1)
+
+    renderer.requestRender()
+
+    // The partial queue survives; the loop's guard decides whether the next
+    // frame is partial (no outside dirty) or full (Code dirty → bail).
+    expect(internals.partialFramePending).toBe(true)
+    expect(internals.partialRequests.size).toBe(1)
+  })
 })
