@@ -785,6 +785,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   // renderables, console output pending, split-footer active, resize).
   private partialRequests: Set<Renderable> = new Set()
   private partialFramePending: boolean = false
+  // Tracks whether the last native render committed its frame bytes to the
+  // terminal. A FAILED or backpressured frame leaves the terminal out of sync
+  // with currentRenderBuffer; partial rendering is unsafe until a full frame
+  // resynchronizes it. See reportNativeRenderFailure / handleNativeRenderRejection.
+  private lastFrameCommitted: boolean = true
   private renderStats: {
     frameCount: number
     fps: number
@@ -1452,7 +1457,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     if (status === NATIVE_RENDER_STATUS_SKIPPED) {
-      if (this._useThread && this._usesProcessStdout) return "backpressured"
+      if (this._useThread && this._usesProcessStdout) {
+        // Threaded backpressure: the render thread skipped because its stdout
+        // queue was full. We cannot confirm whether the native diff already
+        // synced cells into currentRenderBuffer before the skip, so treat the
+        // buffer as potentially desynced until a full frame resynchronizes it.
+        this.lastFrameCommitted = false
+        return "backpressured"
+      }
       console.error("[CliRenderer] Native frame render unexpectedly skipped without a feed")
       return "failed"
     }
@@ -1466,6 +1478,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // buffer now claims content the terminal never received. Only a forced full
     // repaint repairs that desync — arm it here; the loop schedules the retry.
     this.forceFullRepaintRequested = true
+    this.lastFrameCommitted = false
     console.error("[CliRenderer] Native frame render failed; forcing a full repaint on the next frame")
     return "failed"
   }
@@ -4629,6 +4642,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (this.partialRequests.size === 0) return false
     if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") return false
     if (this.forceFullRepaintRequested) return false
+    if (!this.lastFrameCommitted) return false
     if (this._console.visible) return false
     if (this.root.getLayoutNode().isDirty()) return false
 
@@ -4689,6 +4703,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // scissor rects because they skip the render-list walk.
     this.clearHitGridScissorRects()
 
+    // The native layer clears nextRenderBuffer to the background colour after
+    // every present (renderer.zig prepareRenderFrameWithWriter). A partial
+    // frame would therefore diff spinner cells against a blank buffer and emit
+    // clears for every other cell — black screen with spinner. Restore the last
+    // committed frame so the diff sees only the spinner delta.
+    this.nextRenderBuffer.drawFrameBuffer(0, 0, this.currentRenderBuffer)
+
     for (const renderable of this.partialRequests) {
       if (renderable.isDestroyed) continue
       // Renderable.render() runs renderBefore/renderSelf/renderAfter, updates
@@ -4734,6 +4755,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         }
         this.forceFullRepaintRequested = false
         this.pendingSplitFooterTransition = null
+        this.lastFrameCommitted = true
         return "rendered"
       }
 
@@ -4745,6 +4767,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
       this.forceFullRepaintRequested = false
       this.pendingSplitFooterTransition = null
+      this.lastFrameCommitted = true
       // this.dumpOutputBuffer(Date.now())
       return "rendered"
     } finally {
