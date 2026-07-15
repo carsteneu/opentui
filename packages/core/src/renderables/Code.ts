@@ -47,6 +47,14 @@ type ConcealLineRange = [start: number, end: number]
 export class CodeRenderable extends TextBufferRenderable {
   private _content: string
   private _filetype?: string
+  // Coalesces requestRender across synchronous bursts (streaming token
+  // arrival, repeated highlight-once completions within a microtask). Each
+  // content update and highlight-done handler in this class calls
+  // requestRender() — without coalescing, multiple updates in the same turn
+  // flood the renderer with dirty marks that oscillate the partial-render
+  // guard (spinner partial vs. code-dirty full frame), visible as flicker on
+  // streaming code blocks. The flag is cleared by the renderer's next frame.
+  private _renderCoalesceScheduled: boolean = false
   private _syntaxStyle: SyntaxStyle
   private _isHighlighting: boolean = false
   private _treeSitterClient: TreeSitterClient
@@ -113,7 +121,7 @@ export class CodeRenderable extends TextBufferRenderable {
       this._highlightSnapshotId++
 
       if (this._streaming && this._filetype && !this._drawUnstyledText) {
-        this.requestRender()
+        this.coalesceRender()
         return
       }
 
@@ -125,6 +133,15 @@ export class CodeRenderable extends TextBufferRenderable {
       this.setRenderedLineSources(undefined)
       this.updateTextInfo()
     }
+  }
+
+  private coalesceRender(): void {
+    if (this._renderCoalesceScheduled) return
+    this._renderCoalesceScheduled = true
+    queueMicrotask(() => {
+      this._renderCoalesceScheduled = false
+      if (!this.isDestroyed) this.requestRender()
+    })
   }
 
   public override get lineInfo(): LineInfo {
