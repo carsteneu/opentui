@@ -97,6 +97,14 @@ export class CodeRenderable extends TextBufferRenderable {
     this._onHighlight = options.onHighlight
     this._onChunks = options.onChunks
 
+    // Streaming code blocks hop onto the partial-render fast path so their
+    // per-token content updates and async highlight resolutions land in
+    // requestPartialRender instead of requestRender. Without this, every
+    // highlight-done flush marks code as dirty outside the spinner's
+    // partial set, causing the guard to oscillate between partial (spinner)
+    // and full (code dirty) — visible flicker on bash blocks.
+    if (this._streaming) this.setPartialEligible(true)
+
     if (this._content.length > 0) {
       if (this._initialStyledText && this._drawUnstyledText) {
         this.textBuffer.setStyledText(this._initialStyledText)
@@ -349,7 +357,7 @@ export class CodeRenderable extends TextBufferRenderable {
       const result = await this._treeSitterClient.highlightOnce(content, filetype)
 
       if (snapshotId !== this._highlightSnapshotId) {
-        this.requestRender()
+        this.coalesceRender()
         return
       }
 
@@ -370,7 +378,7 @@ export class CodeRenderable extends TextBufferRenderable {
       }
 
       if (snapshotId !== this._highlightSnapshotId) {
-        this.requestRender()
+        this.coalesceRender()
         return
       }
 
@@ -400,7 +408,7 @@ export class CodeRenderable extends TextBufferRenderable {
         chunks = await this.transformChunks(chunks, context)
 
         if (snapshotId !== this._highlightSnapshotId) {
-          this.requestRender()
+          this.coalesceRender()
           return
         }
 
@@ -418,10 +426,10 @@ export class CodeRenderable extends TextBufferRenderable {
       this._isHighlighting = false
       this._highlightsDirty = false
       this.updateTextInfo()
-      this.requestRender()
+      this.coalesceRender()
     } catch (error) {
       if (snapshotId !== this._highlightSnapshotId) {
-        this.requestRender()
+        this.coalesceRender()
         return
       }
 
@@ -433,7 +441,7 @@ export class CodeRenderable extends TextBufferRenderable {
       this._isHighlighting = false
       this._highlightsDirty = false
       this.updateTextInfo()
-      this.requestRender()
+      this.coalesceRender()
     }
   }
 

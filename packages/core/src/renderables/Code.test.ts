@@ -2408,26 +2408,23 @@ test("CodeRenderable - coalesces requestRender across streaming content updates"
   currentRenderer.root.add(codeRenderable)
   await flushAsync()
 
-  // Spy on the renderer's requestRender before streaming updates begin.
-  const requestRenderSpy = spyOn(currentRenderer, "requestRender")
-  requestRenderSpy.mockClear()
+  // Streaming code blocks are partial-eligible; their requestRender() calls
+  // route through requestPartialRender.
+  const partialSpy = spyOn(currentRenderer, "requestPartialRender")
+  partialSpy.mockClear()
 
   // Simulate streaming token arrival: multiple content updates within the
   // same microtask turn. Each set of content triggers a requestRender() in
-  // Code.ts; without coalescing, that's 4 dirty-marking calls hitting the
-  // partial-render guard in rapid succession → oscillation flicker.
+  // Code.ts, which now hits coalesceRender → the partial path.
   codeRenderable.content = "const a = 1;"
   codeRenderable.content = "const a = 1; const b = 2;"
   codeRenderable.content = "const a = 1; const b = 2; const c = 3;"
   codeRenderable.content = "const a = 1; const b = 2; const c = 3; const d = 4;"
 
-  // Allow the microtask coalesce window to flush.
   await flushAsync()
 
-  // All four content updates should collapse to a single requestRender call
-  // by the time the microtask drains. The old behaviour issued one
-  // requestRender per content set → 4 calls → 4 dirty-mark frames.
-  expect(requestRenderSpy.mock.calls.length).toBe(1)
+  // All four content updates should collapse to a single partial request.
+  expect(partialSpy.mock.calls.length).toBe(1)
 
-  requestRenderSpy.mockRestore()
+  partialSpy.mockRestore()
 })
