@@ -363,12 +363,12 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
     )
   }
 
-  protected updateTextInfo(): void {
+  protected updateTextInfo(layoutChanged: boolean = true): void {
     if (this.lastLocalSelection) {
       this.updateLocalSelection(this.lastLocalSelection)
     }
 
-    this.yogaNode.markDirty()
+    if (layoutChanged) this.yogaNode.markDirty()
     this.requestRender()
     this.emit("line-info-change")
   }

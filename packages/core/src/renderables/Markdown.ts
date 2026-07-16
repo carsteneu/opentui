@@ -320,7 +320,6 @@ export class MarkdownRenderable extends Renderable {
     if (this._content !== value) {
       this._content = value
       this.updateBlocks()
-      this.requestRender()
     }
   }
 

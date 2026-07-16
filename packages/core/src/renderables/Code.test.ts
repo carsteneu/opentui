@@ -2428,3 +2428,38 @@ test("CodeRenderable - coalesces requestRender across streaming content updates"
 
   partialSpy.mockRestore()
 })
+
+test("CodeRenderable - same-line streaming update keeps layout clean", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code",
+    content: "Hello",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    width: "100%",
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(false)
+
+  codeRenderable.content = "Hello world"
+
+  expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(false)
+})
+
+test("CodeRenderable - new streaming line marks layout dirty", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code",
+    content: "Hello",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    width: "100%",
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+
+  codeRenderable.content = "Hello\nworld"
+
+  expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(true)
+})

@@ -124,6 +124,8 @@ export class CodeRenderable extends TextBufferRenderable {
 
   set content(value: string) {
     if (this._content !== value) {
+      const scrollWidth = this.scrollWidth
+      const scrollHeight = this.scrollHeight
       this._content = value
       this._highlightsDirty = true
       this._highlightSnapshotId++
@@ -139,7 +141,10 @@ export class CodeRenderable extends TextBufferRenderable {
         this.textBuffer.setText(value)
       }
       this.setRenderedLineSources(undefined)
-      this.updateTextInfo()
+      this.updateTextInfo(
+        (this._width === "auto" && scrollWidth !== this.scrollWidth) ||
+          (this._height === "auto" && scrollHeight !== this.scrollHeight),
+      )
     }
   }
 
@@ -183,9 +188,9 @@ export class CodeRenderable extends TextBufferRenderable {
     super.onResize(width, height)
   }
 
-  protected override updateTextInfo(): void {
+  protected override updateTextInfo(layoutChanged: boolean = true): void {
     this._mappedLineInfo = undefined
-    super.updateTextInfo()
+    super.updateTextInfo(layoutChanged)
   }
 
   get filetype(): string | undefined {
