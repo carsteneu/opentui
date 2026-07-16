@@ -796,6 +796,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   // with currentRenderBuffer; partial rendering is unsafe until a full frame
   // resynchronizes it. See reportNativeRenderFailure / handleNativeRenderRejection.
   private lastFrameCommitted: boolean = true
+  private partialDebugPath = process.env.OTUI_PARTIAL_DEBUG
+  private partialStats = {
+    partial: 0,
+    full: 0,
+    fail: 0,
+    bail: {} as Record<string, number>,
+  }
+  private partialStatsLastDump = 0
   private renderStats: {
     frameCount: number
     fps: number
@@ -1485,6 +1493,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // repaint repairs that desync — arm it here; the loop schedules the retry.
     this.forceFullRepaintRequested = true
     this.lastFrameCommitted = false
+    this.partialStats.fail++
     console.error("[CliRenderer] Native frame render failed; forcing a full repaint on the next frame")
     return "failed"
   }
@@ -4534,6 +4543,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.partialFramePending = false
       this.partialRequests.clear()
 
+      if (this.partialDebugPath) {
+        if (didPartial) this.partialStats.partial++
+        else this.partialStats.full++
+        this.dumpPartialStats()
+      }
+
       if (!didPartial) {
         this.root.render(this.nextRenderBuffer, deltaTime)
 
@@ -4654,23 +4669,40 @@ export class CliRenderer extends EventEmitter implements RenderContext {
    * to render it, so the partial path buys nothing and risks missing updates.
    */
   private canPartialRender(): boolean {
-    if (this.partialRequests.size === 0) return false
-    if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") return false
-    if (this.forceFullRepaintRequested) return false
-    if (!this.lastFrameCommitted) return false
-    if (this._console.visible) return false
-    if (this.root.getLayoutNode().isDirty()) return false
-    if (this.ordinaryRenderGeneration !== this.committedOrdinaryRenderGeneration) return false
+    if (this.partialRequests.size === 0) return this.bailPartial("noRequests")
+    if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") return this.bailPartial("splitCapture")
+    if (this.forceFullRepaintRequested) return this.bailPartial("forceFullRepaint")
+    if (!this.lastFrameCommitted) return this.bailPartial("lastFrameUncommitted")
+    if (this._console.visible) return this.bailPartial("consoleVisible")
+    if (this.root.getLayoutNode().isDirty()) return this.bailPartial("layoutDirty")
+    if (this.ordinaryRenderGeneration !== this.committedOrdinaryRenderGeneration) {
+      return this.bailPartial("ordinaryRenderPending")
+    }
 
     // Verify all partial requests are still alive and would actually be
     // drawn by a full frame. A culled/invisible pending renderable must not
     // be drawn by the partial path (a full render would skip it).
     for (const renderable of this.partialRequests) {
-      if (renderable.isDestroyed) return false
-      if (!renderable.isInRenderPath()) return false
+      if (renderable.isDestroyed) return this.bailPartial("destroyed")
+      if (!renderable.isInRenderPath()) return this.bailPartial("pendingCulled")
     }
 
     return true
+  }
+
+  private bailPartial(reason: string): false {
+    if (this.partialDebugPath) {
+      this.partialStats.bail[reason] = (this.partialStats.bail[reason] ?? 0) + 1
+    }
+    return false
+  }
+
+  private dumpPartialStats() {
+    if (!this.partialDebugPath) return
+    const now = performance.now()
+    if (now - this.partialStatsLastDump < 2000) return
+    this.partialStatsLastDump = now
+    void Bun.write(this.partialDebugPath, JSON.stringify(this.partialStats))
   }
 
   /**
