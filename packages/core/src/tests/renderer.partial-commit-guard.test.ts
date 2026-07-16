@@ -14,6 +14,9 @@ type RendererInternals = {
   _useThread: boolean
   _usesProcessStdout: boolean
   partialRequests: Set<unknown>
+  partialFramePending: boolean
+  ordinaryRenderGeneration: number
+  committedOrdinaryRenderGeneration: number
   canPartialRender: () => boolean
   renderPartialFrame: (deltaTime: number) => boolean
   feedIdleRenderScheduled: boolean
@@ -106,6 +109,21 @@ describe("partial-render commit guard", () => {
       isInRenderPath: () => true,
     })
     expect(internals.canPartialRender()).toBe(false)
+  })
+
+  test("canPartialRender rejects an uncommitted ordinary render request without walking the tree", () => {
+    const internals = renderer as unknown as RendererInternals
+    internals.partialRequests.add({
+      isDestroyed: false,
+      isInRenderPath: () => true,
+    })
+    internals.ordinaryRenderGeneration = 2
+    internals.committedOrdinaryRenderGeneration = 1
+
+    expect(internals.canPartialRender()).toBe(false)
+
+    internals.committedOrdinaryRenderGeneration = 2
+    expect(internals.canPartialRender()).toBe(true)
   })
 
   test("renderPartialFrame restores currentRenderBuffer into nextRenderBuffer before drawing", () => {

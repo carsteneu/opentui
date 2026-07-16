@@ -785,6 +785,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   // renderables, console output pending, split-footer active, resize).
   private partialRequests: Set<Renderable> = new Set()
   private partialFramePending: boolean = false
+  // Normal render requests are tracked by generation so the partial path can
+  // reject in O(1) when another renderable changed. A full frame only
+  // acknowledges requests visible before its tree walk; requests raised while
+  // rendering remain pending for the next frame.
+  private ordinaryRenderGeneration: number = 0
+  private committedOrdinaryRenderGeneration: number = 0
   // Tracks whether the last native render committed its frame bytes to the
   // terminal. A FAILED or backpressured frame leaves the terminal out of sync
   // with currentRenderBuffer; partial rendering is unsafe until a full frame
@@ -1509,6 +1515,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED) {
       return
     }
+
+    this.ordinaryRenderGeneration++
 
     // A pending partial frame is NOT eagerly cleared here. Code blocks and
     // other non-partial renderables call requestRender() frequently (e.g.
@@ -4512,6 +4520,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const end = performance.now()
       this.renderStats.frameCallbackTime = end - start
 
+      const ordinaryRenderGeneration = this.ordinaryRenderGeneration
+
       // Partial-render fast path: when the only invalidation since the last
       // frame is from renderables that opted into the partial path, skip the
       // full root tree walk and redraw just those renderables into the
@@ -4530,6 +4540,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         for (const postProcessFn of this.postProcessFns) {
           postProcessFn(this.nextRenderBuffer, deltaTime)
         }
+        this.committedOrdinaryRenderGeneration = ordinaryRenderGeneration
       }
 
       this._console.renderToBuffer(this.nextRenderBuffer)
@@ -4649,6 +4660,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (!this.lastFrameCommitted) return false
     if (this._console.visible) return false
     if (this.root.getLayoutNode().isDirty()) return false
+    if (this.ordinaryRenderGeneration !== this.committedOrdinaryRenderGeneration) return false
 
     // Verify all partial requests are still alive and would actually be
     // drawn by a full frame. A culled/invisible pending renderable must not
@@ -4658,16 +4670,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       if (!renderable.isInRenderPath()) return false
     }
 
-    // Verify no OTHER renderable is dirty. We check the root's subtree.
-    // The partial-eligible renderable itself is expected to be dirty (it
-    // just called requestRender), so we allow exactly the pending set.
-    // Any exception in the walk must degrade to a full frame, never kill
-    // the render loop.
-    try {
-      if (this.findDirtyRenderableOutside(this.partialRequests)) return false
-    } catch {
-      return false
-    }
     return true
   }
 
