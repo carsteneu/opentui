@@ -12,6 +12,7 @@ export interface TextOptions extends TextBufferOptions {
 
 export class TextRenderable extends TextBufferRenderable {
   private _text: StyledText
+  private _content: StyledText | string
 
   // TODO: The TextRenderable is currently juggling both a StyledText and a RootTextNodeRenderable.
   // We should refactor this to only use the RootTextNodeRenderable here and have a separate StyledTextRenderable with `content`.
@@ -28,6 +29,7 @@ export class TextRenderable extends TextBufferRenderable {
 
     const content = options.content ?? this._contentDefaultOptions.content
     const styledText = typeof content === "string" ? stringToStyledText(content) : content
+    this._content = content
     this._text = styledText
     this._hasManualStyledText = options.content !== undefined && content !== ""
 
@@ -73,7 +75,9 @@ export class TextRenderable extends TextBufferRenderable {
   }
 
   set content(value: StyledText | string) {
+    if (this._hasManualStyledText && this._content === value) return
     this._hasManualStyledText = true
+    this._content = value
     const styledText = typeof value === "string" ? stringToStyledText(value) : value
     if (this._text !== styledText) {
       this._text = styledText

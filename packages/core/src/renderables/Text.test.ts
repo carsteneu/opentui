@@ -70,6 +70,17 @@ describe("TextRenderable Selection", () => {
     currentRenderer.destroy()
   })
 
+  describe("Content", () => {
+    it("does not rebuild styled text when assigned the same string", async () => {
+      const { text } = await createTextRenderable(currentRenderer, { content: "Hello World" })
+      const content = text.content
+
+      text.content = "Hello World"
+
+      expect(text.content).toBe(content)
+    })
+  })
+
   describe("Initialization", () => {
     it("should initialize properly", async () => {
       const { text } = await createTextRenderable(currentRenderer, {
