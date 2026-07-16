@@ -150,6 +150,52 @@ test("token identity is preserved for stable tokens", () => {
   expect(state2.tokens[2]).toBe(state1.tokens[2])
 })
 
+test("same-line prose append skips the block lexer", () => {
+  const content1 = "Stable paragraph\n\nStreaming prose with **inline"
+  const content2 = content1 + " markdown** and a [link](https://example.com)."
+  const state1 = parseMarkdownIncremental(content1, null, 2)
+
+  const lexerRef = Lexer as unknown as { lex: typeof Lexer.lex }
+  const originalLex = lexerRef.lex
+  let lexCalls = 0
+  lexerRef.lex = ((src, options) => {
+    lexCalls++
+    return originalLex(src, options)
+  }) as typeof Lexer.lex
+
+  try {
+    const state2 = parseMarkdownIncremental(content2, state1, 2)
+
+    expect(lexCalls).toBe(0)
+    expect(state2.tokens[0]).toBe(state1.tokens[0])
+    expect(state2.tokens).toEqual(originalLex(content2, { gfm: true }))
+  } finally {
+    lexerRef.lex = originalLex
+  }
+})
+
+test("same-line prose append preserves unicode paragraphs", () => {
+  const content1 = "Übertragung wächst"
+  const content2 = content1 + " flüssig weiter."
+  const state1 = parseMarkdownIncremental(content1, null, 2)
+  const state2 = parseMarkdownIncremental(content2, state1, 2)
+
+  expect(state2.tokens).toEqual(Lexer.lex(content2, { gfm: true }))
+})
+
+test("ambiguous block prefixes keep using the block lexer", () => {
+  for (const [before, after] of [
+    ["#", "# Heading"],
+    ["--", "---"],
+    ["<div", "<div>"],
+  ]) {
+    const state1 = parseMarkdownIncremental(before, null, 2)
+    const state2 = parseMarkdownIncremental(after, state1, 2)
+
+    expect(state2.tokens).toEqual(Lexer.lex(after, { gfm: true }))
+  }
+})
+
 test("trailingUnstable re-parses trailing table when new rows are appended", () => {
   const content1 = "| A |\n|---|\n| 1 |"
   const state1 = parseMarkdownIncremental(content1, null, 2)

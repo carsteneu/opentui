@@ -28,6 +28,33 @@ export function parseMarkdownIncremental(
     }
   }
 
+  const appended = newContent.startsWith(prevState.content) ? newContent.slice(prevState.content.length) : ""
+  const tail = prevState.tokens.at(-1)
+  if (
+    appended &&
+    !appended.includes("\n") &&
+    !appended.includes("\r") &&
+    tail?.type === "paragraph" &&
+    tail.raw === tail.text &&
+    /^(?:\p{L}|\p{N})/u.test(tail.raw) &&
+    prevState.tokens.reduce((length, token) => length + token.raw.length, 0) === prevState.content.length
+  ) {
+    const text = tail.text + appended
+    return {
+      content: newContent,
+      tokens: [
+        ...prevState.tokens.slice(0, -1),
+        {
+          ...tail,
+          raw: text,
+          text,
+          tokens: Lexer.lexInline(text, { gfm: true }),
+        },
+      ],
+      stableTokenCount: prevState.tokens.length - 1,
+    }
+  }
+
   // Find how many tokens from start are unchanged
   let offset = 0
   let reuseCount = 0
