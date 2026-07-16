@@ -79,6 +79,23 @@ describe("TextRenderable Selection", () => {
 
       expect(text.content).toBe(content)
     })
+
+    it("keeps layout clean when fixed-width content stays on one line", async () => {
+      const { text } = await createTextRenderable(currentRenderer, { content: "Hello", width: "100%" })
+      expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(false)
+
+      text.content = "Hello world"
+
+      expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(false)
+    })
+
+    it("marks layout dirty when content adds a line", async () => {
+      const { text } = await createTextRenderable(currentRenderer, { content: "Hello", width: "100%" })
+
+      text.content = "Hello\nworld"
+
+      expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(true)
+    })
   })
 
   describe("Initialization", () => {

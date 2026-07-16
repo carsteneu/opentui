@@ -76,13 +76,18 @@ export class TextRenderable extends TextBufferRenderable {
 
   set content(value: StyledText | string) {
     if (this._hasManualStyledText && this._content === value) return
+    const scrollWidth = this.scrollWidth
+    const scrollHeight = this.scrollHeight
     this._hasManualStyledText = true
     this._content = value
     const styledText = typeof value === "string" ? stringToStyledText(value) : value
     if (this._text !== styledText) {
       this._text = styledText
       this.updateTextBuffer(styledText)
-      this.updateTextInfo()
+      this.updateTextInfo(
+        (this._width === "auto" && scrollWidth !== this.scrollWidth) ||
+          (this._height === "auto" && scrollHeight !== this.scrollHeight),
+      )
     }
   }
 
