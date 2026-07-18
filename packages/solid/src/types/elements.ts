@@ -10,6 +10,7 @@ import type {
   InputRenderableOptions,
   KeyEvent,
   MarkdownOptions,
+  MarkdownContentUpdate,
   MarkdownRenderable,
   RenderableOptions,
   RenderContext,
@@ -159,7 +160,9 @@ export type ScrollBoxProps = ComponentProps<ContainerProps<ScrollBoxOptions>, Sc
 
 export type CodeProps = ComponentProps<CodeOptions, CodeRenderable>
 
-export type MarkdownProps = ComponentProps<MarkdownOptions, MarkdownRenderable>
+export type MarkdownProps = ComponentProps<MarkdownOptions, MarkdownRenderable> & {
+  contentUpdate?: MarkdownContentUpdate
+}
 
 // ============================================================================
 // Extended/Dynamic Component System

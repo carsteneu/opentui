@@ -3306,6 +3306,30 @@ test("internalBlockMode=top-level does not scan stable blocks while streaming", 
   expect(captureFrame()).toContain("Para 4")
 })
 
+test("contentUpdate applies a trusted streaming suffix", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-trusted-streaming-suffix",
+    content: "Stable paragraph\n\nStreaming tail",
+    syntaxStyle,
+    streaming: true,
+    internalBlockMode: "top-level",
+  })
+
+  renderer.root.add(md)
+  await renderMarkdownRenderable(md)
+
+  Object.assign(md, {
+    contentUpdate: {
+      content: "Stable paragraph\n\nStreaming tail grows",
+      appended: " grows",
+    },
+  })
+
+  expect(md.content).toBe("Stable paragraph\n\nStreaming tail grows")
+  await renderMarkdownRenderable(md)
+  expect(captureFrame()).toContain("Streaming tail grows")
+})
+
 test("default block mode still coalesces ordinary markdown blocks", async () => {
   const md = createMarkdownRenderable({
     id: "markdown-default-coalesced-blocks",

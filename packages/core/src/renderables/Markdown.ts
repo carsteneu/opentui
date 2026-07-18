@@ -123,6 +123,11 @@ export interface MarkdownOptions extends RenderableOptions<MarkdownRenderable> {
   internalBlockMode?: "coalesced" | "top-level"
 }
 
+export interface MarkdownContentUpdate {
+  content: string
+  appended?: string
+}
+
 export interface RenderNodeContext {
   syntaxStyle: SyntaxStyle
   conceal: boolean
@@ -322,6 +327,18 @@ export class MarkdownRenderable extends Renderable {
       this._content = value
       this.updateBlocks()
     }
+  }
+
+  set contentUpdate(value: MarkdownContentUpdate) {
+    if (this.isDestroyed || this._content === value.content) return
+    const appended =
+      this._streaming &&
+      value.appended !== undefined &&
+      this._content.length + value.appended.length === value.content.length
+        ? value.appended
+        : undefined
+    this._content = value.content
+    this.updateBlocks(false, appended)
   }
 
   get syntaxStyle(): SyntaxStyle {
@@ -1894,7 +1911,7 @@ export class MarkdownRenderable extends Renderable {
     return renderable instanceof CodeRenderable
   }
 
-  private updateBlocks(forceTableRefresh: boolean = false): void {
+  private updateBlocks(forceTableRefresh: boolean = false, appended?: string): void {
     if (this.isDestroyed) return
     if (!this._content) {
       this.clearBlockStates()
@@ -1904,7 +1921,7 @@ export class MarkdownRenderable extends Renderable {
     }
 
     const trailingUnstable = this._streaming ? 2 : 0
-    this._parseState = parseMarkdownIncremental(this._content, this._parseState, trailingUnstable)
+    this._parseState = parseMarkdownIncremental(this._content, this._parseState, trailingUnstable, appended)
 
     const tokens = this._parseState.tokens
 

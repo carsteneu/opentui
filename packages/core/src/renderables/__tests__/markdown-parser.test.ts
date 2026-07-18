@@ -205,6 +205,17 @@ test("plain same-line prose appends extend the inline text token", () => {
   }
 })
 
+test("trusted append content preserves cached token coverage", () => {
+  const content1 = "Stable paragraph\n\nStreaming prose"
+  const appended = " grows"
+  const state1 = parseMarkdownIncremental(content1, null, 2)
+  const state2 = parseMarkdownIncremental(content1 + appended, state1, 2, appended)
+
+  expect(state1.tokenRawLength).toBe(content1.length)
+  expect(state2.tokenRawLength).toBe(content1.length + appended.length)
+  expect(state2.tokens).toEqual(Lexer.lex(content1 + appended, { gfm: true }))
+})
+
 test("markdown metacharacters still re-lex the inline tail", () => {
   const content1 = "Streaming prose"
   const content2 = content1 + " **bold**"
