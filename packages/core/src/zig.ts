@@ -326,6 +326,14 @@ function getOpenTUILib(libPath?: string) {
       args: ["u32", "bool"],
       returns: "u8",
     },
+    renderRetained: {
+      args: ["u32", "bool"],
+      returns: "u8",
+    },
+    renderPartial: {
+      args: ["u32", "u32", "u32", "u32", "u32"],
+      returns: "u8",
+    },
     repaintSplitFooter: {
       args: ["u32", "u32", "bool"],
       returns: "u64",
@@ -1961,7 +1969,8 @@ export interface RenderLib extends AudioEngineLib {
   updateStats: (renderer: RendererHandle, time: number, fps: number, frameCallbackTime: number) => void
   updateMemoryStats: (renderer: RendererHandle, heapUsed: number, heapTotal: number, arrayBuffers: number) => void
   getRenderStats: (renderer: RendererHandle) => NativeRenderStats
-  render: (renderer: RendererHandle, force: boolean) => number
+  render: (renderer: RendererHandle, force: boolean, retain?: boolean) => number
+  renderPartial: (renderer: RendererHandle, x: number, y: number, width: number, height: number) => number
   repaintSplitFooter: (
     renderer: RendererHandle,
     pinnedRenderOffset: number,
@@ -3262,8 +3271,13 @@ class FFIRenderLib implements RenderLib {
     this.opentui.symbols.setCursorStyleOptions(renderer, buffer)
   }
 
-  public render(renderer: Pointer, force: boolean): number {
+  public render(renderer: Pointer, force: boolean, retain = false): number {
+    if (retain) return this.opentui.symbols.renderRetained(renderer, ffiBool(force))
     return this.opentui.symbols.render(renderer, ffiBool(force))
+  }
+
+  public renderPartial(renderer: Pointer, x: number, y: number, width: number, height: number): number {
+    return this.opentui.symbols.renderPartial(renderer, x, y, width, height)
   }
 
   private unpackRenderOperationResult(value: number | bigint): NativeRenderOperationResult {

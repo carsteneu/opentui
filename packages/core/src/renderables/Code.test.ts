@@ -8,6 +8,7 @@ import { TreeSitterClient } from "../lib/tree-sitter/index.js"
 import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
 import { BoxRenderable } from "./Box.js"
 import { TextAttributes, type CapturedFrame } from "../types.js"
+import { StyledText } from "../lib/styled-text.js"
 
 let currentRenderer: TestRenderer
 let renderOnce: () => Promise<void>
@@ -1116,6 +1117,37 @@ test("CodeRenderable - streaming can be enabled", async () => {
   expect(codeRenderable.streaming).toBe(true)
 })
 
+test("CodeRenderable - streaming initial styled text skips duplicate highlighting", async () => {
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+  const highlightSpy = spyOn(mockClient, "highlightOnce")
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-initial-styled-stream",
+    content: "already styled markdown",
+    filetype: "markdown",
+    syntaxStyle: SyntaxStyle.create(),
+    treeSitterClient: mockClient,
+    streaming: true,
+    drawUnstyledText: true,
+    initialStyledText: new StyledText([{ __isChunk: true, text: "already styled markdown" }]),
+    deferStreamingHighlight: true,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+
+  expect(codeRenderable.plainText).toBe("already styled markdown")
+  expect(highlightSpy).not.toHaveBeenCalled()
+
+  codeRenderable.initialStyledText = undefined
+  await renderOnce()
+  expect(highlightSpy).toHaveBeenCalledTimes(1)
+
+  mockClient.resolveAllHighlightOnce()
+  await waitForHighlight(codeRenderable)
+  highlightSpy.mockRestore()
+})
+
 test("CodeRenderable - streaming mode respects drawUnstyledText only for initial content", async () => {
   const syntaxStyle = SyntaxStyle.fromStyles({
     default: { fg: RGBA.fromValues(1, 1, 1, 1) },
@@ -1892,6 +1924,44 @@ test("CodeRenderable - content update during async highlighting does not get ove
   expect(codeRenderable.plainText).toBe("line1\nline2\nline3\nline4\nline5")
 })
 
+test("CodeRenderable - streaming keeps one highlight in flight and replays the latest content", async () => {
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+  const highlightSpy = spyOn(mockClient, "highlightOnce")
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-single-flight",
+    content: "first",
+    filetype: "markdown",
+    syntaxStyle: SyntaxStyle.create(),
+    treeSitterClient: mockClient,
+    streaming: true,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  expect(highlightSpy.mock.calls.length).toBe(1)
+
+  codeRenderable.content = "second"
+  await renderOnce()
+  codeRenderable.content = "latest"
+  await renderOnce()
+
+  expect(highlightSpy.mock.calls.length).toBe(1)
+
+  mockClient.resolveHighlightOnce()
+  await waitForHighlight(codeRenderable)
+  await renderOnce()
+
+  expect(highlightSpy.mock.calls.length).toBe(2)
+
+  mockClient.resolveHighlightOnce()
+  await waitForHighlight(codeRenderable)
+  await renderOnce()
+
+  expect(codeRenderable.plainText).toBe("latest")
+  highlightSpy.mockRestore()
+})
+
 test("CodeRenderable - lineCount is correct immediately with drawUnstyledText=false", async () => {
   const syntaxStyle = SyntaxStyle.fromStyles({
     default: { fg: RGBA.fromValues(1, 1, 1, 1) },
@@ -2430,21 +2500,65 @@ test("CodeRenderable - coalesces requestRender across streaming content updates"
 })
 
 test("CodeRenderable - same-line streaming update keeps layout clean", async () => {
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
   const codeRenderable = new CodeRenderable(currentRenderer, {
     id: "test-code",
     content: "Hello",
+    filetype: "markdown",
     syntaxStyle: SyntaxStyle.create(),
+    treeSitterClient: mockClient,
     streaming: true,
     width: "100%",
   })
 
   currentRenderer.root.add(codeRenderable)
   await renderOnce()
+  mockClient.resolveAllHighlightOnce()
+  await waitForHighlight(codeRenderable)
+  await renderOnce()
   expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(false)
 
   codeRenderable.content = "Hello world"
+  expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(false)
+
+  await renderOnce()
+  mockClient.resolveAllHighlightOnce()
+  await waitForHighlight(codeRenderable)
 
   expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(false)
+})
+
+test("CodeRenderable - async chunk transform marks changed streaming dimensions dirty", async () => {
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code",
+    content: "Hello",
+    filetype: "markdown",
+    syntaxStyle: SyntaxStyle.create(),
+    treeSitterClient: mockClient,
+    streaming: true,
+    width: "100%",
+    onChunks: (chunks, context) => {
+      if (context.content === "Hello") return chunks
+      return chunks.map((chunk, index) => (index === 0 ? { ...chunk, text: chunk.text + "\nworld" } : chunk))
+    },
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  mockClient.resolveAllHighlightOnce()
+  await waitForHighlight(codeRenderable)
+  await renderOnce()
+  expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(false)
+
+  codeRenderable.content = "Hello world"
+  await renderOnce()
+  mockClient.resolveAllHighlightOnce()
+  await waitForHighlight(codeRenderable)
+
+  expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(true)
 })
 
 test("CodeRenderable - new streaming line marks layout dirty", async () => {

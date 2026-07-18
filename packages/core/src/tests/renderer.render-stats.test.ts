@@ -2,9 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { RGBA } from "../lib/RGBA.js"
 import { TextRenderable } from "../renderables/Text.js"
 import { createTestRenderer, type TestRenderer } from "../testing/test-renderer.js"
-import { resolveRenderLib, type NativeRenderStats, type RenderLib } from "../zig.js"
+import { resolveRenderLib, type NativeRenderStats, type RenderLib, type RendererHandle } from "../zig.js"
 import type { OptimizedBuffer } from "../buffer.js"
-import type { Pointer } from "../platform/ffi.js"
 
 const fg = RGBA.fromInts(255, 255, 255, 255)
 
@@ -25,7 +24,7 @@ function expectRenderedStats(stats: NativeRenderStats, expectedFrameCount: numbe
   expect(stats.nativeStdoutWriteTime).toBeGreaterThanOrEqual(0)
 }
 
-function createNativeRenderer(lib: RenderLib, width: number, height: number): Pointer {
+function createNativeRenderer(lib: RenderLib, width: number, height: number): RendererHandle {
   const rendererPtr = lib.createRenderer(width, height, { bufferedOutput: "memory" })
   if (!rendererPtr) {
     throw new Error("Failed to create native render-stats test renderer")
@@ -34,7 +33,7 @@ function createNativeRenderer(lib: RenderLib, width: number, height: number): Po
   return rendererPtr
 }
 
-function warmNativeRenderer(lib: RenderLib, rendererPtr: Pointer): OptimizedBuffer {
+function warmNativeRenderer(lib: RenderLib, rendererPtr: RendererHandle): OptimizedBuffer {
   const nextBuffer = lib.getNextBuffer(rendererPtr)
   lib.render(rendererPtr, false)
   return nextBuffer
@@ -42,7 +41,7 @@ function warmNativeRenderer(lib: RenderLib, rendererPtr: Pointer): OptimizedBuff
 
 describe("native renderer stats", () => {
   const lib = resolveRenderLib()
-  let rendererPtr: Pointer | null = null
+  let rendererPtr: RendererHandle | null = null
 
   afterEach(() => {
     if (rendererPtr) {
@@ -92,6 +91,25 @@ describe("native renderer stats", () => {
     lib.render(rendererPtr, true)
 
     expectRenderedStats(lib.getRenderStats(rendererPtr), 3, 10)
+  })
+
+  test("partial native renders retain the frame and diff only the requested region", () => {
+    rendererPtr = createNativeRenderer(lib, 4, 2)
+    const nextBuffer = warmNativeRenderer(lib, rendererPtr)
+
+    nextBuffer.drawText("a", 0, 0, fg)
+    nextBuffer.drawText("b", 3, 1, fg)
+    lib.renderPartial(rendererPtr, 0, 0, 1, 1)
+    expectRenderedStats(lib.getRenderStats(rendererPtr), 2, 1)
+
+    // The second changed cell remains pending because it was outside the
+    // region. A full diff sees exactly that cell, not a cleared frame.
+    lib.render(rendererPtr, false, true)
+    expectRenderedStats(lib.getRenderStats(rendererPtr), 3, 1)
+
+    // Both buffers now retain the committed frame, so another full diff is a no-op.
+    lib.render(rendererPtr, false, true)
+    expectRenderedStats(lib.getRenderStats(rendererPtr), 4, 0)
   })
 })
 

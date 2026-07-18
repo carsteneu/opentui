@@ -528,6 +528,13 @@ const DEFAULT_FORWARDED_ENV_KEYS = [
 const NATIVE_RENDER_STATUS_SKIPPED = 1
 const NATIVE_RENDER_STATUS_FAILED = 2
 
+type PartialRenderRegion = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 // Kitty keyboard protocol flags
 // See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
 const KITTY_FLAG_DISAMBIGUATE = 0b1 // Report disambiguated escape codes
@@ -791,6 +798,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   // rendering remain pending for the next frame.
   private ordinaryRenderGeneration: number = 0
   private committedOrdinaryRenderGeneration: number = 0
+  private ordinaryRequestsDuringFrame = new Set<Renderable>()
   // Tracks whether the last native render committed its frame bytes to the
   // terminal. A FAILED or backpressured frame leaves the terminal out of sync
   // with currentRenderBuffer; partial rendering is unsafe until a full frame
@@ -1511,7 +1519,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.scheduleRenderTimer()
   }
 
-  public requestRender() {
+  public requestRender(source?: Renderable) {
     if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED) {
       return
     }
@@ -1550,6 +1558,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // NOTE: Using a frame callback that causes a re-render while already rendering
     // leads to a continuous loop of renders.
     if (this.rendering) {
+      if (source) {
+        this.ordinaryRequestsDuringFrame.add(source)
+        return
+      }
       this.immediateRerenderRequested = true
       return
     }
@@ -4482,6 +4494,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.renderTimeout = null
 
     this.rendering = true
+    this.ordinaryRequestsDuringFrame.clear()
     if (this.renderTimeout) {
       this.clock.clearTimeout(this.renderTimeout)
       this.renderTimeout = null
@@ -4499,9 +4512,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.renderStats.frameCount++
       const overallStart = performance.now()
 
+      const animationRequestStart = performance.now()
       const frameRequests = Array.from(this.animationRequest.values())
       this.animationRequest.clear()
-      const animationRequestStart = performance.now()
       for (const callback of frameRequests) {
         callback(deltaTime)
         this.dropLive()
@@ -4520,34 +4533,39 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const end = performance.now()
       this.renderStats.frameCallbackTime = end - start
 
-      const ordinaryRenderGeneration = this.ordinaryRenderGeneration
-
       // Partial-render fast path: when the only invalidation since the last
       // frame is from renderables that opted into the partial path, skip the
       // full root tree walk and redraw just those renderables into the
       // persistent buffer. The native diff then emits only the changed cells.
       // Any guard failure upgrades to a normal full frame.
-      let didPartial = false
+      let partialRegion: PartialRenderRegion | null = null
       if (this.partialFramePending && this.canPartialRender()) {
-        didPartial = this.renderPartialFrame(deltaTime)
+        partialRegion = this.renderPartialFrame(deltaTime)
       }
       this.partialFramePending = false
       this.partialRequests.clear()
 
-      if (!didPartial) {
+      if (!partialRegion) {
+        // Full tree renders build a fresh frame. Native rendering keeps the
+        // committed buffer intact so partial frames can update it in place.
+        this.nextRenderBuffer.clear(this.backgroundColor)
         this.root.render(this.nextRenderBuffer, deltaTime)
 
         for (const postProcessFn of this.postProcessFns) {
           postProcessFn(this.nextRenderBuffer, deltaTime)
         }
-        this.committedOrdinaryRenderGeneration = ordinaryRenderGeneration
+        const pendingSource = [...this.ordinaryRequestsDuringFrame].some(
+          (renderable) => !renderable.isDestroyed && renderable.isDirty && renderable.isInRenderPath(),
+        )
+        if (pendingSource) this.immediateRerenderRequested = true
+        else this.committedOrdinaryRenderGeneration = this.ordinaryRenderGeneration
       }
 
       this._console.renderToBuffer(this.nextRenderBuffer)
 
       // If destroy() was requested during this frame, skip native work and scheduling.
       if (!this._isDestroyed) {
-        const nativeStatus = this.renderNative() ?? "rendered"
+        const nativeStatus = this.renderNative(partialRegion) ?? "rendered"
         if (nativeStatus === "rendered") this.frameCount++
         if (this.getElapsedMs(now, this.lastFpsTime) >= 1000) {
           this.currentFps = this.frameCount
@@ -4659,6 +4677,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (this.forceFullRepaintRequested) return false
     if (!this.lastFrameCommitted) return false
     if (this._console.visible) return false
+    if (this.debugOverlay.enabled) return false
     if (this.root.getLayoutNode().isDirty()) return false
     if (this.ordinaryRenderGeneration !== this.committedOrdinaryRenderGeneration) return false
 
@@ -4703,18 +4722,16 @@ export class CliRenderer extends EventEmitter implements RenderContext {
    * cell. The spinner overdraws its own cells; the native diff emits only
    * those changed cells to the terminal.
    */
-  private renderPartialFrame(deltaTime: number): boolean {
+  private renderPartialFrame(deltaTime: number): PartialRenderRegion | null {
     // Clear hit-grid scissor rects to match the full-frame contract; the
     // next full frame re-establishes them. Partial frames do not push
     // scissor rects because they skip the render-list walk.
     this.clearHitGridScissorRects()
 
-    // The native layer clears nextRenderBuffer to the background colour after
-    // every present (renderer.zig prepareRenderFrameWithWriter). A partial
-    // frame would therefore diff spinner cells against a blank buffer and emit
-    // clears for every other cell — black screen with spinner. Restore the last
-    // committed frame so the diff sees only the spinner delta.
-    this.nextRenderBuffer.drawFrameBuffer(0, 0, this.currentRenderBuffer)
+    let left = this.width
+    let top = this.height
+    let right = 0
+    let bottom = 0
 
     for (const renderable of this.partialRequests) {
       if (renderable.isDestroyed) continue
@@ -4722,16 +4739,28 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       // the hit grid, and calls markClean(). It draws into nextRenderBuffer
       // at the renderable's cached absolute screen position.
       try {
-        renderable.render(this.nextRenderBuffer, deltaTime)
+        const bounds = renderable.renderPartial(this.nextRenderBuffer, deltaTime)
+        if (!bounds) continue
+
+        // Expand horizontally by one cell so replacing a wide glyph at either
+        // edge also diffs its leading or continuation cell.
+        left = Math.min(left, Math.max(0, Math.floor(bounds.x) - 1))
+        top = Math.min(top, Math.max(0, Math.floor(bounds.y)))
+        right = Math.max(right, Math.min(this.width, Math.ceil(bounds.x + bounds.width) + 1))
+        bottom = Math.max(bottom, Math.min(this.height, Math.ceil(bounds.y + bounds.height)))
       } catch (error) {
         console.error("Error in partial render callback:", error)
-        return false
+        return null
       }
     }
-    return true
+
+    if (left >= right || top >= bottom) return null
+    return { x: left, y: top, width: right - left, height: bottom - top }
   }
 
-  private renderNative(): "rendered" | "retryable-skip" | "failed" | "blocked" | "backpressured" {
+  private renderNative(
+    partialRegion: PartialRenderRegion | null = null,
+  ): "rendered" | "retryable-skip" | "failed" | "blocked" | "backpressured" {
     if (this.renderingNative) {
       console.error("Rendering called concurrently")
       throw new Error("Rendering called concurrently")
@@ -4766,7 +4795,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
 
       const force = this.forceFullRepaintRequested
-      const nativeStatus = this.lib.render(this.rendererPtr, force)
+      const nativeStatus = partialRegion
+        ? this.lib.renderPartial(
+            this.rendererPtr,
+            partialRegion.x,
+            partialRegion.y,
+            partialRegion.width,
+            partialRegion.height,
+          )
+        : this.lib.render(this.rendererPtr, force, true)
       if (nativeStatus === NATIVE_RENDER_STATUS_SKIPPED || nativeStatus === NATIVE_RENDER_STATUS_FAILED) {
         return this.handleNativeRenderRejection(nativeStatus)
       }

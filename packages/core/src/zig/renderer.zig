@@ -748,7 +748,26 @@ pub const CliRenderer = struct {
     }
 
     // One code path; backend selects writer type at compile time.
+    const RenderRegion = struct {
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    };
+
     pub fn render(self: *CliRenderer, force: bool) RenderStatus {
+        return self.renderRequested(force, null, true);
+    }
+
+    pub fn renderRetained(self: *CliRenderer, force: bool) RenderStatus {
+        return self.renderRequested(force, null, false);
+    }
+
+    pub fn renderRegion(self: *CliRenderer, region: RenderRegion) RenderStatus {
+        return self.renderRequested(false, region, false);
+    }
+
+    fn renderRequested(self: *CliRenderer, force: bool, region: ?RenderRegion, clear_next: bool) RenderStatus {
         // Backpressure: skipping must NOT update lastRenderTime so the next
         // successful render sees the full accumulated delta (catch-up).
         if (self.backend.prepareFrame() != .ok) {
@@ -769,7 +788,7 @@ pub const CliRenderer = struct {
             inline else => |*b| {
                 b.beginFrame();
                 var w = b.writer();
-                self.prepareRenderFrameWithWriter(&w, force, false);
+                self.prepareRenderFrameWithWriter(&w, force, false, region, clear_next);
                 write_status = b.endFrame();
             },
         }
@@ -958,7 +977,7 @@ pub const CliRenderer = struct {
                     );
 
                     if (finalize_frame) {
-                        self.prepareRenderFrameWithWriter(&w, redraw_footer, true);
+                        self.prepareRenderFrameWithWriter(&w, redraw_footer, true, null, true);
                         write_status = b.endFrame();
                         const status = renderStatusFromWrite(write_status);
                         if (status == .failed) {
@@ -1013,7 +1032,7 @@ pub const CliRenderer = struct {
                 self.splitBatchRedrawFooter = self.splitBatchRedrawFooter or redraw_footer;
 
                 if (finalize_frame) {
-                    self.prepareRenderFrameWithWriter(&w, self.splitBatchRedrawFooter, true);
+                    self.prepareRenderFrameWithWriter(&w, self.splitBatchRedrawFooter, true, null, true);
                     write_status = b.endFrame();
 
                     const status = renderStatusFromWrite(write_status);
@@ -1299,7 +1318,7 @@ pub const CliRenderer = struct {
             inline else => |*b| {
                 b.beginFrame();
                 var w = b.writer();
-                self.prepareRenderFrameWithWriter(&w, redraw_footer, false);
+                self.prepareRenderFrameWithWriter(&w, redraw_footer, false, null, true);
                 write_status = b.endFrame();
             },
         }
@@ -1318,11 +1337,23 @@ pub const CliRenderer = struct {
     /// (buffered frame append or feed streaming) without dispatch in the render path.
     /// `sync_started` is true only when the caller already opened the
     /// synchronized-update envelope for a batched split-footer commit.
-    pub fn prepareRenderFrameWithWriter(self: *CliRenderer, writer: anytype, force: bool, sync_started: bool) void {
+    pub fn prepareRenderFrameWithWriter(
+        self: *CliRenderer,
+        writer: anytype,
+        force: bool,
+        sync_started: bool,
+        requested_region: ?RenderRegion,
+        clear_next: bool,
+    ) void {
         const renderStartTime = std.time.microTimestamp();
         var cellsUpdated: u32 = 0;
         const palette_force = self.last_rendered_palette_epoch == null or self.last_rendered_palette_epoch.? != self.palette_epoch;
         const should_force = force or self.force_full_repaint or palette_force;
+        const region = if (should_force or self.debugOverlay.enabled) null else requested_region;
+        const start_y = if (region) |value| @min(value.y, self.height) else 0;
+        const end_y = if (region) |value| @min(value.y +| value.height, self.height) else self.height;
+        const start_x = if (region) |value| @min(value.x, self.width) else 0;
+        const end_x = if (region) |value| @min(value.x +| value.width, self.width) else self.width;
 
         // Lazy frame start is the core no-op suppression mechanism. If diffing,
         // cursor state, and pointer state are unchanged, frame_started stays false
@@ -1338,13 +1369,13 @@ pub const CliRenderer = struct {
 
         const hyperlinksEnabled = self.terminal.getCapabilities().hyperlinks;
 
-        for (0..self.height) |uy| {
+        for (start_y..end_y) |uy| {
             const y = @as(u32, @intCast(uy));
 
             var runStart: i64 = -1;
             var runLength: u32 = 0;
 
-            for (0..self.width) |ux| {
+            for (start_x..end_x) |ux| {
                 const x = @as(u32, @intCast(ux));
                 const currentCell = self.currentRenderBuffer.get(x, y);
                 const nextCell = self.nextRenderBuffer.get(x, y);
@@ -1582,7 +1613,15 @@ pub const CliRenderer = struct {
         self.last_rendered_palette_epoch = self.palette_epoch;
         self.force_full_repaint = false;
 
-        self.nextRenderBuffer.clear(self.backgroundColor, null);
+        if (clear_next) {
+            self.nextRenderBuffer.clear(self.backgroundColor, null);
+        }
+
+        if (requested_region != null) {
+            self.hitGridDirty = false;
+            @memset(self.nextHitGrid, 0);
+            return;
+        }
 
         // Compare hit grids before swap to detect changes. This allows TypeScript to
         // know if hover state needs rechecking without manually tracking dirty state.

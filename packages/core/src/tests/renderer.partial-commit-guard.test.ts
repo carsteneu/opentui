@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test"
 import { createTestRenderer, type TestRenderer } from "../testing/test-renderer.js"
 import { ManualClock } from "../testing/manual-clock.js"
+import { TextRenderable } from "../renderables/Text.js"
 
 // Native render status codes (mirror NATIVE_RENDER_STATUS_* in renderer.ts)
 const STATUS_RENDERED = 0
@@ -8,7 +9,10 @@ const STATUS_SKIPPED = 1
 const STATUS_FAILED = 2
 
 type RendererInternals = {
-  lib: { render: (...args: unknown[]) => number }
+  lib: {
+    render: (...args: unknown[]) => number
+    renderPartial: (...args: unknown[]) => number
+  }
   lastFrameCommitted: boolean
   forceFullRepaintRequested: boolean
   _useThread: boolean
@@ -18,7 +22,7 @@ type RendererInternals = {
   ordinaryRenderGeneration: number
   committedOrdinaryRenderGeneration: number
   canPartialRender: () => boolean
-  renderPartialFrame: (deltaTime: number) => boolean
+  renderPartialFrame: (deltaTime: number) => { x: number; y: number; width: number; height: number } | null
   feedIdleRenderScheduled: boolean
 }
 
@@ -126,23 +130,28 @@ describe("partial-render commit guard", () => {
     expect(internals.canPartialRender()).toBe(true)
   })
 
-  test("renderPartialFrame restores currentRenderBuffer into nextRenderBuffer before drawing", () => {
+  test("renderPartialFrame redraws only the bounded region without copying the full buffer", () => {
     const internals = renderer as unknown as RendererInternals
     const drawSpy = spyOn(renderer.nextRenderBuffer, "drawFrameBuffer")
 
-    let restoreCalledBeforeRender = false
+    let rendered = false
     internals.partialRequests.add({
       isDestroyed: false,
-      render: () => {
-        restoreCalledBeforeRender = drawSpy.mock.calls.length > 0
+      screenX: 5,
+      screenY: 3,
+      width: 2,
+      height: 1,
+      renderPartial: () => {
+        rendered = true
+        return { x: 5, y: 3, width: 2, height: 1 }
       },
     })
 
     const result = internals.renderPartialFrame(16)
 
-    expect(result).toBe(true)
-    expect(drawSpy).toHaveBeenCalledWith(0, 0, renderer.currentRenderBuffer)
-    expect(restoreCalledBeforeRender).toBe(true)
+    expect(result).toEqual({ x: 4, y: 3, width: 4, height: 1 })
+    expect(drawSpy).not.toHaveBeenCalled()
+    expect(rendered).toBe(true)
   })
 
   test("requestRender does not eagerly clear a pending partial frame", () => {
@@ -161,4 +170,34 @@ describe("partial-render commit guard", () => {
     expect(internals.partialFramePending).toBe(true)
     expect(internals.partialRequests.size).toBe(1)
   })
+
+  test("a render request handled later in the same full frame is acknowledged", async () => {
+    const internals = renderer as unknown as RendererInternals
+    const text = new TextRenderable(renderer, {
+      content: "same frame",
+      renderBefore() {
+        this.requestRender()
+      },
+    })
+    renderer.root.add(text)
+
+    await (renderer as unknown as { loop: () => Promise<void> }).loop()
+
+    expect(text.isDirty).toBe(false)
+    expect(internals.committedOrdinaryRenderGeneration).toBe(internals.ordinaryRenderGeneration)
+  })
+
+  test("a request that dirties an already rendered node keeps the follow-up frame", async () => {
+    const internals = renderer as unknown as RendererInternals & { renderTimeout: unknown }
+    const first = new TextRenderable(renderer, { content: "first" })
+    renderer.root.add(first)
+    renderer.addPostProcessFn(() => first.requestRender())
+
+    await (renderer as unknown as { loop: () => Promise<void> }).loop()
+
+    expect(first.isDirty).toBe(true)
+    expect(internals.committedOrdinaryRenderGeneration).toBeLessThan(internals.ordinaryRenderGeneration)
+    expect(internals.renderTimeout).not.toBeNull()
+  })
+
 })

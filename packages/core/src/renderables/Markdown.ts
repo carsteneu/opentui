@@ -633,6 +633,7 @@ export class MarkdownRenderable extends Renderable {
     onChunks: OnChunksCallback = this._linkifyMarkdownChunks,
     baseHighlight?: string,
     initialStyledText?: StyledText,
+    deferStreamingHighlight: boolean = false,
   ): CodeRenderable {
     return new CodeRenderable(this.ctx, {
       id,
@@ -645,6 +646,7 @@ export class MarkdownRenderable extends Renderable {
       drawUnstyledText: initialStyledText !== undefined,
       streaming: true,
       initialStyledText,
+      deferStreamingHighlight,
       baseHighlight,
       onChunks,
       treeSitterClient: this._treeSitterClient,
@@ -1512,6 +1514,7 @@ export class MarkdownRenderable extends Renderable {
       this._linkifyMarkdownChunks,
       undefined,
       this.createInitialStyledText(token),
+      true,
     )
     renderable.marginTop = marginTop
     return { renderable, canUpdateInPlace: true }

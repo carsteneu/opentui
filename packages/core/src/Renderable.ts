@@ -342,8 +342,7 @@ export abstract class Renderable extends BaseRenderable {
     // Cached at construction: every term is class-static (prototype identity
     // or constant-returning hooks), so per-frame checks reduce to field reads.
     this._needsFrameUpdate = this.onUpdate !== Renderable.prototype.onUpdate
-    this._reuseScissorOk =
-      this.getScissorRect === Renderable.prototype.getScissorRect || this.isScissorRectReusable()
+    this._reuseScissorOk = this.getScissorRect === Renderable.prototype.getScissorRect || this.isScissorRectReusable()
     this._reuseFilterOk = !this._hasVisibleChildFilter() || this.isVisibleChildFilterReusable()
 
     this.yogaNode = Yoga.Node.createForOpenTUI()
@@ -549,7 +548,7 @@ export abstract class Renderable extends BaseRenderable {
     if (this._partialEligible && this._ctx.requestPartialRender) {
       this._ctx.requestPartialRender(this)
     } else {
-      this._ctx.requestRender()
+      this._ctx.requestRender(this)
     }
   }
 
@@ -1552,6 +1551,66 @@ export abstract class Renderable extends BaseRenderable {
     }
   }
 
+  /**
+   * Render this node with the opacity and clipping context a full root pass
+   * would have established for it. Returns the visible screen-space bounds.
+   */
+  public renderPartial(
+    buffer: OptimizedBuffer,
+    deltaTime: number,
+  ): { x: number; y: number; width: number; height: number } | null {
+    const ancestors: Renderable[] = []
+    let parent = this.parent
+    while (parent instanceof Renderable) {
+      ancestors.push(parent)
+      parent = parent.parent
+    }
+
+    let left = this._screenX
+    let top = this._screenY
+    let right = left + this.width
+    let bottom = top + this.height
+    const stack: Array<"opacity" | "scissor"> = []
+
+    ancestors.reverse().forEach((ancestor) => {
+      if (ancestor._opacity < 1) {
+        buffer.pushOpacity(ancestor._opacity)
+        stack.push("opacity")
+      }
+      if (ancestor._overflow === "visible" || ancestor.width <= 0 || ancestor.height <= 0) return
+
+      const rect = ancestor.getScissorRect()
+      buffer.pushScissorRect(rect.x, rect.y, rect.width, rect.height)
+      this._ctx.pushHitGridScissorRect(ancestor._screenX, ancestor._screenY, rect.width, rect.height)
+      stack.push("scissor")
+      left = Math.max(left, rect.x)
+      top = Math.max(top, rect.y)
+      right = Math.min(right, rect.x + rect.width)
+      bottom = Math.min(bottom, rect.y + rect.height)
+    })
+
+    if (this._opacity < 1) {
+      buffer.pushOpacity(this._opacity)
+      stack.push("opacity")
+    }
+
+    try {
+      this.render(buffer, deltaTime)
+    } finally {
+      stack.reverse().forEach((entry) => {
+        if (entry === "opacity") {
+          buffer.popOpacity()
+          return
+        }
+        buffer.popScissorRect()
+        this._ctx.popHitGridScissorRect()
+      })
+    }
+
+    if (left >= right || top >= bottom) return null
+    return { x: left, y: top, width: right - left, height: bottom - top }
+  }
+
   protected _hasVisibleChildFilter(): boolean {
     // Presume an override of _getVisibleChildren means this subclass is using
     // the legacy filtering hook, so existing custom renderables keep working.
@@ -1957,7 +2016,7 @@ export class RootRenderable extends Renderable {
       super.updateLayout(deltaTime, this.renderList)
       this.appliedLayoutGeneration = layoutGeneration
       this.appliedRenderListRevision = getRenderListRevision(this._ctx)
-      this.renderListReusable = this._liveCount === 0 && endRenderListCollection()
+      this.renderListReusable = endRenderListCollection()
     }
 
     // 3. Render all collected renderables

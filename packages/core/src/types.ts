@@ -110,7 +110,7 @@ export interface RenderContext extends EventEmitter {
   height: number
   /** Monotonic, bumped once per `loop()` iteration. Lets renderables dedupe per-frame work. */
   frameId: number
-  requestRender: () => void
+  requestRender: (source?: Renderable) => void
   /**
    * Optional: request a partial render frame that only re-renders the given
    * renderable into the persistent buffer, skipping the full root tree walk.

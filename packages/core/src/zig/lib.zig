@@ -708,6 +708,16 @@ export fn render(renderer_handle: NativeHandle, force: bool) u8 {
     return @intFromEnum(object_ptr.render(force));
 }
 
+export fn renderRetained(renderer_handle: NativeHandle, force: bool) u8 {
+    const object_ptr = acquireRenderer(renderer_handle) orelse return @intFromEnum(renderer.RenderStatus.failed);
+    return @intFromEnum(object_ptr.renderRetained(force));
+}
+
+export fn renderPartial(renderer_handle: NativeHandle, x: u32, y: u32, width: u32, height: u32) u8 {
+    const object_ptr = acquireRenderer(renderer_handle) orelse return @intFromEnum(renderer.RenderStatus.failed);
+    return @intFromEnum(object_ptr.renderRegion(.{ .x = x, .y = y, .width = width, .height = height }));
+}
+
 export fn repaintSplitFooter(
     renderer_handle: NativeHandle,
     pinnedRenderOffset: u32,

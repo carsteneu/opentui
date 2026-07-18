@@ -371,6 +371,7 @@ export class ScrollBoxRenderable extends BoxRenderable {
       onChange: (position) => {
         this.content.translateY = -position
         this.updateStickyState()
+        verticalScrollbarOptions?.onChange?.(position)
       },
     })
     super.add(this.verticalScrollBar)
@@ -387,6 +388,7 @@ export class ScrollBoxRenderable extends BoxRenderable {
       onChange: (position) => {
         this.content.translateX = -position
         this.updateStickyState()
+        horizontalScrollbarOptions?.onChange?.(position)
       },
     })
     this.wrapper.add(this.horizontalScrollBar)
@@ -876,12 +878,26 @@ export class ScrollBoxRenderable extends BoxRenderable {
   }
 
   public set verticalScrollbarOptions(options: ScrollBoxOptions["verticalScrollbarOptions"]) {
-    Object.assign(this.verticalScrollBar, options)
+    Object.assign(this.verticalScrollBar, {
+      ...options,
+      onChange: (position: number) => {
+        this.content.translateY = -position
+        this.updateStickyState()
+        options?.onChange?.(position)
+      },
+    })
     this.requestRender()
   }
 
   public set horizontalScrollbarOptions(options: ScrollBoxOptions["horizontalScrollbarOptions"]) {
-    Object.assign(this.horizontalScrollBar, options)
+    Object.assign(this.horizontalScrollBar, {
+      ...options,
+      onChange: (position: number) => {
+        this.content.translateX = -position
+        this.updateStickyState()
+        options?.onChange?.(position)
+      },
+    })
     this.requestRender()
   }
 

@@ -61,6 +61,10 @@ export class ScrollBarRenderable extends Renderable {
     return this._viewportSize
   }
 
+  set onChange(value: ScrollBarOptions["onChange"]) {
+    this._onChange = value
+  }
+
   set scrollSize(value: number) {
     if (value === this.scrollSize) return
     this._scrollSize = value

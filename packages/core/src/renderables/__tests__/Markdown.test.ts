@@ -2676,6 +2676,29 @@ test("internalBlockMode=top-level preserves top-level block boundaries", async (
   expect(md._stableBlockCount).toBe(3)
 })
 
+test("streaming top-level prose defers duplicate highlighting until completion", async () => {
+  const client = createMockTreeSitterClient()
+  client.setMockResult({ highlights: [] })
+  const md = createMarkdownRenderable({
+    id: "markdown-top-level-deferred-highlight",
+    content: "Already parsed and styled prose",
+    syntaxStyle,
+    treeSitterClient: client,
+    streaming: true,
+    internalBlockMode: "top-level",
+  })
+
+  renderer.root.add(md)
+  await renderOnce()
+
+  expect(client.isHighlighting()).toBe(false)
+
+  md.streaming = false
+  await renderOnce()
+
+  expect(client.isHighlighting()).toBe(true)
+})
+
 test("internalBlockMode=top-level reuses table renderable when rows stream in", async () => {
   const md = createMarkdownRenderable({
     id: "markdown-top-level-table-reuse",
