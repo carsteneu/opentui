@@ -235,6 +235,7 @@ function colorsEqual(left?: RGBA, right?: RGBA): boolean {
 export interface BlockState {
   token: MarkedToken
   tokenRaw: string // Cache raw for comparison
+  sourceTokenEnd?: number
   marginTop?: number
   renderable: Renderable
   tableContentCache?: TableContentCache
@@ -1117,19 +1118,23 @@ export class MarkdownRenderable extends Renderable {
     return renderTokens
   }
 
-  private buildTopLevelRenderBlocks(tokens: MarkedToken[]): MarkdownRenderBlock[] {
+  private buildTopLevelRenderBlocks(
+    tokens: MarkedToken[],
+    startIndex: number = 0,
+    previousToken?: MarkedToken,
+  ): MarkdownRenderBlock[] {
     const blocks: MarkdownRenderBlock[] = []
     let gapBefore = ""
 
-    for (let i = 0; i < tokens.length; i += 1) {
+    for (let i = startIndex; i < tokens.length; i += 1) {
       const token = tokens[i]
       if (token.type === "space") {
         gapBefore += token.raw
         continue
       }
 
-      const prev = blocks[blocks.length - 1]
-      const marginTop = prev && this.shouldAddTopLevelMargin(prev.token, token, gapBefore) ? 1 : 0
+      const prev = blocks[blocks.length - 1]?.token ?? previousToken
+      const marginTop = prev && this.shouldAddTopLevelMargin(prev, token, gapBefore) ? 1 : 0
 
       blocks.push({
         token,
@@ -1453,6 +1458,7 @@ export class MarkdownRenderable extends Renderable {
   ): void {
     state.token = block.token
     state.tokenRaw = block.token.raw
+    state.sourceTokenEnd = block.sourceTokenEnd
     state.marginTop = block.marginTop
     state.tableContentCache = tableContentCache
   }
@@ -1757,10 +1763,13 @@ export class MarkdownRenderable extends Renderable {
   }
 
   private updateTopLevelBlocks(tokens: MarkedToken[], forceTableRefresh: boolean): void {
-    const blocks = this.buildTopLevelRenderBlocks(tokens)
-    this._stableBlockCount = this.getStableBlockCount(blocks, this._parseState?.stableTokenCount ?? 0)
+    const stableTokenCount = this._parseState?.stableTokenCount ?? 0
+    const reusableBlockCount = this._streaming && !forceTableRefresh ? this.getReusableBlockCount(stableTokenCount) : 0
+    const previousState = this._blockStates[reusableBlockCount - 1]
+    const blocks = this.buildTopLevelRenderBlocks(tokens, previousState?.sourceTokenEnd ?? 0, previousState?.token)
+    this._stableBlockCount = reusableBlockCount + this.getStableBlockCount(blocks, stableTokenCount)
 
-    let blockIndex = 0
+    let blockIndex = reusableBlockCount
     for (let i = 0; i < blocks.length; i += 1) {
       const block = blocks[i]
       const existing = this._blockStates[blockIndex]
@@ -1810,6 +1819,7 @@ export class MarkdownRenderable extends Renderable {
             this._blockStates[blockIndex] = {
               token: block.token,
               tokenRaw: block.token.raw,
+              sourceTokenEnd: block.sourceTokenEnd,
               marginTop: block.marginTop,
               renderable: custom.renderable,
               tableContentCache: custom.tableContentCache,
@@ -1841,6 +1851,7 @@ export class MarkdownRenderable extends Renderable {
         this._blockStates[blockIndex] = {
           token: block.token,
           tokenRaw: block.token.raw,
+          sourceTokenEnd: block.sourceTokenEnd,
           marginTop: block.marginTop,
           renderable: next.renderable,
           tableContentCache: next.tableContentCache,
@@ -1854,6 +1865,23 @@ export class MarkdownRenderable extends Renderable {
       const removed = this._blockStates.pop()!
       removed.renderable.destroyRecursively()
     }
+  }
+
+  private getReusableBlockCount(stableTokenCount: number): number {
+    let low = 0
+    let high = this._blockStates.length
+
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2)
+      const sourceTokenEnd = this._blockStates[middle]?.sourceTokenEnd
+      if (sourceTokenEnd !== undefined && sourceTokenEnd <= stableTokenCount) {
+        low = middle + 1
+        continue
+      }
+      high = middle
+    }
+
+    return low
   }
 
   private canUpdateBlockRenderable(renderable: Renderable, token: MarkedToken): boolean {

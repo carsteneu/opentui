@@ -3277,6 +3277,35 @@ test("internalBlockMode=top-level exposes a conservative stable block prefix", a
   expect(md._stableBlockCount).toBe(1)
 })
 
+test("internalBlockMode=top-level does not scan stable blocks while streaming", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-top-level-skips-stable-prefix",
+    content: "# Title\n\nPara 1\n\nPara 2\n\nPara 3\n\n",
+    syntaxStyle,
+    streaming: true,
+    internalBlockMode: "top-level",
+  })
+
+  renderer.root.add(md)
+  await renderMarkdownRenderable(md)
+
+  const stableState = md._blockStates[0]!
+  let stableTokenReads = 0
+  md._blockStates[0] = new Proxy(stableState, {
+    get(target, property, receiver) {
+      if (property === "token") stableTokenReads += 1
+      return Reflect.get(target, property, receiver)
+    },
+  })
+
+  md.content += "Para 4"
+
+  expect(md._stableBlockCount).toBe(3)
+  expect(stableTokenReads).toBe(0)
+  await renderMarkdownRenderable(md)
+  expect(captureFrame()).toContain("Para 4")
+})
+
 test("default block mode still coalesces ordinary markdown blocks", async () => {
   const md = createMarkdownRenderable({
     id: "markdown-default-coalesced-blocks",
