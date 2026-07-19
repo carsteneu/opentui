@@ -344,10 +344,7 @@ export const {
 
       case "contentUpdate":
         if (node instanceof MarkdownRenderable) {
-          node.contentUpdate = {
-            content: decodeHTML(value.content),
-            appended: value.appended === undefined ? undefined : decodeHTML(value.appended),
-          }
+          node.contentUpdate = value
         }
         break
 

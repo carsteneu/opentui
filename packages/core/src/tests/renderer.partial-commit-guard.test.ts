@@ -171,8 +171,8 @@ describe("partial-render commit guard", () => {
     expect(internals.partialRequests.size).toBe(1)
   })
 
-  test("a render request handled later in the same full frame is acknowledged", async () => {
-    const internals = renderer as unknown as RendererInternals
+  test("a same-frame render request settles after a pending layout follow-up", async () => {
+    const internals = renderer as unknown as RendererInternals & { renderTimeout: unknown }
     const text = new TextRenderable(renderer, {
       content: "same frame",
       renderBefore() {
@@ -184,7 +184,13 @@ describe("partial-render commit guard", () => {
     await (renderer as unknown as { loop: () => Promise<void> }).loop()
 
     expect(text.isDirty).toBe(false)
+    expect(internals.committedOrdinaryRenderGeneration).toBeLessThan(internals.ordinaryRenderGeneration)
+    expect(internals.renderTimeout).not.toBeNull()
+
+    await (renderer as unknown as { loop: () => Promise<void> }).loop()
+
     expect(internals.committedOrdinaryRenderGeneration).toBe(internals.ordinaryRenderGeneration)
+    expect(internals.renderTimeout).toBeNull()
   })
 
   test("a request that dirties an already rendered node keeps the follow-up frame", async () => {
@@ -199,5 +205,4 @@ describe("partial-render commit guard", () => {
     expect(internals.committedOrdinaryRenderGeneration).toBeLessThan(internals.ordinaryRenderGeneration)
     expect(internals.renderTimeout).not.toBeNull()
   })
-
 })

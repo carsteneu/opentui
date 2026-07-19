@@ -9,7 +9,7 @@ afterEach(() => {
   testSetup?.renderer.destroy()
 })
 
-test("markdown contentUpdate forwards a decoded append suffix", async () => {
+test("markdown contentUpdate preserves a dynamic append suffix", async () => {
   const [update, setUpdate] = createSignal({ content: "Streaming tail", appended: undefined as string | undefined })
   let markdown: MarkdownRenderable | undefined
 
@@ -29,6 +29,6 @@ test("markdown contentUpdate forwards a decoded append suffix", async () => {
   setUpdate({ content: "Streaming tail &amp; grows", appended: " &amp; grows" })
   await testSetup.renderOnce()
 
-  expect(markdown?.content).toBe("Streaming tail & grows")
-  expect(markdown?._parseState?.content).toBe("Streaming tail & grows")
+  expect(markdown?.content).toBe("Streaming tail &amp; grows")
+  expect(markdown?._parseState?.content).toBe("Streaming tail &amp; grows")
 })

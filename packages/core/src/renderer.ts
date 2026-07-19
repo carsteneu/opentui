@@ -1490,7 +1490,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // Frame bytes were dropped (see renderer-output.zig endFrame). Cells emitted
     // during the diff pass were already synced into currentRenderBuffer, so the
     // buffer now claims content the terminal never received. Only a forced full
-    // repaint repairs that desync — arm it here; the loop schedules the retry.
+    // repaint repairs that desync — arm it here for the next requested frame.
     this.forceFullRepaintRequested = true
     this.lastFrameCommitted = false
     console.error("[CliRenderer] Native frame render failed; forcing a full repaint on the next frame")
@@ -4557,7 +4557,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         const pendingSource = [...this.ordinaryRequestsDuringFrame].some(
           (renderable) => !renderable.isDestroyed && renderable.isDirty && renderable.isInRenderPath(),
         )
-        if (pendingSource) this.immediateRerenderRequested = true
+        if (this.root.getLayoutNode().isDirty() || pendingSource) this.immediateRerenderRequested = true
         else this.committedOrdinaryRenderGeneration = this.ordinaryRenderGeneration
       }
 
@@ -4635,9 +4635,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         } else if (nativeStatus === "failed") {
           this.immediateRerenderRequested = false
           this.renderTimeout = null
-          // A failed frame armed forceFullRepaintRequested; without a scheduled
-          // retry the repaint would wait for an unrelated render request.
-          this.scheduleRenderTimer()
         }
       }
     } finally {
