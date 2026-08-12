@@ -1268,11 +1268,14 @@ test("CodeRenderable - coalesces streaming render requests", async () => {
     treeSitterClient: new MockTreeSitterClient(),
     streaming: true,
     drawUnstyledText: false,
+    bg: RGBA.fromValues(0, 0, 0, 1),
   })
 
   currentRenderer.root.add(codeRenderable)
   await flushAsync()
   const renderSpy = spyOn(codeRenderable, "requestRender")
+  const partialSpy = spyOn(currentRenderer, "requestPartialRender")
+  partialSpy.mockClear()
 
   codeRenderable.content = "const a = 1;"
   codeRenderable.content = "const a = 1; const b = 2;"
@@ -1281,7 +1284,52 @@ test("CodeRenderable - coalesces streaming render requests", async () => {
   await flushAsync()
 
   expect(renderSpy).toHaveBeenCalledTimes(1)
+  expect(partialSpy).toHaveBeenCalledTimes(1)
   renderSpy.mockRestore()
+  partialSpy.mockRestore()
+})
+
+test("CodeRenderable - transparent streaming content avoids partial redraws", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-transparent-streaming",
+    content: "const a = 1;",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    width: 20,
+    height: 1,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await flushAsync()
+  const partialSpy = spyOn(codeRenderable, "requestPartialRender")
+
+  codeRenderable.content = "const a = 2;"
+  await flushAsync()
+
+  expect(partialSpy).not.toHaveBeenCalled()
+  partialSpy.mockRestore()
+})
+
+test("CodeRenderable - partial redraw clears replaced and trailing glyphs", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-partial-clear",
+    content: "text.",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    bg: RGBA.fromValues(0, 0, 0, 1),
+    width: 20,
+    height: 1,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  codeRenderable.content = "text more"
+  await renderOnce()
+  expect(captureFrame().split("\n")[0]?.slice(0, 20)).toBe("text more".padEnd(20))
+
+  codeRenderable.content = "text"
+  await renderOnce()
+  expect(captureFrame().split("\n")[0]?.slice(0, 20)).toBe("text".padEnd(20))
 })
 
 test("CodeRenderable - same-line streaming update keeps layout clean", async () => {

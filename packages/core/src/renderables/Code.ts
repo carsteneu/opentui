@@ -7,6 +7,7 @@ import type { OptimizedBuffer } from "../buffer.js"
 import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
 import type { TextChunk } from "../text-buffer.js"
 import { treeSitterToTextChunks } from "../lib/tree-sitter-styled-text.js"
+import type { RGBA } from "../lib/RGBA.js"
 
 export interface HighlightContext {
   content: string
@@ -62,6 +63,7 @@ export class CodeRenderable extends TextBufferRenderable {
   private _initialStyledText?: StyledText
   private _initialStyledTextContent?: string
   private _deferStreamingHighlight: boolean
+  private _partialRendering: boolean = false
   private _hadInitialContent: boolean = false
   private _lastHighlights: SimpleHighlight[] = []
   private _baseHighlight?: string
@@ -95,6 +97,8 @@ export class CodeRenderable extends TextBufferRenderable {
     this._baseHighlight = options.baseHighlight
     this._onHighlight = options.onHighlight
     this._onChunks = options.onChunks
+
+    this.updatePartialEligibility()
 
     if (this._content.length > 0) {
       if (this._initialStyledText && this._initialStyledTextContent === this._content && this._drawUnstyledText) {
@@ -323,6 +327,7 @@ export class CodeRenderable extends TextBufferRenderable {
   set streaming(value: boolean) {
     if (this._streaming !== value) {
       this._streaming = value
+      this.updatePartialEligibility()
       this._hadInitialContent = false
       this._lastHighlights = []
       this.invalidateHighlights()
@@ -640,6 +645,28 @@ export class CodeRenderable extends TextBufferRenderable {
     return this.textBuffer.getLineHighlights(lineIdx)
   }
 
+  public override renderPartial(
+    buffer: OptimizedBuffer,
+    deltaTime: number,
+  ): { x: number; y: number; width: number; height: number } | null {
+    this._partialRendering = true
+    try {
+      return super.renderPartial(buffer, deltaTime)
+    } finally {
+      this._partialRendering = false
+    }
+  }
+
+  protected override onBgChanged(newColor: RGBA): void {
+    this.setPartialEligible(this._streaming && newColor.a === 1)
+  }
+
+  private updatePartialEligibility(): void {
+    // A retained partial redraw must be able to erase stale glyphs without
+    // destroying content below a transparent Code overlay.
+    this.setPartialEligible(this._streaming && this._defaultBg.a === 1)
+  }
+
   protected renderSelf(buffer: OptimizedBuffer): void {
     if (this._highlightsDirty) {
       if (this.isDestroyed) return
@@ -671,6 +698,9 @@ export class CodeRenderable extends TextBufferRenderable {
     }
 
     if (!this._shouldRenderTextBuffer) return
+    if (this._partialRendering) {
+      buffer.fillRect(this._screenX, this._screenY, this.width, this.height, this._defaultBg)
+    }
     super.renderSelf(buffer)
   }
 }
