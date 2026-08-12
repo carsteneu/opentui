@@ -11,6 +11,7 @@ import type {
   InputRenderable,
   InputRenderableOptions,
   KeyEvent,
+  MarkdownContentUpdate,
   MarkdownOptions,
   MarkdownRenderable,
   RenderableOptions,
@@ -165,7 +166,9 @@ export type CodeProps = ComponentProps<CodeOptions, CodeRenderable>
 
 export type ImageProps = ComponentProps<ImageRenderableOptions, ImageRenderable>
 
-export type MarkdownProps = ComponentProps<MarkdownOptions, MarkdownRenderable>
+export type MarkdownProps = ComponentProps<MarkdownOptions, MarkdownRenderable> & {
+  contentUpdate?: MarkdownContentUpdate
+}
 
 // ============================================================================
 // Extended/Dynamic Component System

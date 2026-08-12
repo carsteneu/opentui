@@ -4,6 +4,7 @@ export interface ParseState {
   content: string
   tokens: MarkedToken[]
   stableTokenCount?: number
+  tokenRawLength?: number
 }
 
 /**
@@ -14,6 +15,7 @@ export function parseMarkdownIncremental(
   newContent: string,
   prevState: ParseState | null,
   trailingUnstable: number = 2,
+  trustedAppendedContent?: string,
 ): ParseState {
   if (!prevState || prevState.tokens.length === 0) {
     try {
@@ -22,9 +24,87 @@ export function parseMarkdownIncremental(
         content: newContent,
         tokens,
         stableTokenCount: Math.max(0, tokens.length - trailingUnstable),
+        tokenRawLength: getTokenRawLength(tokens),
       }
     } catch {
-      return { content: newContent, tokens: [], stableTokenCount: 0 }
+      return { content: newContent, tokens: [], stableTokenCount: 0, tokenRawLength: 0 }
+    }
+  }
+
+  const appended =
+    trustedAppendedContent !== undefined && newContent === prevState.content + trustedAppendedContent
+      ? trustedAppendedContent
+      : newContent.startsWith(prevState.content)
+        ? newContent.slice(prevState.content.length)
+        : ""
+  const tail = prevState.tokens.at(-1)
+  const previousTokenRawLength = prevState.tokenRawLength ?? getTokenRawLength(prevState.tokens)
+  const proseParts = appended.includes("\n") ? appended.split(/(\n{2,})/) : []
+  if (
+    proseParts.length > 1 &&
+    !appended.includes("\r") &&
+    proseParts.every((part, index) =>
+      index % 2 === 1 ? /^\n{2,}$/.test(part) : !part.includes("\n") && (index === 0 || !part || /^\p{L}/u.test(part)),
+    ) &&
+    tail?.type === "paragraph" &&
+    tail.raw === tail.text &&
+    !tail.raw.includes("\n") &&
+    !tail.raw.includes("\r") &&
+    /^\p{L}/u.test(tail.raw) &&
+    previousTokenRawLength === prevState.content.length
+  ) {
+    const tokens: MarkedToken[] = [
+      ...prevState.tokens.slice(0, -1),
+      {
+        ...tail,
+        raw: tail.raw + proseParts[0],
+        text: tail.text + proseParts[0],
+        tokens: Lexer.lexInline(tail.text + proseParts[0], { gfm: true }),
+      },
+      ...proseParts.slice(1).flatMap((part, index): MarkedToken[] => {
+        if (index % 2 === 0) return [{ type: "space", raw: part }]
+        if (!part) return []
+        return [{ type: "paragraph", raw: part, text: part, tokens: Lexer.lexInline(part, { gfm: true }) }]
+      }),
+    ]
+    return {
+      content: newContent,
+      tokens,
+      stableTokenCount: trailingUnstable === 0 ? tokens.length : Math.max(0, prevState.tokens.length - 1),
+      tokenRawLength: newContent.length,
+    }
+  }
+
+  if (
+    appended &&
+    !appended.includes("\n") &&
+    !appended.includes("\r") &&
+    tail?.type === "paragraph" &&
+    tail.raw === tail.text &&
+    !tail.raw.includes("\n") &&
+    !tail.raw.includes("\r") &&
+    /^\p{L}/u.test(tail.raw) &&
+    previousTokenRawLength === prevState.content.length
+  ) {
+    const text = tail.text + appended
+    const inline = tail.tokens
+    const inlineText = inline?.length === 1 && inline[0].type === "text" ? inline[0] : undefined
+    return {
+      content: newContent,
+      tokens: [
+        ...prevState.tokens.slice(0, -1),
+        {
+          ...tail,
+          raw: text,
+          text,
+          tokens:
+            inlineText && inlineText.raw === tail.text && /^[\p{L}\p{N} ]+$/u.test(appended)
+              ? [{ ...inlineText, raw: text, text }]
+              : Lexer.lexInline(text, { gfm: true }),
+        },
+      ],
+      stableTokenCount: trailingUnstable === 0 ? prevState.tokens.length : prevState.tokens.length - 1,
+      tokenRawLength: newContent.length,
     }
   }
 
@@ -58,6 +138,7 @@ export function parseMarkdownIncremental(
       content: newContent,
       tokens: stableTokens,
       stableTokenCount: stableTokens.length,
+      tokenRawLength: offset,
     }
   }
 
@@ -67,13 +148,23 @@ export function parseMarkdownIncremental(
       content: newContent,
       tokens: [...stableTokens, ...newTokens],
       stableTokenCount: trailingUnstable === 0 ? stableTokens.length + newTokens.length : stableTokens.length,
+      tokenRawLength: offset + getTokenRawLength(newTokens),
     }
   } catch {
     try {
       const fullTokens = Lexer.lex(newContent, { gfm: true }) as MarkedToken[]
-      return { content: newContent, tokens: fullTokens, stableTokenCount: 0 }
+      return {
+        content: newContent,
+        tokens: fullTokens,
+        stableTokenCount: 0,
+        tokenRawLength: getTokenRawLength(fullTokens),
+      }
     } catch {
-      return { content: newContent, tokens: [], stableTokenCount: 0 }
+      return { content: newContent, tokens: [], stableTokenCount: 0, tokenRawLength: 0 }
     }
   }
+}
+
+function getTokenRawLength(tokens: MarkedToken[]): number {
+  return tokens.reduce((length, token) => length + token.raw.length, 0)
 }
