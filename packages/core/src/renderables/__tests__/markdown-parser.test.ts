@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { Lexer } from "marked"
+import { Lexer, type MarkedToken } from "marked"
 import { parseMarkdownIncremental, type ParseState } from "../markdown-parser.js"
 
 test("first parse returns all tokens", () => {
@@ -71,6 +71,15 @@ test("stableTokenCount equals tokens.length when trailingUnstable is zero", () =
   const state = parseMarkdownIncremental("# Hello\n\nPara 1", null, 0)
 
   expect(state.stableTokenCount).toBe(state.tokens.length)
+})
+
+test("trailingUnstable zero keeps fast-path appends fully stable", () => {
+  const first = parseMarkdownIncremental("Hello", null, 0)
+  const sameLine = parseMarkdownIncremental("Hello world", first, 0, " world")
+  const nextParagraph = parseMarkdownIncremental("Hello world\n\nNext", sameLine, 0, "\n\nNext")
+
+  expect(sameLine.stableTokenCount).toBe(sameLine.tokens.length)
+  expect(nextParagraph.stableTokenCount).toBe(nextParagraph.tokens.length)
 })
 
 test("initial parse keeps a conservative unstable tail", () => {
@@ -148,6 +157,196 @@ test("token identity is preserved for stable tokens", () => {
   expect(state2.tokens[0]).toBe(state1.tokens[0])
   expect(state2.tokens[1]).toBe(state1.tokens[1])
   expect(state2.tokens[2]).toBe(state1.tokens[2])
+})
+
+test("same-line prose append skips the block lexer", () => {
+  const content1 = "Stable paragraph\n\nStreaming prose with **inline"
+  const content2 = content1 + " markdown** and a [link](https://example.com)."
+  const state1 = parseMarkdownIncremental(content1, null, 2)
+  const lexerRef = Lexer as unknown as { lex: typeof Lexer.lex }
+  const originalLex = lexerRef.lex
+  let lexCalls = 0
+  lexerRef.lex = ((src, options) => {
+    lexCalls++
+    return originalLex(src, options)
+  }) as typeof Lexer.lex
+
+  try {
+    const state2 = parseMarkdownIncremental(content2, state1, 2)
+    expect(lexCalls).toBe(0)
+    expect(state2.tokens[0]).toBe(state1.tokens[0])
+    expect(state2.tokens).toEqual(originalLex(content2, { gfm: true }) as MarkedToken[])
+  } finally {
+    lexerRef.lex = originalLex
+  }
+})
+
+test("same-line prose append preserves unicode paragraphs", () => {
+  const content1 = "Übertragung wächst"
+  const content2 = content1 + " flüssig weiter."
+  const state1 = parseMarkdownIncremental(content1, null, 2)
+  const state2 = parseMarkdownIncremental(content2, state1, 2)
+
+  expect(state2.tokens).toEqual(Lexer.lex(content2, { gfm: true }) as MarkedToken[])
+})
+
+test("plain same-line prose appends extend the inline text token", () => {
+  const content1 = "Übertragung wächst"
+  const content2 = content1 + " flüssig weiter"
+  const state1 = parseMarkdownIncremental(content1, null, 2)
+  const lexerRef = Lexer as unknown as { lexInline: typeof Lexer.lexInline }
+  const originalLexInline = lexerRef.lexInline
+  let inlineCalls = 0
+  lexerRef.lexInline = ((src, options) => {
+    inlineCalls++
+    return originalLexInline(src, options)
+  }) as typeof Lexer.lexInline
+
+  try {
+    const state2 = parseMarkdownIncremental(content2, state1, 2)
+    expect(inlineCalls).toBe(0)
+    expect(state2.tokens).toEqual(Lexer.lex(content2, { gfm: true }) as MarkedToken[])
+  } finally {
+    lexerRef.lexInline = originalLexInline
+  }
+})
+
+test("multiline paragraph tails use the block lexer when an append completes block syntax", () => {
+  for (const [content, appended] of [
+    ["Hello\n ", "> quote"],
+    ["Hello\n*", " item"],
+    ["Hello\n1", ". item"],
+    ["Hello\n<di", "v>text</div>"],
+    ["Hello\n*", " item\n\nNext"],
+  ]) {
+    const state1 = parseMarkdownIncremental(content, null, 2)
+    const state2 = parseMarkdownIncremental(content + appended, state1, 2, appended)
+
+    expect(state2.tokens).toEqual(Lexer.lex(content + appended, { gfm: true }) as MarkedToken[])
+  }
+})
+
+test("numeric paragraph tails use the block lexer when an append completes an ordered list", () => {
+  for (const [content, appended] of [
+    ["0", ". 1X0.)>"],
+    ["1", ". item"],
+    ["1.", " item"],
+    ["1)", " item"],
+    ["1", ". item\n\nNext"],
+  ]) {
+    const state1 = parseMarkdownIncremental(content, null, 2)
+    const state2 = parseMarkdownIncremental(content + appended, state1, 2, appended)
+
+    expect(state2.tokens).toEqual(Lexer.lex(content + appended, { gfm: true }) as MarkedToken[])
+  }
+})
+
+test("trusted append content preserves cached token coverage", () => {
+  const content1 = "Stable paragraph\n\nStreaming prose"
+  const appended = " grows"
+  const state1 = parseMarkdownIncremental(content1, null, 2)
+  const state2 = parseMarkdownIncremental(content1 + appended, state1, 2, appended)
+
+  expect(state1.tokenRawLength).toBe(content1.length)
+  expect(state2.tokenRawLength).toBe(content1.length + appended.length)
+  expect(state2.tokens).toEqual(Lexer.lex(content1 + appended, { gfm: true }) as MarkedToken[])
+})
+
+test("inconsistent trusted append content falls back to the actual source", () => {
+  const state1 = parseMarkdownIncremental("Hello", null, 2)
+  const state2 = parseMarkdownIncremental("Jello world", state1, 2, " world")
+
+  expect(state2.content).toBe("Jello world")
+  expect(state2.tokens).toEqual(Lexer.lex("Jello world", { gfm: true }) as MarkedToken[])
+  expect(state2.tokens[0]?.raw).toBe("Jello world")
+})
+
+test("markdown metacharacters still re-lex the inline tail", () => {
+  const content1 = "Streaming prose"
+  const content2 = content1 + " **bold**"
+  const state1 = parseMarkdownIncremental(content1, null, 2)
+  const lexerRef = Lexer as unknown as { lexInline: typeof Lexer.lexInline }
+  const originalLexInline = lexerRef.lexInline
+  let inlineCalls = 0
+  lexerRef.lexInline = ((src, options) => {
+    inlineCalls++
+    return originalLexInline(src, options)
+  }) as typeof Lexer.lexInline
+
+  try {
+    const state2 = parseMarkdownIncremental(content2, state1, 2)
+    expect(inlineCalls).toBe(1)
+    expect(state2.tokens).toEqual(Lexer.lex(content2, { gfm: true }) as MarkedToken[])
+  } finally {
+    lexerRef.lexInline = originalLexInline
+  }
+})
+
+test("plain paragraph appends skip the block lexer across blank lines", () => {
+  const content1 = "Erster Absatz mit **offener"
+  const content2 = content1 + " Hervorhebung**.\n\nZweiter Absatz mit [Link](https://example.com).\n\nDritter Absatz."
+  const state1 = parseMarkdownIncremental(content1, null, 2)
+  const lexerRef = Lexer as unknown as { lex: typeof Lexer.lex }
+  const originalLex = lexerRef.lex
+  let lexCalls = 0
+  lexerRef.lex = ((src, options) => {
+    lexCalls++
+    return originalLex(src, options)
+  }) as typeof Lexer.lex
+
+  try {
+    const state2 = parseMarkdownIncremental(content2, state1, 2)
+    expect(lexCalls).toBe(0)
+    expect(state2.tokens).toEqual(originalLex(content2, { gfm: true }) as MarkedToken[])
+  } finally {
+    lexerRef.lex = originalLex
+  }
+})
+
+test("blank-line prose append keeps the rewritten tail outside the stable prefix", () => {
+  const content1 = "Hello"
+  const appended = " continued\n\nNext"
+  const state1 = parseMarkdownIncremental(content1, null, 2)
+  const state2 = parseMarkdownIncremental(content1 + appended, state1, 2, appended)
+
+  expect(state2.stableTokenCount).toBe(0)
+  expect(state2.tokens[0].raw).toBe("Hello continued")
+})
+
+test("block syntax after a blank line keeps using the block lexer", () => {
+  for (const appended of ["\n\n# Heading", "\n\n1. item", "\n\n<div>block</div>", "\n---"]) {
+    const content1 = "Stable prose"
+    const content2 = content1 + appended
+    const state1 = parseMarkdownIncremental(content1, null, 2)
+    const lexerRef = Lexer as unknown as { lex: typeof Lexer.lex }
+    const originalLex = lexerRef.lex
+    let lexCalls = 0
+    lexerRef.lex = ((src, options) => {
+      lexCalls++
+      return originalLex(src, options)
+    }) as typeof Lexer.lex
+
+    try {
+      const state2 = parseMarkdownIncremental(content2, state1, 2)
+      expect(lexCalls).toBeGreaterThan(0)
+      expect(state2.tokens).toEqual(originalLex(content2, { gfm: true }) as MarkedToken[])
+    } finally {
+      lexerRef.lex = originalLex
+    }
+  }
+})
+
+test("ambiguous block prefixes keep using the block lexer", () => {
+  for (const [before, after] of [
+    ["#", "# Heading"],
+    ["--", "---"],
+    ["<div", "<div>"],
+  ]) {
+    const state1 = parseMarkdownIncremental(before, null, 2)
+    const state2 = parseMarkdownIncremental(after, state1, 2)
+
+    expect(state2.tokens).toEqual(Lexer.lex(after, { gfm: true }) as MarkedToken[])
+  }
 })
 
 test("trailingUnstable re-parses trailing table when new rows are appended", () => {

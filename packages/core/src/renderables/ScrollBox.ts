@@ -147,6 +147,9 @@ export class ScrollBoxRenderable extends BoxRenderable {
   private _hasManualScroll: boolean = false
   private _isApplyingStickyScroll: boolean = false
   private scrollAccel: ScrollAcceleration
+  private _scrollbarOnChange: ScrollBarOptions["onChange"]
+  private _verticalScrollbarOnChange: ScrollBarOptions["onChange"]
+  private _horizontalScrollbarOnChange: ScrollBarOptions["onChange"]
 
   get stickyScroll(): boolean {
     return this._stickyScroll
@@ -190,6 +193,26 @@ export class ScrollBoxRenderable extends BoxRenderable {
 
   get scrollHeight(): number {
     return this.verticalScrollBar.scrollSize
+  }
+
+  private handleVerticalScrollbarChange(position: number): void {
+    this.content.translateY = -position
+    this.updateStickyState()
+    if (this._verticalScrollbarOnChange) {
+      this._verticalScrollbarOnChange(position)
+      return
+    }
+    this._scrollbarOnChange?.(position)
+  }
+
+  private handleHorizontalScrollbarChange(position: number): void {
+    this.content.translateX = -position
+    this.updateStickyState()
+    if (this._horizontalScrollbarOnChange) {
+      this._horizontalScrollbarOnChange(position)
+      return
+    }
+    this._scrollbarOnChange?.(position)
   }
 
   private updateStickyState(): void {
@@ -319,6 +342,9 @@ export class ScrollBoxRenderable extends BoxRenderable {
     this._stickyScroll = stickyScroll
     this._stickyStart = stickyStart
     this.scrollAccel = scrollAcceleration ?? new LinearScrollAccel()
+    this._scrollbarOnChange = scrollbarOptions?.onChange
+    this._verticalScrollbarOnChange = verticalScrollbarOptions?.onChange
+    this._horizontalScrollbarOnChange = horizontalScrollbarOptions?.onChange
 
     this.wrapper = new BoxRenderable(ctx, {
       flexDirection: "column",
@@ -364,10 +390,7 @@ export class ScrollBoxRenderable extends BoxRenderable {
       },
       id: `scroll-box-vertical-scrollbar-${this.internalId}`,
       orientation: "vertical",
-      onChange: (position) => {
-        this.content.translateY = -position
-        this.updateStickyState()
-      },
+      onChange: (position) => this.handleVerticalScrollbarChange(position),
     })
     super.add(this.verticalScrollBar)
 
@@ -380,10 +403,7 @@ export class ScrollBoxRenderable extends BoxRenderable {
       },
       id: `scroll-box-horizontal-scrollbar-${this.internalId}`,
       orientation: "horizontal",
-      onChange: (position) => {
-        this.content.translateX = -position
-        this.updateStickyState()
-      },
+      onChange: (position) => this.handleHorizontalScrollbarChange(position),
     })
     this.wrapper.add(this.horizontalScrollBar)
 
@@ -866,18 +886,33 @@ export class ScrollBoxRenderable extends BoxRenderable {
   }
 
   public set scrollbarOptions(options: ScrollBoxOptions["scrollbarOptions"]) {
-    Object.assign(this.verticalScrollBar, options)
-    Object.assign(this.horizontalScrollBar, options)
+    this._scrollbarOnChange = options?.onChange
+    Object.assign(this.verticalScrollBar, {
+      ...options,
+      onChange: (position: number) => this.handleVerticalScrollbarChange(position),
+    })
+    Object.assign(this.horizontalScrollBar, {
+      ...options,
+      onChange: (position: number) => this.handleHorizontalScrollbarChange(position),
+    })
     this.requestRender()
   }
 
   public set verticalScrollbarOptions(options: ScrollBoxOptions["verticalScrollbarOptions"]) {
-    Object.assign(this.verticalScrollBar, options)
+    this._verticalScrollbarOnChange = options?.onChange
+    Object.assign(this.verticalScrollBar, {
+      ...options,
+      onChange: (position: number) => this.handleVerticalScrollbarChange(position),
+    })
     this.requestRender()
   }
 
   public set horizontalScrollbarOptions(options: ScrollBoxOptions["horizontalScrollbarOptions"]) {
-    Object.assign(this.horizontalScrollBar, options)
+    this._horizontalScrollbarOnChange = options?.onChange
+    Object.assign(this.horizontalScrollBar, {
+      ...options,
+      onChange: (position: number) => this.handleHorizontalScrollbarChange(position),
+    })
     this.requestRender()
   }
 
