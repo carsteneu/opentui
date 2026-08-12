@@ -252,6 +252,13 @@ export type PixelResolution = {
   height: number
 }
 
+type PartialRenderRegion = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface CliRendererStats extends NativeRenderStats {
   fps: number
   frameCount: number
@@ -815,6 +822,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _controlState: RendererControlState = RendererControlState.IDLE
 
   private frameCallbacks: ((deltaTime: number) => Promise<void>)[] = []
+  // Partial frames mutate the retained next buffer and are valid only while its native commit is known-good.
+  private partialRequests = new Set<Renderable>()
+  private partialFramePending: boolean = false
+  private ordinaryRenderGeneration: number = 0
+  private committedOrdinaryRenderGeneration: number = 0
+  private ordinaryRequestsDuringFrame = new Set<Renderable>()
+  private lastFrameCommitted: boolean = true
   private renderStats: {
     frameCount: number
     fps: number
@@ -1477,6 +1491,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private handleNativeRenderRejection(status: number): "retryable-skip" | "backpressured" | "failed" {
+    this.lastFrameCommitted = false
     if (status === NATIVE_RENDER_STATUS_SKIPPED && this._feed) {
       this.ordinaryFrameWaitingForFeed = true
       this.ordinaryFrameWaitControlState = this._controlState
@@ -1520,15 +1535,26 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.scheduleRenderTimer()
   }
 
-  public requestRender() {
+  public requestRender(source?: Renderable) {
     if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED) {
       return
     }
+
+    this.ordinaryRenderGeneration++
 
     // A skipped feed-backed frame already owns the next scheduling attempt through
     // feed.idle(). Coalesce normal invalidations into that retry so split-footer
     // output and UI updates cannot start competing render passes while the feed is busy.
     if (this.feedIdleRenderScheduled) {
+      return
+    }
+
+    if (this.rendering) {
+      if (source) {
+        this.ordinaryRequestsDuringFrame.add(source)
+        return
+      }
+      this.immediateRerenderRequested = true
       return
     }
 
@@ -1543,10 +1569,36 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
-    // NOTE: Using a frame callback that causes a re-render while already rendering
-    // leads to a continuous loop of renders.
+    if (!this.updateScheduled && !this.renderTimeout) {
+      this.updateScheduled = true
+      const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
+      const elapsed = this.getElapsedMs(now, this.lastTime)
+      const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
+
+      if (delay === 0) {
+        process.nextTick(() => this.activateFrame())
+        return
+      }
+
+      this.clock.setTimeout(() => this.activateFrame(), delay)
+    }
+  }
+
+  public requestPartialRender(renderable: Renderable) {
+    if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED || renderable.isDestroyed) return
+
+    this.partialRequests.add(renderable)
+    this.partialFramePending = true
+
+    if (this.feedIdleRenderScheduled || this.ordinaryFrameWaitingForFeed) return
+
     if (this.rendering) {
       this.immediateRerenderRequested = true
+      return
+    }
+
+    if (this._isRunning) {
+      if (!this.renderTimeout) this.scheduleRenderTimer()
       return
     }
 
@@ -4369,6 +4421,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     } catch (e) {
       console.error("Error destroying root renderable:", e instanceof Error ? e.stack : String(e))
     }
+    this.partialRequests.clear()
+    this.partialFramePending = false
+    this.ordinaryRequestsDuringFrame.clear()
 
     this.stdinParser?.destroy()
     this.stdinParser = null
@@ -4500,6 +4555,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.renderTimeout = null
     }
     this.rendering = true
+    this.ordinaryRequestsDuringFrame.clear()
     let renderFailed = false
     try {
       // Bump before any work so all callers this iteration see the new id.
@@ -4535,17 +4591,35 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const end = performance.now()
       this.renderStats.frameCallbackTime = end - start
 
-      this.root.render(this.nextRenderBuffer, deltaTime)
+      const partialRegion =
+        this.partialFramePending && this.canPartialRender() ? this.renderPartialFrame(deltaTime) : null
+      // A normal invalidation raised from a partial render was not part of this frame.
+      if (partialRegion && this.ordinaryRenderGeneration !== this.committedOrdinaryRenderGeneration) {
+        this.immediateRerenderRequested = true
+      }
+      this.partialFramePending = false
+      this.partialRequests.clear()
 
-      for (const postProcessFn of this.postProcessFns) {
-        postProcessFn(this.nextRenderBuffer, deltaTime)
+      if (!partialRegion) {
+        this.nextRenderBuffer.clear(this.backgroundColor)
+        this.root.render(this.nextRenderBuffer, deltaTime)
+
+        for (const postProcessFn of this.postProcessFns) {
+          postProcessFn(this.nextRenderBuffer, deltaTime)
+        }
+
+        const pendingSource = [...this.ordinaryRequestsDuringFrame].some(
+          (renderable) => !renderable.isDestroyed && renderable.isDirty && renderable.isInRenderPath(),
+        )
+        if (this.root.getLayoutNode().isDirty() || pendingSource) this.immediateRerenderRequested = true
+        else this.committedOrdinaryRenderGeneration = this.ordinaryRenderGeneration
       }
 
       this._console.renderToBuffer(this.nextRenderBuffer)
 
       // If destroy() was requested during this frame, skip native work and scheduling.
       if (!this._isDestroyed) {
-        const nativeStatus = this.renderNative() ?? "rendered"
+        const nativeStatus = this.renderNative(partialRegion) ?? "rendered"
         if (nativeStatus === "rendered") this.frameCount++
         if (this.getElapsedMs(now, this.lastFpsTime) >= 1000) {
           this.currentFps = this.frameCount
@@ -4619,6 +4693,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
     } catch (error) {
       renderFailed = true
+      this.lastFrameCommitted = false
       const renderError = error instanceof Error ? error : new Error(String(error))
       const event: CliRendererErrorEvent = { error: renderError, renderable: this.root.takeCurrentRenderable() }
       const handled = this.emit(CliRenderEvents.RENDER_ERROR, event)
@@ -4641,7 +4716,45 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.loop()
   }
 
-  private renderNative(): "rendered" | "retryable-skip" | "failed" | "blocked" | "backpressured" {
+  private canPartialRender(): boolean {
+    if (this.partialRequests.size === 0) return false
+    if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") return false
+    if (this.forceFullRepaintRequested || !this.lastFrameCommitted) return false
+    if (this._console.visible || this.debugOverlay.enabled || this.postProcessFns.length > 0) return false
+    if (!this.root.isPartialRenderStateCurrent()) return false
+    if (this.ordinaryRenderGeneration !== this.committedOrdinaryRenderGeneration) return false
+    // Image placement commits are whole-frame transactions, and fallback materialization is not safely repeatable.
+    if (this.lib.hasActiveImageState(this.rendererPtr)) return false
+
+    return [...this.partialRequests].every((renderable) => !renderable.isDestroyed && renderable.isInRenderPath())
+  }
+
+  private renderPartialFrame(deltaTime: number): PartialRenderRegion | null {
+    this.clearHitGridScissorRects()
+
+    let left = this.width
+    let top = this.height
+    let right = 0
+    let bottom = 0
+
+    for (const renderable of this.partialRequests) {
+      if (renderable.isDestroyed) continue
+      const bounds = this.root.renderPartialTarget(renderable, this.nextRenderBuffer, deltaTime)
+      if (!bounds) continue
+
+      left = Math.min(left, Math.max(0, Math.floor(bounds.x) - 1))
+      top = Math.min(top, Math.max(0, Math.floor(bounds.y)))
+      right = Math.max(right, Math.min(this.width, Math.ceil(bounds.x + bounds.width) + 1))
+      bottom = Math.max(bottom, Math.min(this.height, Math.ceil(bounds.y + bounds.height)))
+    }
+
+    if (left >= right || top >= bottom) return null
+    return { x: left, y: top, width: right - left, height: bottom - top }
+  }
+
+  private renderNative(
+    partialRegion: PartialRenderRegion | null = null,
+  ): "rendered" | "retryable-skip" | "failed" | "blocked" | "backpressured" {
     if (this.renderingNative) {
       console.error("Rendering called concurrently")
       throw new Error("Rendering called concurrently")
@@ -4651,6 +4764,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     try {
       if (this.isSplitCursorSeedFrameBlocked()) {
+        this.lastFrameCommitted = false
         return "blocked"
       }
 
@@ -4664,24 +4778,36 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           this.pendingExternalOutputMode === "passthrough",
         )
         if (status === "backpressured") {
+          this.lastFrameCommitted = false
           return "backpressured"
         }
         if (status === "failed") {
+          this.lastFrameCommitted = false
           return "failed"
         }
         this.forceFullRepaintRequested = false
         this.pendingSplitFooterTransition = null
+        this.lastFrameCommitted = true
         return "rendered"
       }
 
       const force = this.forceFullRepaintRequested
-      const nativeStatus = this.lib.render(this.rendererPtr, force)
+      const nativeStatus = partialRegion
+        ? this.lib.renderPartial(
+            this.rendererPtr,
+            partialRegion.x,
+            partialRegion.y,
+            partialRegion.width,
+            partialRegion.height,
+          )
+        : this.lib.render(this.rendererPtr, force, true)
       if (nativeStatus === NATIVE_RENDER_STATUS_SKIPPED || nativeStatus === NATIVE_RENDER_STATUS_FAILED) {
         return this.handleNativeRenderRejection(nativeStatus)
       }
 
       this.forceFullRepaintRequested = false
       this.pendingSplitFooterTransition = null
+      this.lastFrameCommitted = true
       // this.dumpOutputBuffer(Date.now())
       return "rendered"
     } finally {

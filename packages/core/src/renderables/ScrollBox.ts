@@ -35,6 +35,11 @@ class ContentRenderable extends BoxRenderable {
     return this._viewportCulling
   }
 
+  protected isVisibleChildFilterReusable(): boolean {
+    // Viewport layout and scroll translations both advance the counters checked by RootRenderable.
+    return true
+  }
+
   protected _getVisibleChildren(): number[] {
     if (this._viewportCulling) {
       // The viewport is in terminal coordinates, so culling has to compare it

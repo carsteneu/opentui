@@ -67,6 +67,16 @@ class CountingRenderable extends Renderable {
   }
 }
 
+class LiveCountingRenderable extends CountingRenderable {
+  public updateCount = 0
+  public frameUpdate?: () => void
+
+  protected onUpdate(): void {
+    this.updateCount += 1
+    this.frameUpdate?.()
+  }
+}
+
 class TestFocusableRenderable extends Renderable {
   _focusable = true
 
@@ -269,6 +279,34 @@ describe("Renderable - layout read caching invariants", () => {
   // when it bypasses the Renderable setters, and ancestor movement must
   // cascade to descendant screen positions without a relayout.
 
+  test("live updates reuse the render list until the callback changes its structure", async () => {
+    testRenderer.requestLive = () => {}
+    testRenderer.requestRender = () => {}
+    const live = new LiveCountingRenderable(testRenderer, { id: "live", live: true, width: 1, height: 1 })
+    const stable = new CountingRenderable(testRenderer, { id: "stable", width: 1, height: 1 })
+    testRenderer.root.add(live)
+    testRenderer.root.add(stable)
+    await renderOnce()
+
+    const updateLayoutSpy = spyOn(stable, "updateLayout")
+    const updateCount = live.updateCount
+    await renderOnce()
+
+    expect(live.updateCount).toBeGreaterThan(updateCount)
+    expect(updateLayoutSpy).not.toHaveBeenCalled()
+
+    const added = new CountingRenderable(testRenderer, { id: "added", width: 1, height: 1 })
+    live.frameUpdate = () => {
+      live.frameUpdate = undefined
+      testRenderer.root.add(added)
+    }
+    await renderOnce()
+
+    expect(live.updateCount).toBeGreaterThan(updateCount + 1)
+    expect(updateLayoutSpy).toHaveBeenCalledTimes(1)
+    expect(added.renderCount).toBe(1)
+  })
+
   test("direct yoga-node style mutation bypassing all setters is picked up next frame", async () => {
     const box = new TestRenderable(testRenderer, { id: "yoga-bypass", width: 10, height: 2 })
     testRenderer.root.add(box)
@@ -330,6 +368,41 @@ describe("Renderable - layout read caching invariants", () => {
 })
 
 describe("Renderable - Child Management", () => {
+  test("partial render restores ancestor opacity and scissor context", async () => {
+    const parent = new TestRenderable(testRenderer, {
+      id: "partial-parent",
+      position: "absolute",
+      left: 2,
+      top: 1,
+      width: 3,
+      height: 2,
+      overflow: "hidden",
+      opacity: 0.5,
+    })
+    const child = new TestRenderable(testRenderer, {
+      id: "partial-child",
+      position: "absolute",
+      width: 5,
+      height: 2,
+    })
+    parent.add(child)
+    testRenderer.root.add(parent)
+    await renderOnce()
+
+    const pushOpacitySpy = spyOn(testRenderer.nextRenderBuffer, "pushOpacity")
+    const popOpacitySpy = spyOn(testRenderer.nextRenderBuffer, "popOpacity")
+    const pushScissorSpy = spyOn(testRenderer.nextRenderBuffer, "pushScissorRect")
+    const popScissorSpy = spyOn(testRenderer.nextRenderBuffer, "popScissorRect")
+
+    const bounds = child.renderPartial(testRenderer.nextRenderBuffer, 0)
+
+    expect(bounds).toEqual({ x: 2, y: 1, width: 3, height: 2 })
+    expect(pushOpacitySpy).toHaveBeenCalledWith(0.5)
+    expect(popOpacitySpy).toHaveBeenCalledTimes(1)
+    expect(pushScissorSpy).toHaveBeenCalledWith(2, 1, 3, 2)
+    expect(popScissorSpy).toHaveBeenCalledTimes(1)
+  })
+
   test("can add and remove children", () => {
     const parent = new TestRenderable(testRenderer, { id: "parent" })
     const child1 = new TestRenderable(testRenderer, { id: "child1" })
