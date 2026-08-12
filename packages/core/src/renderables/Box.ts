@@ -285,6 +285,11 @@ export class BoxRenderable extends Renderable {
     })
   }
 
+  protected isScissorRectReusable(): boolean {
+    // Border and layout mutations already invalidate the cached command list.
+    return true
+  }
+
   protected getScissorRect(): { x: number; y: number; width: number; height: number } {
     const baseRect = super.getScissorRect()
 
