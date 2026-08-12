@@ -1594,6 +1594,36 @@ export abstract class Renderable extends BaseRenderable {
     return { x: left, y: top, width: right - left, height: bottom - top }
   }
 
+  public getVisibleRenderBounds(
+    width: number,
+    height: number,
+  ): {
+    left: number
+    top: number
+    right: number
+    bottom: number
+  } | null {
+    let left = Math.max(0, this._screenX)
+    let top = Math.max(0, this._screenY)
+    let right = Math.min(width, this._screenX + this.width)
+    let bottom = Math.min(height, this._screenY + this.height)
+    let parent = this.parent
+
+    while (parent) {
+      if (parent._overflow !== "visible" && parent.width > 0 && parent.height > 0) {
+        const rect = parent.getScissorRect()
+        left = Math.max(left, rect.x)
+        top = Math.max(top, rect.y)
+        right = Math.min(right, rect.x + rect.width)
+        bottom = Math.min(bottom, rect.y + rect.height)
+      }
+      parent = parent.parent
+    }
+
+    if (left >= right || top >= bottom) return null
+    return { left, top, right, bottom }
+  }
+
   protected _hasVisibleChildFilter(): boolean {
     // Presume an override of _getVisibleChildren means this subclass is using
     // the legacy filtering hook, so existing custom renderables keep working.
@@ -1864,8 +1894,15 @@ export type RenderCommand =
   | RenderCommandPushOpacity
   | RenderCommandPopOpacity
 
+type RenderBounds = NonNullable<ReturnType<Renderable["getVisibleRenderBounds"]>>
+
+function renderBoundsOverlap(left: RenderBounds, right: RenderBounds): boolean {
+  return left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top
+}
+
 export class RootRenderable extends Renderable {
   private renderList: RenderCommand[] = []
+  private renderIndices = new Map<Renderable, number>()
   private _currentRenderable: Renderable | undefined
   private appliedLayoutGeneration: number = -1
   private appliedRenderListRevision: number = -1
@@ -1926,6 +1963,31 @@ export class RootRenderable extends Renderable {
     )
   }
 
+  public hasSafePartialComposition(renderables: ReadonlySet<Renderable>): boolean {
+    for (const renderable of renderables) {
+      let current: Renderable | null = renderable
+      while (current) {
+        if (current.opacity < 1) return false
+        current = current.parent
+      }
+
+      const index = this.renderIndices.get(renderable)
+      if (index === undefined) return false
+      const bounds = renderable.getVisibleRenderBounds(this.width, this.height)
+      if (!bounds) continue
+
+      // This is a frame-time guard. Avoid allocating a sliced command list on
+      // every streaming update while conservatively checking later painters.
+      for (let i = index + 1; i < this.renderList.length; i++) {
+        const command = this.renderList[i]
+        if (command.action !== "render" || command.renderable._isDestroyed) continue
+        const later = command.renderable.getVisibleRenderBounds(this.width, this.height)
+        if (later && renderBoundsOverlap(bounds, later)) return false
+      }
+    }
+    return true
+  }
+
   public render(buffer: OptimizedBuffer, deltaTime: number): void {
     this._currentRenderable = undefined
     if (!this.visible) return
@@ -1969,8 +2031,12 @@ export class RootRenderable extends Renderable {
       this.updatables.length = 0
       beginRenderListCollection(this.updatables)
       this.renderList.length = 0
+      this.renderIndices.clear()
       try {
         super.updateLayout(deltaTime, this.renderList)
+        this.renderList.forEach((command, index) => {
+          if (command.action === "render") this.renderIndices.set(command.renderable, index)
+        })
         this.appliedLayoutGeneration = layoutGeneration
         this.appliedRenderListRevision = getRenderListRevision(this._ctx)
         this.renderListReusable = endRenderListCollection()

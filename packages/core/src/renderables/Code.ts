@@ -37,6 +37,11 @@ export interface CodeOptions extends TextBufferOptions {
   conceal?: boolean
   drawUnstyledText?: boolean
   streaming?: boolean
+  /**
+   * Paint the complete layout rectangle with `bg` and allow retained partial
+   * redraws while streaming. The background must be fully opaque.
+   */
+  retainedRendering?: boolean
   initialStyledText?: StyledText
   deferStreamingHighlight?: boolean
   baseHighlight?: string
@@ -60,10 +65,10 @@ export class CodeRenderable extends TextBufferRenderable {
   private _drawUnstyledText: boolean
   private _shouldRenderTextBuffer: boolean = true
   private _streaming: boolean
+  private _retainedRendering: boolean
   private _initialStyledText?: StyledText
   private _initialStyledTextContent?: string
   private _deferStreamingHighlight: boolean
-  private _partialRendering: boolean = false
   private _hadInitialContent: boolean = false
   private _lastHighlights: SimpleHighlight[] = []
   private _baseHighlight?: string
@@ -91,6 +96,7 @@ export class CodeRenderable extends TextBufferRenderable {
     this._conceal = options.conceal ?? this._contentDefaultOptions.conceal
     this._drawUnstyledText = options.drawUnstyledText ?? this._contentDefaultOptions.drawUnstyledText
     this._streaming = options.streaming ?? this._contentDefaultOptions.streaming
+    this._retainedRendering = options.retainedRendering ?? false
     this._initialStyledText = options.initialStyledText
     this._initialStyledTextContent = this._initialStyledText ? this._content : undefined
     this._deferStreamingHighlight = options.deferStreamingHighlight ?? false
@@ -296,6 +302,17 @@ export class CodeRenderable extends TextBufferRenderable {
 
   get streaming(): boolean {
     return this._streaming
+  }
+
+  get retainedRendering(): boolean {
+    return this._retainedRendering
+  }
+
+  set retainedRendering(value: boolean) {
+    if (this._retainedRendering === value) return
+    this._retainedRendering = value
+    this.updatePartialEligibility()
+    this.requestRender()
   }
 
   set initialStyledText(value: StyledText | undefined) {
@@ -645,29 +662,23 @@ export class CodeRenderable extends TextBufferRenderable {
     return this.textBuffer.getLineHighlights(lineIdx)
   }
 
-  public override renderPartial(
-    buffer: OptimizedBuffer,
-    deltaTime: number,
-  ): { x: number; y: number; width: number; height: number } | null {
-    this._partialRendering = true
-    try {
-      return super.renderPartial(buffer, deltaTime)
-    } finally {
-      this._partialRendering = false
-    }
-  }
-
   protected override onBgChanged(newColor: RGBA): void {
-    this.setPartialEligible(this._streaming && newColor.a === 1)
+    this.setPartialEligible(this._streaming && this._retainedRendering && newColor.a === 1)
   }
 
   private updatePartialEligibility(): void {
-    // A retained partial redraw must be able to erase stale glyphs without
-    // destroying content below a transparent Code overlay.
-    this.setPartialEligible(this._streaming && this._defaultBg.a === 1)
+    this.setPartialEligible(this._streaming && this._retainedRendering && this._defaultBg.a === 1)
   }
 
   protected renderSelf(buffer: OptimizedBuffer): void {
+    if (this._retainedRendering && this._defaultBg.a === 1) {
+      const x = Math.max(0, this._screenX)
+      const y = Math.max(0, this._screenY)
+      const right = Math.min(buffer.width, this._screenX + this.width)
+      const bottom = Math.min(buffer.height, this._screenY + this.height)
+      if (right > x && bottom > y) buffer.fillRect(x, y, right - x, bottom - y, this._defaultBg)
+    }
+
     if (this._highlightsDirty) {
       if (this.isDestroyed) return
 
@@ -698,9 +709,6 @@ export class CodeRenderable extends TextBufferRenderable {
     }
 
     if (!this._shouldRenderTextBuffer) return
-    if (this._partialRendering) {
-      buffer.fillRect(this._screenX, this._screenY, this.width, this.height, this._defaultBg)
-    }
     super.renderSelf(buffer)
   }
 }

@@ -1267,6 +1267,7 @@ test("CodeRenderable - coalesces streaming render requests", async () => {
     syntaxStyle: SyntaxStyle.create(),
     treeSitterClient: new MockTreeSitterClient(),
     streaming: true,
+    retainedRendering: true,
     drawUnstyledText: false,
     bg: RGBA.fromValues(0, 0, 0, 1),
   })
@@ -1295,6 +1296,29 @@ test("CodeRenderable - transparent streaming content avoids partial redraws", as
     content: "const a = 1;",
     syntaxStyle: SyntaxStyle.create(),
     streaming: true,
+    retainedRendering: true,
+    width: 20,
+    height: 1,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await flushAsync()
+  const partialSpy = spyOn(codeRenderable, "requestPartialRender")
+
+  codeRenderable.content = "const a = 2;"
+  await flushAsync()
+
+  expect(partialSpy).not.toHaveBeenCalled()
+  partialSpy.mockRestore()
+})
+
+test("CodeRenderable - retained rendering is opt-in", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-retained-opt-in",
+    content: "const a = 1;",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    bg: RGBA.fromValues(0, 0, 0, 1),
     width: 20,
     height: 1,
   })
@@ -1316,6 +1340,7 @@ test("CodeRenderable - partial redraw clears replaced and trailing glyphs", asyn
     content: "text.",
     syntaxStyle: SyntaxStyle.create(),
     streaming: true,
+    retainedRendering: true,
     bg: RGBA.fromValues(0, 0, 0, 1),
     width: 20,
     height: 1,
@@ -1330,6 +1355,69 @@ test("CodeRenderable - partial redraw clears replaced and trailing glyphs", asyn
   codeRenderable.content = "text"
   await renderOnce()
   expect(captureFrame().split("\n")[0]?.slice(0, 20)).toBe("text".padEnd(20))
+})
+
+test("CodeRenderable - retained redraw clears empty and partially offscreen content", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-partial-empty-offscreen",
+    content: "abcdef",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    retainedRendering: true,
+    bg: RGBA.fromValues(0, 0, 0, 1),
+    position: "absolute",
+    left: -3,
+    top: 0,
+    width: 6,
+    height: 1,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  expect(captureFrame().split("\n")[0]?.slice(0, 3)).toBe("def")
+
+  codeRenderable.content = ""
+  await renderOnce()
+  expect(captureFrame().split("\n")[0]?.slice(0, 3)).toBe("   ")
+})
+
+test("CodeRenderable - retained rendering owns the full background rectangle", async () => {
+  const background = RGBA.fromHex("#8a1538")
+  const unowned = new CodeRenderable(currentRenderer, {
+    id: "test-code-unowned-background",
+    content: "x",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    bg: background,
+    position: "absolute",
+    top: 0,
+    width: 5,
+    height: 1,
+  })
+  const owned = new CodeRenderable(currentRenderer, {
+    id: "test-code-owned-background",
+    content: "x",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    retainedRendering: true,
+    bg: background,
+    position: "absolute",
+    top: 1,
+    width: 5,
+    height: 1,
+  })
+
+  currentRenderer.root.add(unowned)
+  currentRenderer.root.add(owned)
+  await renderOnce()
+
+  const buffer = currentRenderer.currentRenderBuffer
+  const color = (x: number, y: number) => {
+    const offset = (y * buffer.width + x) * 4
+    return RGBA.fromArray(buffer.buffers.bg.slice(offset, offset + 4)).toInts()
+  }
+  expect(color(4, 0)).not.toEqual(background.toInts())
+  expect(color(4, 1)).toEqual(background.toInts())
 })
 
 test("CodeRenderable - same-line streaming update keeps layout clean", async () => {

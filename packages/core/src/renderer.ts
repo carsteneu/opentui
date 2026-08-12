@@ -4726,7 +4726,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // Image placement commits are whole-frame transactions, and fallback materialization is not safely repeatable.
     if (this.lib.hasActiveImageState(this.rendererPtr)) return false
 
-    return [...this.partialRequests].every((renderable) => !renderable.isDestroyed && renderable.isInRenderPath())
+    if (![...this.partialRequests].every((renderable) => !renderable.isDestroyed && renderable.isInRenderPath())) {
+      return false
+    }
+    return this.root.hasSafePartialComposition(this.partialRequests)
   }
 
   private renderPartialFrame(deltaTime: number): PartialRenderRegion | null {

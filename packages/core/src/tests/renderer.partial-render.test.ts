@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { TextRenderable } from "../renderables/Text.js"
+import { BoxRenderable } from "../renderables/Box.js"
 import { ManualClock } from "../testing/manual-clock.js"
 import { createTestRenderer, type TestRenderer } from "../testing/test-renderer.js"
 import type { Renderable } from "../Renderable.js"
@@ -201,6 +202,105 @@ describe("partial rendering", () => {
     } finally {
       internals.lib.hasActiveImageState = originalHasActiveImageState
     }
+  })
+
+  test("promotes partial requests beneath a later overlapping renderable", async () => {
+    const internals = renderer as unknown as RendererInternals
+    const target = new TextRenderable(renderer, {
+      content: "target",
+      position: "absolute",
+      left: 4,
+      top: 2,
+      width: 6,
+      height: 1,
+    })
+    const overlay = new TextRenderable(renderer, {
+      content: "overlay",
+      position: "absolute",
+      left: 5,
+      top: 2,
+      width: 7,
+      height: 1,
+      zIndex: 1,
+    })
+    renderer.root.add(target)
+    renderer.root.add(overlay)
+    target.setPartialEligible(true)
+    await internals.loop()
+    internals.partialRequests.add(target)
+
+    expect(internals.canPartialRender()).toBe(false)
+  })
+
+  test("keeps partial requests beneath later non-overlapping renderables", async () => {
+    const internals = renderer as unknown as RendererInternals
+    const target = new TextRenderable(renderer, {
+      content: "target",
+      position: "absolute",
+      left: 4,
+      top: 2,
+      width: 6,
+      height: 1,
+    })
+    const later = new TextRenderable(renderer, {
+      content: "later",
+      position: "absolute",
+      left: 20,
+      top: 2,
+      width: 5,
+      height: 1,
+      zIndex: 1,
+    })
+    renderer.root.add(target)
+    renderer.root.add(later)
+    target.setPartialEligible(true)
+    await internals.loop()
+    internals.partialRequests.add(target)
+
+    expect(internals.canPartialRender()).toBe(true)
+  })
+
+  test("checks overlap against ancestor-clipped target bounds", async () => {
+    const internals = renderer as unknown as RendererInternals
+    const parent = new BoxRenderable(renderer, {
+      position: "absolute",
+      left: 0,
+      top: 2,
+      width: 10,
+      height: 1,
+      overflow: "hidden",
+    })
+    const target = new TextRenderable(renderer, { content: "wide target content", width: 20, height: 1 })
+    const later = new TextRenderable(renderer, {
+      content: "later",
+      position: "absolute",
+      left: 12,
+      top: 2,
+      width: 5,
+      height: 1,
+      zIndex: 1,
+    })
+    parent.add(target)
+    renderer.root.add(parent)
+    renderer.root.add(later)
+    target.setPartialEligible(true)
+    await internals.loop()
+    internals.partialRequests.add(target)
+
+    expect(internals.canPartialRender()).toBe(true)
+  })
+
+  test("promotes partial requests through a translucent ancestor", async () => {
+    const internals = renderer as unknown as RendererInternals
+    const parent = new BoxRenderable(renderer, { width: 20, height: 2, opacity: 0.5 })
+    const target = new TextRenderable(renderer, { content: "target", width: 6, height: 1 })
+    parent.add(target)
+    renderer.root.add(parent)
+    target.setPartialEligible(true)
+    await internals.loop()
+    internals.partialRequests.add(target)
+
+    expect(internals.canPartialRender()).toBe(false)
   })
 
   test("rejects a detached partial renderable", async () => {

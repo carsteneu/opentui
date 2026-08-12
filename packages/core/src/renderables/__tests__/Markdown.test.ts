@@ -2791,6 +2791,36 @@ test("streaming top-level prose keeps concealed styled snapshots fresh", async (
   expect(client.isHighlighting()).toBe(false)
 })
 
+test("retained rendering follows the markdown streaming lifecycle", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-top-level-retained-rendering",
+    content: "Streaming prose",
+    syntaxStyle,
+    streaming: true,
+    retainedRendering: true,
+    internalBlockMode: "top-level",
+    bg: RGBA.fromValues(0, 0, 0, 1),
+  })
+
+  renderer.root.add(md)
+  await renderOnce()
+  const code = () => md._blockStates[0]?.renderable as CodeRenderable
+  expect(code()).toBeInstanceOf(CodeRenderable)
+  expect(code().retainedRendering).toBe(true)
+
+  md.streaming = false
+  await renderOnce()
+  expect(code().retainedRendering).toBe(false)
+
+  md.streaming = true
+  await renderOnce()
+  expect(code().retainedRendering).toBe(true)
+
+  md.retainedRendering = false
+  await renderOnce()
+  expect(code().retainedRendering).toBe(false)
+})
+
 test("internalBlockMode=top-level reuses table renderable when rows stream in", async () => {
   const md = createMarkdownRenderable({
     id: "markdown-top-level-table-reuse",
