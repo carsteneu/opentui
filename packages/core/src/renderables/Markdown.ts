@@ -107,6 +107,11 @@ export interface MarkdownOptions extends RenderableOptions<MarkdownRenderable> {
    */
   streaming?: boolean
   /**
+   * Let built-in streaming text blocks own their opaque background rectangle
+   * so the renderer may redraw them through the retained partial path.
+   */
+  retainedRendering?: boolean
+  /**
    * Options for internally rendered markdown tables.
    */
   tableOptions?: MarkdownTableOptions
@@ -278,6 +283,7 @@ export class MarkdownRenderable extends Renderable {
 
   _parseState: ParseState | null = null
   private _streaming: boolean = false
+  private _retainedRendering: boolean
   _blockStates: BlockState[] = []
   _stableBlockCount = 0
   private _styleDirty: boolean = false
@@ -292,6 +298,7 @@ export class MarkdownRenderable extends Renderable {
     conceal: true,
     concealCode: false,
     streaming: false,
+    retainedRendering: false,
     internalBlockMode: "coalesced",
   } satisfies Partial<MarkdownOptions>
 
@@ -312,6 +319,7 @@ export class MarkdownRenderable extends Renderable {
     this._tableOptions = options.tableOptions
     this._renderNode = options.renderNode
     this._streaming = options.streaming ?? this._contentDefaultOptions.streaming
+    this._retainedRendering = options.retainedRendering ?? this._contentDefaultOptions.retainedRendering
     this._internalBlockMode = options.internalBlockMode ?? this._contentDefaultOptions.internalBlockMode
 
     this.updateBlocks()
@@ -401,6 +409,17 @@ export class MarkdownRenderable extends Renderable {
 
   get streaming(): boolean {
     return this._streaming
+  }
+
+  get retainedRendering(): boolean {
+    return this._retainedRendering
+  }
+
+  set retainedRendering(value: boolean) {
+    if (this._retainedRendering === value) return
+    this._retainedRendering = value
+    this._styleDirty = true
+    this.requestRender()
   }
 
   set streaming(value: boolean) {
@@ -661,6 +680,7 @@ export class MarkdownRenderable extends Renderable {
       conceal: this._conceal,
       drawUnstyledText: initialStyledText !== undefined,
       streaming: true,
+      retainedRendering: this._retainedRendering && this._streaming,
       initialStyledText,
       deferStreamingHighlight,
       baseHighlight,
@@ -979,6 +999,7 @@ export class MarkdownRenderable extends Renderable {
       conceal: this._concealCode,
       drawUnstyledText: !this._streaming,
       streaming: this._streaming,
+      retainedRendering: this._retainedRendering && this._streaming,
       treeSitterClient: this._treeSitterClient,
       width: "100%",
       marginBottom,
@@ -1000,6 +1021,7 @@ export class MarkdownRenderable extends Renderable {
     renderable.conceal = this._conceal
     renderable.drawUnstyledText = initialStyledText !== undefined
     renderable.streaming = true
+    renderable.retainedRendering = this._retainedRendering && this._streaming
     renderable.baseHighlight = baseHighlight
     renderable.content = content
     renderable.marginBottom = marginBottom
@@ -1041,6 +1063,7 @@ export class MarkdownRenderable extends Renderable {
     renderable.conceal = this._concealCode
     renderable.drawUnstyledText = !this._streaming
     renderable.streaming = this._streaming
+    renderable.retainedRendering = this._retainedRendering && this._streaming
     renderable.content = token.text
     renderable.marginBottom = marginBottom
   }
