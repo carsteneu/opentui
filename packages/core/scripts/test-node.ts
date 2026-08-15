@@ -18,6 +18,7 @@ const textBufferTestDataPath = resolve(tmpdir(), "text-buffer-node-test")
 const runtimeAssetTestDataPath = resolve(tmpdir(), "opentui-runtime-asset-node-test")
 const audioRecorderTestDataPath = resolve(tmpdir(), "opentui-audio-recorder-node-test")
 const imageTestDataPath = resolve(tmpdir(), "opentui-image-node-test")
+const bufferDumpPath = resolve(packageRoot, "buffer_dump")
 const treeSitterClientTestDataPaths = [
   "tree-sitter-shared-test-data",
   "tree-sitter-injections-test-data",
@@ -50,6 +51,8 @@ const emittedAllowlist = [
   ".node-test/src/lib/bunfs.test.js",
   ".node-test/src/lib/border.test.js",
   ".node-test/src/lib/clipboard.test.js",
+  ".node-test/src/lib/clipboard-service.test.js",
+  ".node-test/src/lib/host-clipboard.test.js",
   ".node-test/src/lib/extmarks.test.js",
   ".node-test/src/lib/detect-links.test.js",
   ".node-test/src/lib/extmarks-multiwidth.test.js",
@@ -130,6 +133,7 @@ const emittedAllowlist = [
   ".node-test/src/tests/renderable.snapshot.test.js",
   ".node-test/src/tests/allocator-stats.test.js",
   ".node-test/src/tests/audio-stream.test.js",
+  ".node-test/src/tests/clipboard-native-lifecycle.test.js",
   ".node-test/src/tests/audio.test.js",
   ".node-test/src/tests/image-renderable.test.js",
   ".node-test/src/tests/image.test.js",
@@ -206,6 +210,8 @@ try {
     for (const dataPath of treeSitterTestDataPaths) {
       mkdirSync(dataPath, { recursive: true })
     }
+    // Node resolves permission paths before tests can create their output directory.
+    mkdirSync(bufferDumpPath, { recursive: true })
 
     exitCode = run(
       nodePath,
@@ -216,7 +222,7 @@ try {
         `--allow-fs-read=${workspaceRoot}`,
         ...treeSitterTestDataPaths.map((path) => `--allow-fs-read=${path}`),
         ...treeSitterTestDataPaths.map((path) => `--allow-fs-write=${path}`),
-        `--allow-fs-write=${resolve(packageRoot, "buffer_dump")}`,
+        `--allow-fs-write=${bufferDumpPath}`,
         "--allow-net=127.0.0.1",
         "--allow-child-process",
         "--allow-worker",

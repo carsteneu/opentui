@@ -1,7 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const io = if (builtin.is_test) std.testing.io else @import("root").io;
 
 const Allocator = std.mem.Allocator;
-var icc_cache_mutex: std.Thread.Mutex = .{};
+var icc_cache_mutex: std.Io.Mutex = .init;
 var icc_cache_clients: u32 = 0;
 
 extern fn ot_image_png_probe(data: [*]const u8, data_len: u32, width: *u32, height: *u32) c_int;
@@ -241,6 +243,19 @@ pub const Image = struct {
         self.pixels = pixels;
         return pixels;
     }
+
+    pub fn ensureEncodedPng(self: *Image) ![]u8 {
+        if (self.encoded_png) |bytes| return bytes;
+        const pixels = try self.ensurePixels();
+        const has_alpha = self.metadata.has_alpha != 0;
+        const encoded = try encodePng(self.allocator, pixels, self.width(), self.height(), has_alpha);
+        self.encoded_png = encoded;
+        // The fresh encoding is plain sRGB, so stale ICC metadata must not describe it.
+        self.png_color_type = if (has_alpha) 6 else 2;
+        self.iccp_compressed_offset = 0;
+        self.iccp_compressed_len = 0;
+        return encoded;
+    }
 };
 
 const png_signature = [_]u8{ 137, 80, 78, 71, 13, 10, 26, 10 };
@@ -310,7 +325,7 @@ fn pngKeywordByteAllowed(byte: u8) bool {
 }
 
 fn parsePngIccp(payload: []const u8, payload_offset: usize) !struct { offset: usize, len: usize } {
-    const name_end = std.mem.indexOfScalar(u8, payload, 0) orelse return error.MalformedInput;
+    const name_end = std.mem.findScalar(u8, payload, 0) orelse return error.MalformedInput;
     if (name_end == 0 or name_end > 79 or name_end + 2 > payload.len) return error.MalformedInput;
     var previous_space = false;
     for (payload[0..name_end], 0..) |byte, index| {
@@ -344,37 +359,37 @@ pub const IccCacheStats = struct {
 };
 
 pub fn clearIccCache() void {
-    icc_cache_mutex.lock();
-    defer icc_cache_mutex.unlock();
+    icc_cache_mutex.lock(io) catch unreachable;
+    defer icc_cache_mutex.unlock(io);
     ot_image_icc_cache_clear();
 }
 
 pub fn retainIccCache() void {
-    icc_cache_mutex.lock();
-    defer icc_cache_mutex.unlock();
+    icc_cache_mutex.lock(io) catch unreachable;
+    defer icc_cache_mutex.unlock(io);
     std.debug.assert(icc_cache_clients < std.math.maxInt(u32));
     icc_cache_clients += 1;
 }
 
 pub fn releaseIccCache() void {
-    icc_cache_mutex.lock();
-    defer icc_cache_mutex.unlock();
+    icc_cache_mutex.lock(io) catch unreachable;
+    defer icc_cache_mutex.unlock(io);
     std.debug.assert(icc_cache_clients > 0);
     icc_cache_clients -= 1;
     if (icc_cache_clients == 0) ot_image_icc_cache_clear();
 }
 
 pub fn getIccCacheStats() IccCacheStats {
-    icc_cache_mutex.lock();
-    defer icc_cache_mutex.unlock();
+    icc_cache_mutex.lock(io) catch unreachable;
+    defer icc_cache_mutex.unlock(io);
     var stats: IccCacheStats = undefined;
     ot_image_icc_cache_stats(&stats.hits, &stats.misses, &stats.entries);
     return stats;
 }
 
 pub fn testFailIccProfileCopyAllocationOnce() void {
-    icc_cache_mutex.lock();
-    defer icc_cache_mutex.unlock();
+    icc_cache_mutex.lock(io) catch unreachable;
+    defer icc_cache_mutex.unlock(io);
     ot_image_icc_test_fail_profile_copy_allocation_once();
 }
 
@@ -555,8 +570,8 @@ fn scanPng(data: []const u8) !PngMetadata {
 }
 
 fn transformPngIcc(compressed: []const u8, color_type: u8, pixels: []u8, width: u32, height: u32) !void {
-    icc_cache_mutex.lock();
-    defer icc_cache_mutex.unlock();
+    icc_cache_mutex.lock(io) catch unreachable;
+    defer icc_cache_mutex.unlock(io);
     const result = ot_image_icc_transform_rgba(
         compressed.ptr,
         @intCast(compressed.len),
@@ -671,14 +686,14 @@ fn probeInternal(
 
     if (metadata.iccp_compressed_len > 0) {
         const compressed = data[metadata.iccp_compressed_offset..][0..metadata.iccp_compressed_len];
-        icc_cache_mutex.lock();
+        icc_cache_mutex.lock(io) catch unreachable;
         const icc_result = ot_image_icc_validate(
             compressed.ptr,
             @intCast(compressed.len),
             metadata.color_type,
             max_icc_profile_bytes,
         );
-        icc_cache_mutex.unlock();
+        icc_cache_mutex.unlock(io);
         const icc_status = statusFromIccResult(icc_result);
         if (icc_status != .ok) return icc_status;
     }
@@ -909,6 +924,77 @@ fn decodeInternal(allocator: Allocator, data: []const u8, limits: Limits, retain
 
 pub fn decode(allocator: Allocator, data: []const u8, limits: Limits) !*Image {
     return decodeInternal(allocator, data, limits, true);
+}
+
+fn writePngChunk(destination: []u8, kind: *const [4]u8, payload: []const u8) usize {
+    std.mem.writeInt(u32, destination[0..4], @intCast(payload.len), .big);
+    @memcpy(destination[4..8], kind);
+    @memcpy(destination[8..][0..payload.len], payload);
+    const crc = std.hash.Crc32.hash(destination[4 .. 8 + payload.len]);
+    std.mem.writeInt(u32, destination[8 + payload.len ..][0..4], crc, .big);
+    return payload.len + 12;
+}
+
+fn compressPngScanlines(allocator: Allocator, pixels: []const u8, width: u32, height: u32, has_alpha: bool) ![]u8 {
+    var idat: std.Io.Writer.Allocating = try .initCapacity(allocator, 1024);
+    defer idat.deinit();
+    const window = try allocator.alloc(u8, std.compress.flate.max_window_len);
+    defer allocator.free(window);
+    // The compressor state is ~224 KiB, too large for the stack.
+    const compress = try allocator.create(std.compress.flate.Compress);
+    defer allocator.destroy(compress);
+    // Allocating-writer failures surface as WriteFailed; allocation is its only failure mode.
+    compress.* = std.compress.flate.Compress.init(&idat.writer, window, .zlib, .default) catch return error.OutOfMemory;
+
+    const source_stride = @as(usize, width) * 4;
+    if (has_alpha) {
+        for (0..height) |y| {
+            compress.writer.writeByte(0) catch return error.OutOfMemory;
+            compress.writer.writeAll(pixels[y * source_stride ..][0..source_stride]) catch return error.OutOfMemory;
+        }
+    } else {
+        const row = try allocator.alloc(u8, 1 + @as(usize, width) * 3);
+        defer allocator.free(row);
+        row[0] = 0; // Filter type none for every scanline.
+        for (0..height) |y| {
+            const source_row = pixels[y * source_stride ..][0..source_stride];
+            for (0..width) |x| {
+                @memcpy(row[1 + x * 3 ..][0..3], source_row[x * 4 ..][0..3]);
+            }
+            compress.writer.writeAll(row) catch return error.OutOfMemory;
+        }
+    }
+    compress.finish() catch return error.OutOfMemory;
+    return idat.toOwnedSlice();
+}
+
+fn encodePng(allocator: Allocator, pixels: []const u8, width: u32, height: u32, has_alpha: bool) ![]u8 {
+    std.debug.assert(width > 0 and height > 0);
+    std.debug.assert(pixels.len == @as(usize, width) * @as(usize, height) * 4);
+    std.debug.assert(has_alpha or !pixelsHaveTransparency(pixels));
+    const idat = try compressPngScanlines(allocator, pixels, width, height, has_alpha);
+    defer allocator.free(idat);
+
+    var ihdr: [13]u8 = undefined;
+    std.mem.writeInt(u32, ihdr[0..4], width, .big);
+    std.mem.writeInt(u32, ihdr[4..8], height, .big);
+    ihdr[8] = 8; // Bit depth.
+    ihdr[9] = if (has_alpha) 6 else 2; // Color type: RGBA or RGB.
+    ihdr[10] = 0; // Compression method: deflate.
+    ihdr[11] = 0; // Filter method: adaptive.
+    ihdr[12] = 0; // Interlace method: none.
+
+    const limits: Limits = .{};
+    const total = png_signature.len + (ihdr.len + 12) + (idat.len + 12) + 12;
+    if (total > limits.max_encoded_bytes) return error.MemoryLimit;
+    const encoded = try allocator.alloc(u8, total);
+    @memcpy(encoded[0..png_signature.len], &png_signature);
+    var offset: usize = png_signature.len;
+    offset += writePngChunk(encoded[offset..], "IHDR", &ihdr);
+    offset += writePngChunk(encoded[offset..], "IDAT", idat);
+    offset += writePngChunk(encoded[offset..], "IEND", "");
+    std.debug.assert(offset == total);
+    return encoded;
 }
 
 fn pixelOffset(width: u32, x: u32, y: u32) usize {

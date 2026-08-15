@@ -36,9 +36,12 @@ const audio_tests = @import("tests/audio_test.zig");
 const handles_tests = @import("tests/handles_test.zig");
 const yoga_tests = @import("tests/yoga_test.zig");
 const ansi_tests = @import("tests/ansi_test.zig");
+const ghostty_vt_tests = @import("tests/ghostty_vt_test.zig");
+const embedded_terminal_tests = @import("embedded-terminal/tests.zig");
 const image_tests = @import("tests/image_test.zig");
 const terminal_image_tests = @import("tests/terminal-image_test.zig");
 const lib_tests = @import("lib.zig");
+const clipboard_tests = @import("clipboard/host.zig");
 // const example_tests = @import("example_test.zig");
 
 // Re-export test declarations from individual test files
@@ -81,8 +84,11 @@ comptime {
     _ = handles_tests;
     _ = yoga_tests;
     _ = ansi_tests;
+    _ = ghostty_vt_tests;
+    _ = embedded_terminal_tests;
     _ = image_tests;
     _ = terminal_image_tests;
     _ = lib_tests;
+    _ = clipboard_tests;
     // _ = example_tests;
 }

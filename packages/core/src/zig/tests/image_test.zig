@@ -57,6 +57,12 @@ fn resizeWithAllocator(allocator: std.mem.Allocator) !void {
     defer resized.deinit();
 }
 
+fn encodePngWithAllocator(allocator: std.mem.Allocator) !void {
+    const source = try image.createFromRgba(allocator, &[_]u8{ 1, 2, 3, 255 }, 1, 1, 4);
+    defer source.deinit();
+    _ = try source.ensureEncodedPng();
+}
+
 test "image operations release partial allocations on OOM" {
     const png = try decodeBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4AWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==");
     defer std.testing.allocator.free(png);
@@ -64,6 +70,7 @@ test "image operations release partial allocations on OOM" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, decodePngWithAllocator, .{png});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, clonePngWithAllocator, .{png});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeWithAllocator, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, encodePngWithAllocator, .{});
 }
 
 test "image inspection does not retain encoded PNG bytes" {
@@ -310,7 +317,7 @@ test "JPEG decode rejects EOI before the first scan" {
     const encoded = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAACAAMDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAAAAAAAAAAAAAHCf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/ADoDFU3/2Q==";
     const jpeg = try decodeBase64(encoded);
     defer std.testing.allocator.free(jpeg);
-    const sos = std.mem.indexOf(u8, jpeg, &[_]u8{ 0xFF, 0xDA }) orelse return error.TestUnexpectedResult;
+    const sos = std.mem.find(u8, jpeg, &[_]u8{ 0xFF, 0xDA }) orelse return error.TestUnexpectedResult;
 
     const malformed = try std.testing.allocator.alloc(u8, sos + 2);
     defer std.testing.allocator.free(malformed);
@@ -324,7 +331,7 @@ test "JPEG decode rejects a scan without entropy data" {
     const encoded = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAACAAMDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAAAAAAAAAAAAAHCf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/ADoDFU3/2Q==";
     const jpeg = try decodeBase64(encoded);
     defer std.testing.allocator.free(jpeg);
-    const sos = std.mem.indexOf(u8, jpeg, &[_]u8{ 0xFF, 0xDA }) orelse return error.TestUnexpectedResult;
+    const sos = std.mem.find(u8, jpeg, &[_]u8{ 0xFF, 0xDA }) orelse return error.TestUnexpectedResult;
     const scan_header_length = std.mem.readInt(u16, jpeg[sos + 2 ..][0..2], .big);
     const after_scan_header = sos + 2 + scan_header_length;
 
@@ -340,7 +347,7 @@ test "JPEG decode rejects an incomplete entropy-coded scan" {
     const encoded = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAACAAMDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAAAAAAAAAAAAAHCf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/ADoDFU3/2Q==";
     const jpeg = try decodeBase64(encoded);
     defer std.testing.allocator.free(jpeg);
-    const sos = std.mem.indexOf(u8, jpeg, &[_]u8{ 0xFF, 0xDA }) orelse return error.TestUnexpectedResult;
+    const sos = std.mem.find(u8, jpeg, &[_]u8{ 0xFF, 0xDA }) orelse return error.TestUnexpectedResult;
     const scan_header_length = std.mem.readInt(u16, jpeg[sos + 2 ..][0..2], .big);
     const after_scan_header = sos + 2 + scan_header_length;
 
@@ -356,7 +363,7 @@ test "JPEG probe applies dimension limits before full scan validation" {
     const encoded = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAACAAMDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAAAAAAAAAAAAAHCf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/ADoDFU3/2Q==";
     const jpeg = try decodeBase64(encoded);
     defer std.testing.allocator.free(jpeg);
-    const sos = std.mem.indexOf(u8, jpeg, &[_]u8{ 0xFF, 0xDA }) orelse return error.TestUnexpectedResult;
+    const sos = std.mem.find(u8, jpeg, &[_]u8{ 0xFF, 0xDA }) orelse return error.TestUnexpectedResult;
     const scan_header_length = std.mem.readInt(u16, jpeg[sos + 2 ..][0..2], .big);
     const after_scan_header = sos + 2 + scan_header_length;
 
@@ -377,7 +384,7 @@ test "progressive JPEG decode rejects a final scan without entropy data" {
 
     var search_start: usize = 0;
     var final_sos: ?usize = null;
-    while (std.mem.indexOfPos(u8, jpeg, search_start, &[_]u8{ 0xFF, 0xDA })) |sos| {
+    while (std.mem.findPos(u8, jpeg, search_start, &[_]u8{ 0xFF, 0xDA })) |sos| {
         final_sos = sos;
         search_start = sos + 2;
     }
@@ -497,6 +504,57 @@ test "image creation rejects invalid stride and short input" {
     const pixels = [_]u8{0} ** 16;
     try std.testing.expectError(error.InvalidArgument, image.createFromRgba(std.testing.allocator, &pixels, 2, 2, 7));
     try std.testing.expectError(error.InvalidArgument, image.createFromRgba(std.testing.allocator, pixels[0..15], 2, 2, 8));
+}
+
+test "ensureEncodedPng round-trips opaque pixels through the RGB path" {
+    const pixels = [_]u8{
+        1, 2, 3, 255, 4,  5,  6,  255,
+        7, 8, 9, 255, 10, 11, 12, 255,
+    };
+    const source = try makeImage(&pixels, 2, 2);
+    defer source.deinit();
+    try std.testing.expectEqual(@as(u32, 0), source.metadata.has_alpha);
+
+    const encoded = try source.ensureEncodedPng();
+    try std.testing.expectEqual(encoded, source.encoded_png.?);
+
+    var info: image.Info = .{};
+    try std.testing.expectEqual(image.Status.ok, image.probe(encoded, .{}, &info));
+    try std.testing.expectEqual(@as(u32, 2), info.width);
+    try std.testing.expectEqual(@as(u32, 2), info.height);
+    try std.testing.expectEqual(@as(u32, 0), info.has_alpha);
+
+    const decoded = try image.decode(std.testing.allocator, encoded, .{});
+    defer decoded.deinit();
+    try std.testing.expectEqualSlices(u8, &pixels, try decoded.ensurePixels());
+}
+
+test "ensureEncodedPng round-trips transparent pixels through the RGBA path" {
+    const pixels = [_]u8{
+        1, 2, 3, 254, 4,  5,  6,  0,
+        7, 8, 9, 128, 10, 11, 12, 255,
+    };
+    const source = try makeImage(&pixels, 2, 2);
+    defer source.deinit();
+    try std.testing.expectEqual(@as(u32, 1), source.metadata.has_alpha);
+
+    const encoded = try source.ensureEncodedPng();
+    var info: image.Info = .{};
+    try std.testing.expectEqual(image.Status.ok, image.probe(encoded, .{}, &info));
+    try std.testing.expectEqual(@as(u32, 1), info.has_alpha);
+
+    const decoded = try image.decode(std.testing.allocator, encoded, .{});
+    defer decoded.deinit();
+    try std.testing.expectEqualSlices(u8, &pixels, try decoded.ensurePixels());
+}
+
+test "ensureEncodedPng is a no-op when an encoding is already attached" {
+    const source = try makeImage(&[_]u8{ 1, 2, 3, 255 }, 1, 1);
+    defer source.deinit();
+    const first = try source.ensureEncodedPng();
+    const second = try source.ensureEncodedPng();
+    try std.testing.expectEqual(first.ptr, second.ptr);
+    try std.testing.expectEqual(first.len, second.len);
 }
 
 test "extract copies the exact requested rectangle" {
@@ -659,7 +717,7 @@ fn injectJpegExifOrientation(
 }
 
 test "JPEG EXIF orientation swaps probe and decode dimensions" {
-    const jpeg = try std.fs.cwd().readFileAlloc(std.testing.allocator, "../tests/fixtures/images/orientation.jpg", 1 << 20);
+    const jpeg = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "../tests/fixtures/images/orientation.jpg", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(jpeg);
     const plain = try image.decode(std.testing.allocator, jpeg, .{});
     defer plain.deinit();
@@ -701,7 +759,7 @@ test "JPEG EXIF orientation swaps probe and decode dimensions" {
 }
 
 test "JPEG EXIF orientation 180 keeps dimensions" {
-    const jpeg = try std.fs.cwd().readFileAlloc(std.testing.allocator, "../tests/fixtures/images/orientation.jpg", 1 << 20);
+    const jpeg = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "../tests/fixtures/images/orientation.jpg", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(jpeg);
     const plain = try image.decode(std.testing.allocator, jpeg, .{});
     defer plain.deinit();
@@ -730,7 +788,7 @@ test "JPEG EXIF orientation 180 keeps dimensions" {
 }
 
 test "JPEG EXIF orientation ignores invalid values and uses the default" {
-    const jpeg = try std.fs.cwd().readFileAlloc(std.testing.allocator, "../tests/fixtures/images/orientation.jpg", 1 << 20);
+    const jpeg = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "../tests/fixtures/images/orientation.jpg", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(jpeg);
     for ([_]u16{ 0, 9, 200 }) |invalid| {
         const bytes = try injectJpegExifOrientation(std.testing.allocator, jpeg, invalid, .little);

@@ -75,7 +75,7 @@ test "OptimizedBuffer flattens image placements into owned block cells" {
 
     const cell = target.get(0, 0).?;
     try std.testing.expect(!gp.isImageChar(cell.char));
-    try std.testing.expect(std.mem.indexOfScalar(u32, &buffer_mod.quadrantChars, cell.char) != null);
+    try std.testing.expect(std.mem.findScalar(u32, &buffer_mod.quadrantChars, cell.char) != null);
     try std.testing.expectEqual(@as(usize, 0), target.image_placements.items.len);
     try std.testing.expectEqual(@as(u32, 1), source.ref_count);
 }
@@ -539,6 +539,25 @@ test "OptimizedBuffer text buffer tab clips a negative draw origin" {
     target.drawTextBuffer(view, -1, 0);
 
     try std.testing.expectEqual(@as(u32, ' '), target.get(0, 0).?.char);
+}
+
+test "OptimizedBuffer text buffer clips width-1 text at a negative draw origin" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    var local_link_pool = link.LinkPool.init(std.testing.allocator);
+    defer local_link_pool.deinit();
+    var text = try TextBuffer.init(std.testing.allocator, pool, &local_link_pool, .unicode);
+    defer text.deinit();
+    try text.setText("AB");
+    var view = try TextBufferView.init(std.testing.allocator, text);
+    defer view.deinit();
+
+    const target = try OptimizedBuffer.init(std.testing.allocator, 1, 1, .{ .pool = pool, .id = "negative-width1-text" });
+    defer target.deinit();
+
+    target.drawTextBuffer(view, -1, 0);
+
+    try std.testing.expectEqual(@as(u32, 'B'), target.get(0, 0).?.char);
 }
 
 test "OptimizedBuffer image-free frame buffer copy does not allocate" {
@@ -1092,17 +1111,17 @@ test "OptimizedBuffer - large text buffer with wrapping repeated render" {
     var view = try TextBufferView.init(std.testing.allocator, tb);
     defer view.deinit();
 
-    var text_builder: std.ArrayListUnmanaged(u8) = .{};
-    defer text_builder.deinit(std.testing.allocator);
+    var text_builder: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer text_builder.deinit();
 
     var line: u32 = 0;
     while (line < 20) : (line += 1) {
-        try text_builder.appendSlice(std.testing.allocator, "Line ");
-        try text_builder.writer(std.testing.allocator).print("{d}", .{line});
-        try text_builder.appendSlice(std.testing.allocator, ": 🌟 测试 🎨 Test 🚀\n");
+        try text_builder.writer.writeAll("Line ");
+        try text_builder.writer.print("{d}", .{line});
+        try text_builder.writer.writeAll(": 🌟 测试 🎨 Test 🚀\n");
     }
 
-    try tb.setText(text_builder.items);
+    try tb.setText(text_builder.written());
 
     view.setWrapMode(.char);
     view.setWrapWidth(40);
@@ -1267,7 +1286,7 @@ test "OptimizedBuffer - stress test with many graphemes" {
     var view = try TextBufferView.init(std.testing.allocator, tb);
     defer view.deinit();
 
-    var text_builder: std.ArrayListUnmanaged(u8) = .{};
+    var text_builder: std.ArrayListUnmanaged(u8) = .empty;
     defer text_builder.deinit(std.testing.allocator);
 
     var line: u32 = 0;
@@ -1368,7 +1387,7 @@ test "OptimizedBuffer - many unique graphemes with small pool" {
     var failure_count: u32 = 0;
 
     while (render_count < 1000) : (render_count += 1) {
-        var text_builder: std.ArrayListUnmanaged(u8) = .{};
+        var text_builder: std.ArrayListUnmanaged(u8) = .empty;
         defer text_builder.deinit(std.testing.allocator);
 
         const base_codepoint: u21 = 0x2600 + @as(u21, @intCast(render_count % 500));

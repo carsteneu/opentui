@@ -228,10 +228,10 @@ pub const OptimizedBuffer = struct {
         const owned_id = allocator.dupe(u8, options.id) catch return BufferError.OutOfMemory;
         errdefer allocator.free(owned_id);
 
-        var scissor_stack: std.ArrayListUnmanaged(ClipRect) = .{};
+        var scissor_stack: std.ArrayListUnmanaged(ClipRect) = .empty;
         errdefer scissor_stack.deinit(allocator);
 
-        var opacity_stack: std.ArrayListUnmanaged(f32) = .{};
+        var opacity_stack: std.ArrayListUnmanaged(f32) = .empty;
         errdefer opacity_stack.deinit(allocator);
 
         const lp = options.link_pool orelse link.initGlobalLinkPool(allocator);
@@ -267,7 +267,7 @@ pub const OptimizedBuffer = struct {
             .id = owned_id,
             .scissor_stack = scissor_stack,
             .opacity_stack = opacity_stack,
-            .image_placements = .{},
+            .image_placements = .empty,
         };
 
         @memset(self.buffer.char, 0);
@@ -1018,6 +1018,9 @@ pub const OptimizedBuffer = struct {
         if (ansi.TextAttributes.getLinkId(attributes) != 0) return false;
         if (gp.isGraphemeChar(char) or gp.isContinuationChar(char)) return false;
 
+        // The caller must clip the glyph before it calculates the index.
+        assert(index < self.buffer.char.len);
+
         const dest_char = self.buffer.char[index];
         const dest_attributes = self.buffer.attributes[index];
         if (ansi.TextAttributes.getLinkId(dest_attributes) != 0) return false;
@@ -1266,7 +1269,7 @@ pub const OptimizedBuffer = struct {
             }
         }
 
-        var grapheme_list: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
+        var grapheme_list: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .empty;
         defer grapheme_list.deinit(self.allocator);
 
         const tab_width: u8 = 2;
@@ -1768,7 +1771,12 @@ pub const OptimizedBuffer = struct {
                         break;
                     }
 
-                    if (currentX < -@as(i32, @intCast(g_width))) {
+                    // A glyph occupies columns [currentX, currentX + g_width).
+                    // If this range ends at or before column 0, the glyph is left of the screen.
+                    // Skip the glyph, but advance the counters to put the next glyph in the correct columns.
+                    // This check permits wide glyphs that cross column 0.
+                    // The g_width > 1 check below discards these glyphs before they reach the unchecked fast-path index.
+                    if (currentX + @as(i32, @intCast(g_width)) <= 0) {
                         globalCharPos += g_width;
                         currentX += @as(i32, @intCast(g_width));
                         column_in_line += g_width;
