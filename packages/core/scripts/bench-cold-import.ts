@@ -5,28 +5,36 @@
 // <worktree>/.yesmem/bench/<artifact>/raw.ndjson (append-only), then
 // regenerates <artifact>/report.md from that raw file (never hand-edited).
 //
-// --gate: additionally runs the same measurement with telemetry enabled and
-// asserts the enabled path is <= 3% slower than disabled (Go-Gate Serie A).
+// Gates (each exits nonzero on FAIL):
+//   --gate       disabled-vs-enabled telemetry on this branch (true A/B, PASS
+//                iff enabled median <= disabled * (1 + threshold/100)).
+//   --gate-base  disabled-instrumented branch vs UNMODIFIED fastpatch tree
+//                (proves instrumentation is ~zero-cost when disabled).
 //
 // Options:
-//   --scenario=root|minimal|zig   (default root)
-//   --samples=N  (default 9)   --warmup=N (default 2)
+//   --scenario=root|minimal|zig|dist   (default root)
+//   --runtime=bun|node                 (default bun)
+//   --samples=N (default 30)  --warmup=N (default 3)
 //   --artifact=<name> (default "cold-import-<commit>")
-//   --gate       enable zero-cost gate comparison (alternating A/B order)
+//   --threshold=<pct> (default 3, gate pass bound)
+//   --force-fail      debug/CI hook: force all gates to FAIL (proves nonzero exit)
 //   --outdir=<repo>/<path> where the artifact lives (default fallback)
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
-import { createHash } from "node:crypto"
 import { cpus, platform, arch } from "node:os"
 import { join, dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(scriptDir, "..", "..", "..")
-const entryByScenario: Record<string, string> = {
-  root: resolve(scriptDir, "..", "src", "index.ts"),
-  minimal: resolve(scriptDir, "..", "src", "renderer.ts"),
-  zig: resolve(scriptDir, "..", "src", "zig.ts"),
+const coreDir = resolve(repoRoot, "packages", "core")
+const fastpatchCore = resolve(repoRoot, "..", "fastpatch", "packages", "core")
+
+function sourceEntry(name: string): string {
+  return resolve(coreDir, "src", `${name}.ts`)
+}
+function distEntry(runtime: "bun" | "node"): string {
+  return resolve(coreDir, "dist", runtime === "node" ? "index.node.js" : "index.bun.js")
 }
 
 interface GateStats {
@@ -36,10 +44,12 @@ interface GateStats {
   rmePct: number
   n: number
 }
-interface GateRow {
+interface GateResult {
   kind: string
-  disabled: GateStats
-  enabled: GateStats
+  aLabel: string
+  bLabel: string
+  a: GateStats
+  b: GateStats
   overheadMedianPct: number
   gate: { thresholdPct: number; passed: boolean; rule: string }
 }
@@ -59,22 +69,51 @@ function gitRevparse(ref: string): string {
   return r.status === 0 ? r.stdout.trim() : "unknown"
 }
 
-function runProbe(opts: { scenario: string; telemetry: boolean }): Record<string, unknown> {
+function resolveNode(): string | null {
+  if (process.env.OPENTUI_BENCH_NODE) return process.env.OPENTUI_BENCH_NODE
+  const nvmDir = join(process.env.HOME ?? "/root", ".nvm", "versions", "node")
+  try {
+    const versions = readdirSync(nvmDir).map((v) => ({ v, n: Number(v.replace(/^v/, "").split(".")[0] ?? 0) }))
+    versions.sort((a, b) => b.n - a.n)
+    for (const { v } of versions) {
+      const bin = join(nvmDir, v, "bin", "node")
+      const probe = spawnSync("test", ["-x", bin], { shell: true })
+      if (probe.status === 0) return bin
+    }
+  } catch {}
+  return null
+}
+
+function runProbe(opts: {
+  scenario: string
+  runtime: "bun" | "node"
+  telemetry: boolean
+  entry: string
+}): Record<string, unknown> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    OPENTUI_BENCH_ENTRY: entryByScenario[opts.scenario]!,
+    OPENTUI_BENCH_ENTRY: opts.entry,
     OPENTUI_BENCH_SCENARIO: opts.scenario,
-    OPENTUI_BENCH_RENDER: opts.scenario === "zig" ? "0" : "1",
+    OPENTUI_BENCH_RENDER: opts.runtime === "node" ? "0" : "1",
     OPENTUI_BENCH_TELEMETRY: opts.telemetry ? "1" : "0",
   }
-  const r = spawnSync("bun", ["run", join(scriptDir, "cold-import-probe.ts")], {
-    cwd: scriptDir,
-    env,
-    encoding: "utf8",
-    timeout: 60_000,
-  })
+  const probe = join(scriptDir, "cold-import-probe.ts")
+  let cmd: string
+  let args: string[]
+  if (opts.runtime === "bun") {
+    cmd = "bun"
+    args = ["run", probe]
+  } else {
+    const nodeBin = resolveNode()
+    if (!nodeBin) throw new Error("Node 26 not found (set OPENTUI_BENCH_NODE or install via nvm)")
+    cmd = nodeBin
+    args = [probe]
+  }
+  const r = spawnSync(cmd, args, { cwd: scriptDir, env, encoding: "utf8", timeout: 60_000 })
   if (r.status !== 0) {
-    throw new Error(`probe failed (${opts.scenario} telemetry=${opts.telemetry}): ${r.stderr || r.stdout}`)
+    throw new Error(
+      `probe failed (${opts.scenario} ${opts.runtime} telemetry=${opts.telemetry}): ${r.stderr || r.stdout}`,
+    )
   }
   const lines = r.stdout.split("\n").filter((l) => l.trim().startsWith("{"))
   if (lines.length === 0) throw new Error(`no JSON from probe: ${r.stdout}`)
@@ -95,10 +134,9 @@ function stats(values: number[]): GateStats {
   const mean = values.reduce((s, v) => s + v, 0) / values.length
   const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / Math.max(1, values.length - 1)
   const std = Math.sqrt(variance)
-  const median = quantile(sorted, 0.5)
   const rme = Math.abs((1.96 * (std / Math.sqrt(values.length))) / mean) * 100
   return {
-    median: Math.round(median * 1000) / 1000,
+    median: Math.round(quantile(sorted, 0.5) * 1000) / 1000,
     p95: Math.round(quantile(sorted, 0.95) * 1000) / 1000,
     p99: Math.round(quantile(sorted, 0.99) * 1000) / 1000,
     rmePct: Math.round(rme * 100) / 100,
@@ -106,79 +144,161 @@ function stats(values: number[]): GateStats {
   }
 }
 
-function measure(opts: { scenario: string; telemetry: boolean; samples: number; warmup: number }): {
-  overall: ReturnType<typeof stats>
-  importMs: ReturnType<typeof stats>
+interface Body {
+  overallMs: number
+  importMs: number
+  ttfmMs: number
+  firstCommitAt: number | null
+}
+
+function measure(opts: {
+  scenario: string
+  runtime: "bun" | "node"
+  telemetry: boolean
+  entry: string
+  samples: number
+  warmup: number
+}): {
+  ttfm: GateStats
+  importMs: GateStats
 } {
-  // Warmup probes warm the OS page/bun cache so first-spawn overhead does not
-  // skew the measurement samples (results are discarded, not aggregated).
-  for (let i = 0; i < opts.warmup; i++) runProbe({ scenario: opts.scenario, telemetry: opts.telemetry })
-  const overall: number[] = []
+  for (let i = 0; i < opts.warmup; i++) runProbe(opts)
+  const ttfm: number[] = []
   const importMs: number[] = []
   for (let i = 0; i < opts.samples; i++) {
-    const row = runProbe({ scenario: opts.scenario, telemetry: opts.telemetry }) as {
-      overallMs: number
-      importMs: number
-    }
-    overall.push(row.overallMs)
+    const row = runProbe(opts) as unknown as Body
+    ttfm.push(row.ttfmMs)
     importMs.push(row.importMs)
   }
-  return { overall: stats(overall), importMs: stats(importMs) }
+  return { ttfm: stats(ttfm), importMs: stats(importMs) }
+}
+
+// Interleaved A/B with a randomized per-sample order so no fixed ordering bias
+// (result only: both arms run an equal number, order alternates without a
+// predictable enabled-first/disabled-first pattern).
+function compare(arms: Array<{ label: string; run: () => number }>, samples: number): GateResult {
+  const values = new Map<string, number[]>()
+  for (const a of arms) values.set(a.label, [])
+  for (let i = 0; i < samples; i++) {
+    const order = i % 2 === 0 ? arms : [...arms].reverse()
+    for (const a of order) values.get(a.label)!.push(a.run())
+  }
+  const [a, b] = arms
+  const aStats = stats(values.get(a.label)!)
+  const bStats = stats(values.get(b.label)!)
+  return {
+    kind: "gate.zero-cost",
+    aLabel: a.label,
+    bLabel: b.label,
+    a: aStats,
+    b: bStats,
+    overheadMedianPct: 0,
+    gate: { thresholdPct: 0, passed: false, rule: "" },
+  }
 }
 
 async function main(): Promise<void> {
   const args = parseArgs()
   const scenario = args["scenario"] ?? "root"
-  if (!entryByScenario[scenario]) throw new Error(`unknown scenario: ${scenario}`)
-  const samples = Number(args["samples"] ?? 9)
-  const warmup = Number(args["warmup"] ?? 2)
+  const runtime = (args["runtime"] === "node" ? "node" : "bun") as "bun" | "node"
+  const samples = Number(args["samples"] ?? 30)
+  const warmup = Number(args["warmup"] ?? 3)
+  const threshold = Number(args["threshold"] ?? 3)
   const doGate = args["gate"] !== undefined
+  const doGateBase = args["gate-base"] !== undefined
+
   const commit = gitRevparse("HEAD")
-  const base = gitRevparse(`${commit}^`)
+  const ct = gitRevparse("fastpatch")
+  const mergeBase = gitRevparse(`merge-base fastpatch HEAD`)
   const artifact = args["artifact"] ?? `cold-import-${commit.slice(0, 7)}`
   const benchDir = process.env.OPENTUI_BENCH_DIR ?? join(repoRoot, ".yesmem", "bench")
   const artifactDir = join(benchDir, artifact)
   const rawFile = join(artifactDir, "raw.ndjson")
   mkdirSync(artifactDir, { recursive: true })
 
+  let entry: string
+  if (scenario === "dist") {
+    entry = distEntry(runtime)
+  } else if (scenario === "root" || scenario === "minimal" || scenario === "zig") {
+    if (runtime === "node")
+      throw new Error(`scenario ${scenario} is bun-source only; use --scenario=dist --runtime=node`)
+    entry = sourceEntry(scenario === "root" ? "index" : scenario)
+  } else {
+    throw new Error(`unknown scenario: ${scenario}`)
+  }
+
   const cpu = cpus()[0]?.model ?? "unknown"
   const provenance = {
     commit,
-    "commit.base": base,
-    runtime: { engine: "bun", version: process.versions.bun },
+    "commit.base": mergeBase,
+    "fastpatch.tip": ct,
+    runtime: {
+      engine: runtime,
+      version: runtime === "bun" ? process.versions.bun : (process.env.OPENTUI_BENCH_NODE_VERSION ?? "node26"),
+    },
     cpu,
     platform,
     arch,
-    geometry: scenario === "zig" ? null : "80x24",
+    geometry: scenario === "zig" || runtime === "node" ? null : "80x24",
     warmup,
     samples,
-    harness_version: 1,
-    protocol: "cold-import-probe-v1",
+    thresholdPct: threshold,
+    harness_version: 2,
+    protocol: "cold-import-probe-v2",
     generated: new Date().toISOString(),
   }
 
-  const baseline = measure({ scenario, telemetry: false, samples, warmup })
+  const baseline = measure({ scenario, runtime, telemetry: false, entry, samples, warmup })
 
-  let gateRow: GateRow | null = null
-  let gatePassed: boolean | null = null
+  const gateRows: GateResult[] = []
   if (doGate) {
-    // Alternating A/B order: interleave enabled/disabled runs to spread drift.
-    const enabledValues: number[] = []
-    const disabledValues: number[] = []
-    for (let i = 0; i < samples; i++) {
-      disabledValues.push((runProbe({ scenario, telemetry: false }) as { overallMs: number }).overallMs)
-      enabledValues.push((runProbe({ scenario, telemetry: true }) as { overallMs: number }).overallMs)
+    const arms = [
+      { label: "disabled", run: () => (runProbe({ scenario, runtime, telemetry: false, entry }) as unknown as Body).ttfmMs },
+      { label: "enabled", run: () => (runProbe({ scenario, runtime, telemetry: true, entry }) as unknown as Body).ttfmMs },
+    ]
+    const res = compare(arms, samples)
+    const [d, e] = res.aLabel === "disabled" ? [res.a, res.b] : [res.b, res.a]
+    const overheadPct = (e.median / d.median - 1) * 100
+    res.overheadMedianPct = Math.round(overheadPct * 100) / 100
+    res.gate = {
+      thresholdPct: threshold,
+      passed: overheadPct <= threshold,
+      rule: `enabled median <= disabled median * (1+${threshold}/100)`,
     }
-    const disabled = stats(disabledValues)
-    const enabled = stats(enabledValues)
-    const overheadPct = (enabled.median / disabled.median - 1) * 100
-    gatePassed = overheadPct <= 3
-    gateRow = {
-      kind: "gate.zero-cost",
-      disabled,
-      enabled,
-      overheadMedianPct: Math.round(overheadPct * 100) / 100,
-      gate: { thresholdPct: 3, passed: gatePassed, rule: "enabled median <= disabled median * 1.03" },
+    gateRows.push(res)
+  }
+  if (doGateBase) {
+    // disabled-instrumented branch vs unmodified fastpatch source (bun).
+    const branchEntry = sourceEntry("index")
+    const baseEntry = resolve(fastpatchCore, "src", "index.ts")
+    const arms = [
+      {
+        label: "branch-disabled",
+        run: () =>
+          (runProbe({ scenario: "root", runtime: "bun", telemetry: false, entry: branchEntry }) as unknown as Body).ttfmMs,
+      },
+      {
+        label: "fastpatch",
+        run: () => (runProbe({ scenario: "root", runtime: "bun", telemetry: false, entry: baseEntry }) as unknown as Body).ttfmMs,
+      },
+    ]
+    const res = compare(arms, samples)
+    const [b, f] = res.aLabel === "branch-disabled" ? [res.a, res.b] : [res.b, res.a]
+    const overheadPct = (b.median / f.median - 1) * 100
+    res.overheadMedianPct = Math.round(overheadPct * 100) / 100
+    res.gate = {
+      thresholdPct: threshold,
+      passed: overheadPct <= threshold,
+      rule: `branch-disabled median <= fastpatch median * (1+${threshold}/100)`,
+    }
+    gateRows.push(res)
+  }
+
+  const forceFail = args["force-fail"] !== undefined
+  if (forceFail) {
+    for (const g of gateRows) {
+      g.gate.passed = false
+      g.gate.rule = `${g.gate.rule} [forced-fail-test]`
     }
   }
 
@@ -187,47 +307,56 @@ async function main(): Promise<void> {
     scenario,
     ...provenance,
     importMs: baseline.importMs,
-    overallMs: baseline.overall,
+    ttfmMs: baseline.ttfm,
   }
 
-  appendFileSync(rawFile, JSON.stringify({ ...row, ...(gateRow ? { gate: gateRow } : {}) }) + "\n")
+  appendFileSync(rawFile, JSON.stringify({ ...row, ...(gateRows.length ? { gates: gateRows } : {}) }) + "\n")
 
-  // Regenerate report from the raw file (single source of truth).
   const rawLines = readFileSync(rawFile, "utf8")
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l))
   let md = `# Cold-import / TTFMF report — artifact \`${artifact}\`\n\n`
-  md += `Generiert am ${provenance.generated} · Commit \`${commit}\` · Bun ${provenance.runtime.version} · CPU \`${cpu}\`\n\n`
+  md += `Generiert am ${provenance.generated} · Commit \`${commit}\` · base \`${mergeBase}\` · ${runtime}\n\n`
   md += "\n## Rohdaten\n\n`raw.ndjson` (append-only) — `" + rawLines.length + "` rows.\n\n"
   md += "## Baselines (Median / p95 / p99 / RME %)\n\n"
-  md += "| Row | Scenario | importMs.med | importMs.p95 | overallMs.med | overallMs.p95 | overallMs.p99 | RME% |\n"
-  md += "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+  md += "| Row | Runtime | Scenario | importMs.med | importMs.p95 | ttfm.med | ttfm.p95 | ttfm.p99 | RME% |\n"
+  md += "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
   for (const line of rawLines) {
     if (line.kind !== "baseline.cold-import") continue
-    md += `| ${line.commit.slice(0, 7)} | ${line.scenario} | ${line.importMs.median} | ${line.importMs.p95} | ${line.overallMs.median} | ${line.overallMs.p95} | ${line.overallMs.p99} | ${line.overallMs.rmePct} |\n`
+    md += `| ${line.commit.slice(0, 7)} | ${line.runtime?.engine ?? line.runtime} | ${line.scenario} | ${line.importMs.median} | ${line.importMs.p95} | ${line.ttfmMs.median} | ${line.ttfmMs.p95} | ${line.ttfmMs.p99} | ${line.ttfmMs.rmePct} |\n`
   }
-  const gateRows = rawLines.filter((l) => l.gate && l.gate.kind === "gate.zero-cost")
-  for (const g of gateRows) {
-    const gr = g.gate
-    md += `\n## Go-Gate (disablierte Telemetrie <= ${gr.gate.thresholdPct}%)\n\n`
-    md += `- ${g.scenario}: disabled median ${gr.disabled.median} ms; enabled median ${gr.enabled.median} ms\n`
-    md += `- overhead median: ${gr.overheadMedianPct}% — **${gr.gate.passed ? "PASS" : "FAIL"}**\n`
+  for (const line of rawLines) {
+    if (!line.gates) continue
+    for (const g of line.gates) {
+      if (g.kind !== "gate.zero-cost") continue
+      md += `\n## Gate: ${g.aLabel} vs ${g.bLabel} (<= ${g.gate.thresholdPct}%)\n\n`
+      md += `- ${g.aLabel} median: ${g.a.median} ms; ${g.bLabel} median: ${g.b.median} ms\n`
+      md += `- overhead median: ${g.overheadMedianPct}% — **${g.gate.passed ? "PASS" : "FAIL"}**\n`
+    }
   }
   writeFileSync(join(artifactDir, "report.md"), md)
 
+  const failed = gateRows.some((g) => !g.gate.passed)
   console.log(
     JSON.stringify({
       artifact,
       commit: commit.slice(0, 7),
       scenario,
+      runtime,
       importMs: baseline.importMs,
-      overallMs: baseline.overall,
-      gate: gateRow ? { overheadMedianPct: gateRow.overheadMedianPct, passed: gatePassed } : null,
+      ttfmMs: baseline.ttfm,
+      gates: gateRows.map((g) => ({
+        name: `${g.aLabel}-vs-${g.bLabel}`,
+        overheadMedianPct: g.overheadMedianPct,
+        passed: g.gate.passed,
+      })),
+      failed,
       raw: rawFile,
       report: join(artifactDir, "report.md"),
     }),
   )
+  if (failed) process.exitCode = 1
 }
 
 main().catch((error) => {

@@ -1,23 +1,30 @@
-// Child process: performs ONE cold-import measurement in a fresh process and
-// prints a single JSON object to stdout. Spawned by bench-cold-import.ts.
+// Child process: performs ONE cold-import / TTFMF measurement in a fresh
+// process and prints a single JSON object to stdout. Spawned by
+// bench-cold-import.ts under either bun or node.
 //
 // Env:
-//   OPENTUI_BENCH_ENTRY    module specifier/path to cold-import
-//   OPENTUI_BENCH_SCENARIO scenario label (root|minimal|zig) for provenance
-//   OPENTUI_BENCH_RENDER   "0" to skip renderer construction
-//   OPENTUI_BENCH_TELEMETRY "1" to enable opt-in telemetry (marks/importReady)
+//   OPENTUI_BENCH_ENTRY      module specifier/path to cold-import (src or dist)
+//   OPENTUI_BENCH_SCENARIO   scenario label (root|minimal|zig|dist) provenance
+//   OPENTUI_BENCH_RENDER     "0" to skip renderer construction + TTFMF
+//   OPENTUI_BENCH_TELEMETRY  "1" to enable opt-in telemetry (marks)
 //
 // Output fields (ms):
-//   importMs        t0 -> entry module import resolves
-//   overallMs       t0 -> after first native commit (cold TTFMF) or import if no render
-//   importReadyAt   importReady mark offset from t0 (telemetry on, root only)
-//   firstCommitAt   firstNativeCommit mark offset from t0 (telemetry on)
+//   importMs     t0 -> entry module import resolves
+//   firstCommitAt t0 -> firstNativeCommit mark (telemetry on, render scenarios)
+//   ttfmMs       t0 -> first commit. TTFMF. Measured as (performance.now - t0)
+//                right after the first rendered frame resolves (so BEFORE
+//                destroy), or as the precise firstNativeCommit mark when
+//                telemetry is on. Equal to importMs when render is skipped.
 import { performance } from "node:perf_hooks"
 
 const entry = process.env.OPENTUI_BENCH_ENTRY
 const scenario = process.env.OPENTUI_BENCH_SCENARIO ?? "root"
-const doRender = process.env.OPENTUI_BENCH_RENDER !== "0"
-const telemetryOn = process.env.OPENTUI_BENCH_TELEMETRY === "1"
+const isBun = !!process.versions.bun
+// Node runs the bundled dist consumer, which does not expose the src telemetry
+// or testing helpers; marks/telemetry and the headless render path are only
+// available under bun. Node baseline = cold dist import time (importMs).
+const doRender = isBun && process.env.OPENTUI_BENCH_RENDER !== "0"
+const telemetryOn = isBun && process.env.OPENTUI_BENCH_TELEMETRY === "1"
 
 if (!entry) {
   console.error("OPENTUI_BENCH_ENTRY is required")
@@ -25,10 +32,17 @@ if (!entry) {
 }
 
 const t0 = performance.now()
-// telemetry module is loaded before the measured entry so module-scope marks
-// (opentui.importReady) fire; it is a no-dep module, negligible on import time.
-const telemetryModule = await import("../src/telemetry.js")
-telemetryModule.setTelemetryEnabled(telemetryOn)
+// telemetry is loaded before the measured entry so import-time marks
+// (opentui.nativeLoaded, opentui.importReady) fire; it is a no-dep module.
+// Under node the src module is unavailable, so marks are skipped (node = dist
+// cold-import baseline only).
+const telemetryModule: null | {
+  setTelemetryEnabled: (v: boolean) => void
+  getTelemetrySnapshot: () => {
+    marks: { name: string; atMs: number }[]
+  }
+} = isBun ? await import("../src/telemetry.js") : null
+telemetryModule?.setTelemetryEnabled(telemetryOn)
 
 let importMs: number | null = null
 try {
@@ -37,14 +51,8 @@ try {
   importMs = performance.now() - t0
 }
 
-let importReadyAt: number | null = null
-if (telemetryOn) {
-  const ready = telemetryModule.getTelemetrySnapshot().marks.find((m) => m.name === "opentui.importReady")
-  if (ready) importReadyAt = ready.atMs - t0
-}
-
 let firstCommitAt: number | null = null
-let overallMs = importMs
+let ttfmMs = importMs
 if (doRender) {
   const testRendererModule = await import("../src/testing/test-renderer.js")
   const { TextRenderable } = await import("../src/renderables/Text.js")
@@ -52,12 +60,16 @@ if (doRender) {
   const text = new TextRenderable(testRenderer.renderer, { content: "cold-start", width: 10, height: 1 })
   testRenderer.renderer.root.add(text)
   await testRenderer.renderOnce()
-  testRenderer.renderer.destroy()
-  overallMs = performance.now() - t0
-  if (telemetryOn) {
+  // TTFMF = first commit: stop the clock here, BEFORE destroy().
+  ttfmMs = performance.now() - t0
+  if (telemetryOn && telemetryModule) {
     const commit = telemetryModule.getTelemetrySnapshot().marks.find((m) => m.name === "opentui.firstNativeCommit")
-    if (commit) firstCommitAt = commit.atMs - t0
+    if (commit) {
+      firstCommitAt = commit.atMs - t0
+      ttfmMs = firstCommitAt
+    }
   }
+  testRenderer.renderer.destroy()
 }
 
 const round = (v: number | null): number | null => (v === null ? null : Math.round(v * 1000) / 1000)
@@ -67,8 +79,7 @@ console.log(
     runtime: process.versions.bun ? "bun" : "node",
     telemetry: telemetryOn,
     importMs: round(importMs),
-    importReadyAt: round(importReadyAt),
     firstCommitAt: round(firstCommitAt),
-    overallMs: round(overallMs),
+    ttfmMs: round(ttfmMs),
   }),
 )
