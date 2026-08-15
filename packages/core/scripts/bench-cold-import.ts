@@ -5,11 +5,15 @@
 // <worktree>/.yesmem/bench/<artifact>/raw.ndjson (append-only), then
 // regenerates <artifact>/report.md from that raw file (never hand-edited).
 //
-// Gates (each exits nonzero on FAIL):
-//   --gate       disabled-vs-enabled telemetry on this branch (true A/B, PASS
-//                iff enabled median <= disabled * (1 + threshold/100)).
-//   --gate-base  disabled-instrumented branch vs UNMODIFIED fastpatch tree
-//                (proves instrumentation is ~zero-cost when disabled).
+// Gates:
+//   --gate       disabled-vs-enabled on THIS branch (true A/B). THE acceptance:
+//                PASS iff paired enabled <= disabled*(1+threshold/100). Sets exit.
+//   --gate-base  disabled-instrumented branch vs UNMODIFIED fastpatch tree.
+//                INFORMATIONAL only: branch HEAD vs fastpatch@2cd44364 differ by
+//                far more than instrumentation, so the delta swings with host
+//                load (-43%..+10% across runs) and is not a usable acceptance
+//                signal. Recorded for reference; does NOT affect exit code.
+//   --force-fail debug/CI hook: force all gates to FAIL (proves nonzero exit)
 //
 // Options:
 //   --scenario=root|zig|dist   (default root)
@@ -18,7 +22,6 @@
 //   --artifact=<name> (default "cold-import-<commit>")
 //   --threshold=<pct> (default 3, gate pass bound)
 //   --force-fail      debug/CI hook: force all gates to FAIL (proves nonzero exit)
-//   --outdir=<repo>/<path> where the artifact lives (default fallback)
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { cpus, platform, arch } from "node:os"
@@ -262,6 +265,9 @@ async function main(): Promise<void> {
   const baseline = measure({ scenario, runtime, telemetry: false, entry, samples, warmup })
 
   const gateRows: GateResult[] = []
+  // `--gate` is the acceptance gate and drives the exit code; --gate-base is
+  // informational (cross-tree vs older fastpatch, load-swamped).
+  let acceptGate: { passed: boolean } | null = null
   if (doGate && runtime === "node")
     throw new Error("--gate under node is vacuous: src telemetry/render are bun-only; use --runtime=bun")
   if (doGate) {
@@ -275,6 +281,7 @@ async function main(): Promise<void> {
       passed: res.overheadMedianPct <= threshold,
       rule: `paired enabled-vs-disabled overhead (median of per-pair %) <= ${threshold}%`,
     }
+    acceptGate = res.gate
     gateRows.push(res)
   }
   if (doGateBase) {
@@ -348,7 +355,7 @@ async function main(): Promise<void> {
   }
   writeFileSync(join(artifactDir, "report.md"), md)
 
-  const failed = gateRows.some((g) => !g.gate.passed)
+  const failed = forceFail ? true : acceptGate ? !acceptGate.passed : false
   console.log(
     JSON.stringify({
       artifact,
