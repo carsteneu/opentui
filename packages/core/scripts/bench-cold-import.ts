@@ -12,7 +12,7 @@
 //                (proves instrumentation is ~zero-cost when disabled).
 //
 // Options:
-//   --scenario=root|minimal|zig|dist   (default root)
+//   --scenario=root|zig|dist   (default root)
 //   --runtime=bun|node                 (default bun)
 //   --samples=N (default 30)  --warmup=N (default 3)
 //   --artifact=<name> (default "cold-import-<commit>")
@@ -66,6 +66,11 @@ function parseArgs(): Record<string, string> {
 
 function gitRevparse(ref: string): string {
   const r = spawnSync("git", ["rev-parse", ref], { cwd: repoRoot, encoding: "utf8" })
+  return r.status === 0 ? r.stdout.trim() : "unknown"
+}
+
+function gitMergeBase(a: string, b: string): string {
+  const r = spawnSync("git", ["merge-base", a, b], { cwd: repoRoot, encoding: "utf8" })
   return r.status === 0 ? r.stdout.trim() : "unknown"
 }
 
@@ -209,7 +214,7 @@ async function main(): Promise<void> {
 
   const commit = gitRevparse("HEAD")
   const ct = gitRevparse("fastpatch")
-  const mergeBase = gitRevparse(`merge-base fastpatch HEAD`)
+  const mergeBase = gitMergeBase("fastpatch", "HEAD")
   const artifact = args["artifact"] ?? `cold-import-${commit.slice(0, 7)}`
   const benchDir = process.env.OPENTUI_BENCH_DIR ?? join(repoRoot, ".yesmem", "bench")
   const artifactDir = join(benchDir, artifact)
@@ -219,7 +224,7 @@ async function main(): Promise<void> {
   let entry: string
   if (scenario === "dist") {
     entry = distEntry(runtime)
-  } else if (scenario === "root" || scenario === "minimal" || scenario === "zig") {
+  } else if (scenario === "root" || scenario === "zig") {
     if (runtime === "node")
       throw new Error(`scenario ${scenario} is bun-source only; use --scenario=dist --runtime=node`)
     entry = sourceEntry(scenario === "root" ? "index" : scenario)
@@ -316,23 +321,26 @@ async function main(): Promise<void> {
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l))
+  const m = (f: { median?: number; p95?: number; p99?: number; rmePct?: number } | undefined) =>
+    `${f?.median ?? "—"} / ${f?.p95 ?? "—"} / ${f?.p99 ?? "—"} / ${f?.rmePct ?? "—"}%`
   let md = `# Cold-import / TTFMF report — artifact \`${artifact}\`\n\n`
   md += `Generiert am ${provenance.generated} · Commit \`${commit}\` · base \`${mergeBase}\` · ${runtime}\n\n`
   md += "\n## Rohdaten\n\n`raw.ndjson` (append-only) — `" + rawLines.length + "` rows.\n\n"
-  md += "## Baselines (Median / p95 / p99 / RME %)\n\n"
-  md += "| Row | Runtime | Scenario | importMs.med | importMs.p95 | ttfm.med | ttfm.p95 | ttfm.p99 | RME% |\n"
-  md += "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+  md += "## Baselines (Med / p95 / p99 / RME %)\n\n"
+  md += "| Row | Runtime | Scenario | importMs | ttfmMs |\n"
+  md += "| --- | --- | --- | --- | --- |\n"
   for (const line of rawLines) {
     if (line.kind !== "baseline.cold-import") continue
-    md += `| ${line.commit.slice(0, 7)} | ${line.runtime?.engine ?? line.runtime} | ${line.scenario} | ${line.importMs.median} | ${line.importMs.p95} | ${line.ttfmMs.median} | ${line.ttfmMs.p95} | ${line.ttfmMs.p99} | ${line.ttfmMs.rmePct} |\n`
+    const r = line.runtime?.engine ?? line.runtime ?? "?"
+    md += `| ${String(line.commit ?? "?").slice(0, 7)} | ${r} | ${line.scenario} | ${m(line.importMs)} | ${m(line.ttfmMs)} |\n`
   }
   for (const line of rawLines) {
     if (!line.gates) continue
     for (const g of line.gates) {
       if (g.kind !== "gate.zero-cost") continue
-      md += `\n## Gate: ${g.aLabel} vs ${g.bLabel} (<= ${g.gate.thresholdPct}%)\n\n`
-      md += `- ${g.aLabel} median: ${g.a.median} ms; ${g.bLabel} median: ${g.b.median} ms\n`
-      md += `- overhead median: ${g.overheadMedianPct}% — **${g.gate.passed ? "PASS" : "FAIL"}**\n`
+      md += `\n## Gate: ${g.aLabel} vs ${g.bLabel} (<= ${g.gate?.thresholdPct ?? "?"}%)\n\n`
+      md += `- ${g.aLabel} median: ${g.a?.median ?? "—"} ms; ${g.bLabel} median: ${g.b?.median ?? "—"} ms\n`
+      md += `- overhead median: ${g.overheadMedianPct ?? "—"}% — **${g.gate?.passed ? "PASS" : "FAIL"}**\n`
     }
   }
   writeFileSync(join(artifactDir, "report.md"), md)
