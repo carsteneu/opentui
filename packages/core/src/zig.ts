@@ -10,6 +10,7 @@ import {
   usesBunFFI,
 } from "./platform/ffi.js"
 import { writeFile } from "./platform/runtime.js"
+import { mark } from "./telemetry.js"
 import { existsSync, writeFileSync } from "fs"
 import { EventEmitter } from "events"
 import {
@@ -3043,6 +3044,7 @@ class FFIRenderLib implements RenderLib {
 
   constructor(libPath?: string) {
     this.opentui = getOpenTUILib(libPath)
+    mark("opentui.nativeLoaded")
     this.imageRetainIccCache()
     this.iccCacheClient = true
     try {

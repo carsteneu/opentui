@@ -8,19 +8,18 @@
 
 export type TelemetryCounterName =
   | "frame.total"
-  | "frame.full"
-  | "frame.partial"
-  | "frame.splitFooter"
   | "frame.source.request"
   | "frame.source.requestPartial"
   | "frame.source.live"
   | "frame.source.timer"
+  | "frame.source.rAF"
+  | "frame.promote.partialToFull"
+  | "frame.followup.immediateRerender"
   | "frame.native.rendered"
   | "frame.native.retryable-skip"
   | "frame.native.failed"
   | "frame.native.blocked"
   | "frame.native.backpressured"
-  | "frame.followup.immediateRerender"
 
 export type TelemetryHistogramLabel = "frame.type.full" | "frame.type.partial" | "frame.type.splitFooter"
 
