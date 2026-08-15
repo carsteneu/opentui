@@ -10,7 +10,7 @@ import {
   resetTelemetry,
   getTelemetrySnapshot,
   type TelemetrySnapshot,
-} from "./telemetry.ts"
+} from "./telemetry.js"
 
 describe("telemetry opt-in module", () => {
   beforeEach(() => {
@@ -21,7 +21,7 @@ describe("telemetry opt-in module", () => {
   it("is disabled by default and disabled state is a no-op", () => {
     expect(isTelemetryEnabled()).toBe(false)
     increment("frame.total")
-    recordHistogramLabel("frame.full")
+    recordHistogramLabel("frame.type.full")
     mark("firstNativeCommit")
     recordSpan("span", 10, 20)
     const snap = getTelemetrySnapshot()
@@ -37,8 +37,8 @@ describe("telemetry opt-in module", () => {
     increment("frame.total")
     increment("frame.total")
     add("frame.full", 3)
-    recordHistogramLabel("frame.full")
-    recordHistogramLabel("frame.partial")
+    recordHistogramLabel("frame.type.full")
+    recordHistogramLabel("frame.type.partial")
     mark("firstNativeCommit")
     recordSpan("firstNativeCommit", 100, 250)
 
@@ -47,8 +47,8 @@ describe("telemetry opt-in module", () => {
     expect(snap.enabled).toBe(true)
     expect(snap.counters["frame.total"]).toBe(2)
     expect(snap.counters["frame.full"]).toBe(3)
-    expect(snap.histogram["frame.full"]).toBe(1)
-    expect(snap.histogram["frame.partial"]).toBe(1)
+    expect(snap.histogram["frame.type.full"]).toBe(1)
+    expect(snap.histogram["frame.type.partial"]).toBe(1)
     expect(snap.marks[0]!.name).toBe("firstNativeCommit")
     expect(snap.marks[0]!.atMs).toBeGreaterThanOrEqual(home - 1)
     expect(snap.spans[0]).toEqual({ name: "firstNativeCommit", startMs: 100, endMs: 250 })
@@ -84,12 +84,12 @@ describe("telemetry opt-in module", () => {
     increment("frame.total")
     increment("frame.total")
     increment("frame.total")
-    recordHistogramLabel("frame.full")
-    recordHistogramLabel("frame.partial")
+    recordHistogramLabel("frame.type.full")
+    recordHistogramLabel("frame.type.partial")
     add("frame.source.request", 2)
     add("frame.native.rendered", 3)
     const snap = getTelemetrySnapshot() as TelemetrySnapshot & { counters: Record<string, number> }
-    const explained = snap.histogram["frame.full"]! + snap.histogram["frame.partial"]!
+    const explained = snap.histogram["frame.type.full"]! + snap.histogram["frame.type.partial"]!
     expect(snap.counters["frame.total"]).toBe(3)
     expect(explained).toBe(2)
   })

@@ -25,6 +25,7 @@ import {
   type RendererHandle,
 } from "./zig.js"
 import { NativeSpanFeed } from "./NativeSpanFeed.js"
+import { increment, isTelemetryEnabled, mark, recordHistogramLabel } from "./telemetry.js"
 import { TerminalConsole, type ConsoleOptions, capture } from "./console.js"
 import { type MouseEventType, type RawMouseEvent, type ScrollInfo } from "./lib/parse.mouse.js"
 import { Selection } from "./lib/selection.js"
@@ -833,6 +834,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private committedOrdinaryRenderGeneration: number = 0
   private ordinaryRequestsDuringFrame = new Set<Renderable>()
   private lastFrameCommitted: boolean = true
+  private telemetryFirstJsRenderMarked: boolean = false
+  private telemetryFirstNativeCommitMarked: boolean = false
+  private telemetryScheduledAsFollowup: boolean = false
   private renderStats: {
     frameCount: number
     fps: number
@@ -1059,6 +1063,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.realStdoutWrite = stdout.write
 
     const lib = resolveRenderLib()
+    mark("opentui.nativeLoaded")
     const useMemoryBufferedOutput = config.bufferedOutput === "memory"
     const useFeedOutput = !this._usesProcessStdout && !useMemoryBufferedOutput
     const { screenMode, footerHeight, externalOutputMode } = resolveModes(config)
@@ -1107,6 +1112,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       feed?.close()
       throw new Error("Failed to create renderer")
     }
+    mark("opentui.rendererCreated")
 
     // Threading defaults (on everywhere except linux, where it currently
     // crashes — likely a missing build dep).
@@ -3241,6 +3247,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   public async setupTerminal(): Promise<void> {
     if (this._terminalIsSetup) return
     this._terminalIsSetup = true
+    mark("opentui.terminalSetupStarted")
 
     const startupCursorCprActive = this._screenMode === "split-footer" && this._externalOutputMode === "capture-stdout"
     this.updateStdinParserProtocolContext({
@@ -4578,6 +4585,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       // Bump before any work so all callers this iteration see the new id.
       this._frameId++
 
+      const telemetryActive = isTelemetryEnabled()
+      const telemetryFollowup = this.telemetryScheduledAsFollowup
+      if (telemetryFollowup) this.telemetryScheduledAsFollowup = false
+
       const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
       const elapsed = this.getElapsedMs(now, this.lastTime)
 
@@ -4608,6 +4619,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const end = performance.now()
       this.renderStats.frameCallbackTime = end - start
 
+      if (telemetryActive && !this.telemetryFirstJsRenderMarked) {
+        this.telemetryFirstJsRenderMarked = true
+        mark("opentui.firstJsRender")
+      }
       const partialRegion =
         this.partialFramePending && this.canPartialRender() ? this.renderPartialFrame(deltaTime) : null
       // A normal invalidation raised from a partial render was not part of this frame.
@@ -4637,6 +4652,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       // If destroy() was requested during this frame, skip native work and scheduling.
       if (!this._isDestroyed) {
         const nativeStatus = this.renderNative(partialRegion) ?? "rendered"
+        if (telemetryActive) {
+          const telemetryType =
+            partialRegion !== null
+              ? "partial"
+              : this._splitHeight > 0 && this._externalOutputMode === "capture-stdout"
+                ? "splitFooter"
+                : "full"
+          this.recordFrameTelemetry(telemetryType, nativeStatus, telemetryFollowup)
+        }
         if (nativeStatus === "rendered") this.frameCount++
         if (this.getElapsedMs(now, this.lastFpsTime) >= 1000) {
           this.currentFps = this.frameCount
@@ -4674,6 +4698,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           if (this._isRunning || this.immediateRerenderRequested) {
             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime
             const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime))
+            if (this.immediateRerenderRequested) this.telemetryScheduledAsFollowup = true
             this.immediateRerenderRequested = false
             this.renderTimeout = this.clock.setTimeout(() => {
               this.renderTimeout = null
@@ -4689,6 +4714,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           if (this._isRunning || this.immediateRerenderRequested) {
             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime
             const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime))
+            if (this.immediateRerenderRequested) this.telemetryScheduledAsFollowup = true
             this.immediateRerenderRequested = false
             this.renderTimeout = this.clock.setTimeout(() => {
               this.renderTimeout = null
@@ -4808,6 +4834,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         this.forceFullRepaintRequested = false
         this.pendingSplitFooterTransition = null
         this.lastFrameCommitted = true
+        this.recordFirstCommitTelemetry()
         return "rendered"
       }
 
@@ -4828,11 +4855,38 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.forceFullRepaintRequested = false
       this.pendingSplitFooterTransition = null
       this.lastFrameCommitted = true
+      this.recordFirstCommitTelemetry()
       // this.dumpOutputBuffer(Date.now())
       return "rendered"
     } finally {
       this.renderingNative = false
     }
+  }
+
+  private recordFirstCommitTelemetry(): void {
+    if (!isTelemetryEnabled() || this.telemetryFirstNativeCommitMarked) return
+    this.telemetryFirstNativeCommitMarked = true
+    mark("opentui.firstNativeCommit")
+    mark("opentui.firstOutputWrite")
+  }
+
+  private recordFrameTelemetry(
+    type: "full" | "partial" | "splitFooter",
+    nativeStatus: "rendered" | "retryable-skip" | "failed" | "blocked" | "backpressured",
+    followup: boolean,
+  ): void {
+    increment("frame.total")
+    if (type === "partial") recordHistogramLabel("frame.type.partial")
+    else if (type === "splitFooter") recordHistogramLabel("frame.type.splitFooter")
+    else recordHistogramLabel("frame.type.full")
+    if (this._isRunning) increment("frame.source.live")
+    else increment("frame.source.request")
+    if (followup) increment("frame.followup.immediateRerender")
+    if (nativeStatus === "rendered") increment("frame.native.rendered")
+    else if (nativeStatus === "retryable-skip") increment("frame.native.retryable-skip")
+    else if (nativeStatus === "failed") increment("frame.native.failed")
+    else if (nativeStatus === "blocked") increment("frame.native.blocked")
+    else increment("frame.native.backpressured")
   }
 
   private collectStatSample(frameTime: number): void {

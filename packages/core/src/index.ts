@@ -28,3 +28,8 @@ export * from "./zig.js"
 export * from "./console.js"
 export { resolveBundledFilePath } from "./platform/runtime.js"
 export * as Yoga from "./yoga.js"
+import { mark } from "./telemetry.js"
+
+// Marked at the end of module evaluation: all heavy deps (zig native setup,
+// renderables, tree-sitter, markdown) have finished importing by this point.
+mark("opentui.importReady")
