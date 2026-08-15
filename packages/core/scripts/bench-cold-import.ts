@@ -205,11 +205,12 @@ async function main(): Promise<void> {
     if (line.kind !== "baseline.cold-import") continue
     md += `| ${line.commit.slice(0, 7)} | ${line.scenario} | ${line.importMs.median} | ${line.importMs.p95} | ${line.overallMs.median} | ${line.overallMs.p95} | ${line.overallMs.p99} | ${line.overallMs.rmePct} |\n`
   }
-  if (gateRow) {
-    const g = gateRow
-    md += `\n## Go-Gate (disablierte Telemetrie <= ${g.gate.thresholdPct}%)\n\n`
-    md += `- disabled median: ${g.disabled.median} ms; enabled median: ${g.enabled.median} ms\n`
-    md += `- overhead median: ${g.overheadMedianPct}% — **${g.gate.passed ? "PASS" : "FAIL"}**\n`
+  const gateRows = rawLines.filter((l) => l.gate && l.gate.kind === "gate.zero-cost")
+  for (const g of gateRows) {
+    const gr = g.gate
+    md += `\n## Go-Gate (disablierte Telemetrie <= ${gr.gate.thresholdPct}%)\n\n`
+    md += `- ${g.scenario}: disabled median ${gr.disabled.median} ms; enabled median ${gr.enabled.median} ms\n`
+    md += `- overhead median: ${gr.overheadMedianPct}% — **${gr.gate.passed ? "PASS" : "FAIL"}**\n`
   }
   writeFileSync(join(artifactDir, "report.md"), md)
 
