@@ -262,6 +262,8 @@ async function main(): Promise<void> {
   const baseline = measure({ scenario, runtime, telemetry: false, entry, samples, warmup })
 
   const gateRows: GateResult[] = []
+  if (doGate && runtime === "node")
+    throw new Error("--gate under node is vacuous: src telemetry/render are bun-only; use --runtime=bun")
   if (doGate) {
     const arms = [
       { label: "disabled", run: () => (runProbe({ scenario, runtime, telemetry: false, entry }) as unknown as Body).ttfmMs },
@@ -277,20 +279,21 @@ async function main(): Promise<void> {
   }
   if (doGateBase) {
     // disabled-instrumented branch vs unmodified fastpatch source (bun).
+    // base = fastpatch (reference), treat = this branch: overhead is
+    // (branch - fastpatch)/fastpatch, so it FAILS when the instrumented branch
+    // is slower than unmodified fastpatch (the property being validated).
     const branchEntry = sourceEntry("index")
     const baseEntry = resolve(fastpatchCore, "src", "index.ts")
-    const arms = [
-      {
-        label: "branch-disabled",
-        run: () =>
-          (runProbe({ scenario: "root", runtime: "bun", telemetry: false, entry: branchEntry }) as unknown as Body).ttfmMs,
-      },
-      {
-        label: "fastpatch",
-        run: () => (runProbe({ scenario: "root", runtime: "bun", telemetry: false, entry: baseEntry }) as unknown as Body).ttfmMs,
-      },
-    ]
-    const res = compare(arms[0]!, arms[1]!, samples)
+    const base = {
+      label: "fastpatch",
+      run: () => (runProbe({ scenario: "root", runtime: "bun", telemetry: false, entry: baseEntry }) as unknown as Body).ttfmMs,
+    }
+    const treat = {
+      label: "branch-disabled",
+      run: () =>
+        (runProbe({ scenario: "root", runtime: "bun", telemetry: false, entry: branchEntry }) as unknown as Body).ttfmMs,
+    }
+    const res = compare(base, treat, samples)
     res.gate = {
       thresholdPct: threshold,
       passed: res.overheadMedianPct <= threshold,

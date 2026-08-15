@@ -1014,6 +1014,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   // identity checks inline (e.g. rendererTracker compares `stdin` directly)
   // or duck-typed capability checks (e.g. `stdin.setRawMode?.()`).
   private readonly _usesProcessStdout: boolean
+  // Native output redirected to an in-memory buffer (no observed external write).
+  private readonly _bufferedOutputMemory: boolean
 
   // Feed wiring. Non-null when the given stdout is not process.stdout and native
   // output is not explicitly redirected to a buffered memory destination.
@@ -1068,6 +1070,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     const lib = resolveRenderLib()
     const useMemoryBufferedOutput = config.bufferedOutput === "memory"
+    this._bufferedOutputMemory = useMemoryBufferedOutput
     const useFeedOutput = !this._usesProcessStdout && !useMemoryBufferedOutput
     const { screenMode, footerHeight, externalOutputMode } = resolveModes(config)
     const initialGeometry = calculateRenderGeometry(screenMode, width, height, footerHeight)
@@ -4686,7 +4689,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
                 : "full"
           const source: TelemetryFrameSource = hadAnimation
             ? "rAF"
-            : hadPartialRequest
+            : hadPartialRequest && partialRegion !== null
               ? "requestPartial"
               : telemetryFollowup
                 ? "timer"
@@ -4908,14 +4911,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.telemetryFirstNativeCommitMarked = true
     mark("opentui.firstNativeCommit")
     // firstOutputWrite is only claimed when this commit actually writes to a real
-    // sink (process stdout / feed). For buffered-output frames the native commit
-    // is not an observed output write, so we do not emit the mark then.
-    if (
-      !this.telemetryFirstOutputWriteMarked &&
-      this._screenMode !== "alternate-screen-memory" &&
-      this._terminalIsSetup &&
-      this._externalOutputMode !== "memory"
-    ) {
+    // sink (process stdout / feed). For memory-buffered output the native commit
+    // is not an observed external write, so we do not emit the mark then.
+    if (!this.telemetryFirstOutputWriteMarked && this._terminalIsSetup && !this._bufferedOutputMemory) {
       this.telemetryFirstOutputWriteMarked = true
       mark("opentui.firstOutputWrite")
     }
