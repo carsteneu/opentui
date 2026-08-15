@@ -85,9 +85,9 @@ export function recordHistogramLabel(label: TelemetryHistogramLabel): void {
   histogram.set(label, (histogram.get(label) ?? 0) + 1)
 }
 
-export function mark(name: string, atMs: number = performance.now()): void {
+export function mark(name: string, atMs?: number): void {
   if (!enabled || marks.length >= EVENT_CAP) return
-  marks.push({ name, atMs })
+  marks.push({ name, atMs: atMs ?? performance.now() })
 }
 
 export function recordSpan(name: string, startMs: number, endMs: number): void {

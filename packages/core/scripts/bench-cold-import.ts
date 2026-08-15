@@ -110,6 +110,8 @@ function measure(opts: { scenario: string; telemetry: boolean; samples: number; 
   overall: ReturnType<typeof stats>
   importMs: ReturnType<typeof stats>
 } {
+  // Warmup probes warm the OS page/bun cache so first-spawn overhead does not
+  // skew the measurement samples (results are discarded, not aggregated).
   for (let i = 0; i < opts.warmup; i++) runProbe({ scenario: opts.scenario, telemetry: opts.telemetry })
   const overall: number[] = []
   const importMs: number[] = []
@@ -132,7 +134,7 @@ async function main(): Promise<void> {
   const warmup = Number(args["warmup"] ?? 2)
   const doGate = args["gate"] !== undefined
   const commit = gitRevparse("HEAD")
-  const restartBase = gitRevparse("ORIG_HEAD") === "unknown" ? commit : commit
+  const base = gitRevparse(`${commit}^`)
   const artifact = args["artifact"] ?? `cold-import-${commit.slice(0, 7)}`
   const benchDir = process.env.OPENTUI_BENCH_DIR ?? join(repoRoot, ".yesmem", "bench")
   const artifactDir = join(benchDir, artifact)
@@ -142,7 +144,7 @@ async function main(): Promise<void> {
   const cpu = cpus()[0]?.model ?? "unknown"
   const provenance = {
     commit,
-    "commit.base": restartBase,
+    "commit.base": base,
     runtime: { engine: "bun", version: process.versions.bun },
     cpu,
     platform,

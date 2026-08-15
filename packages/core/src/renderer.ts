@@ -4698,6 +4698,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           if (this._isRunning || this.immediateRerenderRequested) {
             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime
             const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime))
+            // Best-effort label for the next loop as an immediate-rerender follow-up;
+            // an unrelated loop may consume the flag first (heuristic, label only).
             if (this.immediateRerenderRequested) this.telemetryScheduledAsFollowup = true
             this.immediateRerenderRequested = false
             this.renderTimeout = this.clock.setTimeout(() => {
@@ -4714,6 +4716,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           if (this._isRunning || this.immediateRerenderRequested) {
             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime
             const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime))
+            // Best-effort label for the next loop as an immediate-rerender follow-up;
+            // an unrelated loop may consume the flag first (heuristic, label only).
             if (this.immediateRerenderRequested) this.telemetryScheduledAsFollowup = true
             this.immediateRerenderRequested = false
             this.renderTimeout = this.clock.setTimeout(() => {
