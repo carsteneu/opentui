@@ -178,26 +178,32 @@ function measure(opts: {
   return { ttfm: stats(ttfm), importMs: stats(importMs) }
 }
 
-// Interleaved A/B with a randomized per-sample order so no fixed ordering bias
-// (result only: both arms run an equal number, order alternates without a
-// predictable enabled-first/disabled-first pattern).
-function compare(arms: Array<{ label: string; run: () => number }>, samples: number): GateResult {
-  const values = new Map<string, number[]>()
-  for (const a of arms) values.set(a.label, [])
+// Paired A/B. Each iteration runs both arms back-to-back with a randomized
+// order, so slow background drift is largely canceled by the pairing. The
+// gate decision uses the median of the per-pair percentage difference
+// (treat vs base), not the ratio of aggregate medians — robust to load drift
+// within the run. `base` is the zero-cost/reference arm.
+function compare(base: { label: string; run: () => number }, treat: { label: string; run: () => number }, samples: number): GateResult {
+  const baseVals: number[] = []
+  const treatVals: number[] = []
   for (let i = 0; i < samples; i++) {
-    const order = i % 2 === 0 ? arms : [...arms].reverse()
-    for (const a of order) values.get(a.label)!.push(a.run())
+    const baseFirst = i % 2 === 0
+    const v0 = base.run()
+    const v1 = treat.run()
+    baseVals.push(baseFirst ? v0 : v1)
+    treatVals.push(baseFirst ? v1 : v0)
   }
-  const [a, b] = arms
-  const aStats = stats(values.get(a.label)!)
-  const bStats = stats(values.get(b.label)!)
+  const aStats = stats(baseVals)
+  const bStats = stats(treatVals)
+  const pairedPct = baseVals.map((bv, i) => ((treatVals[i]! - bv) / bv) * 100)
+  const pairedMedian = quantile([...pairedPct].sort((x, y) => x - y), 0.5)
   return {
     kind: "gate.zero-cost",
-    aLabel: a.label,
-    bLabel: b.label,
+    aLabel: base.label,
+    bLabel: treat.label,
     a: aStats,
     b: bStats,
-    overheadMedianPct: 0,
+    overheadMedianPct: Math.round(pairedMedian * 100) / 100,
     gate: { thresholdPct: 0, passed: false, rule: "" },
   }
 }
@@ -261,14 +267,11 @@ async function main(): Promise<void> {
       { label: "disabled", run: () => (runProbe({ scenario, runtime, telemetry: false, entry }) as unknown as Body).ttfmMs },
       { label: "enabled", run: () => (runProbe({ scenario, runtime, telemetry: true, entry }) as unknown as Body).ttfmMs },
     ]
-    const res = compare(arms, samples)
-    const [d, e] = res.aLabel === "disabled" ? [res.a, res.b] : [res.b, res.a]
-    const overheadPct = (e.median / d.median - 1) * 100
-    res.overheadMedianPct = Math.round(overheadPct * 100) / 100
+    const res = compare(arms[0]!, arms[1]!, samples)
     res.gate = {
       thresholdPct: threshold,
-      passed: overheadPct <= threshold,
-      rule: `enabled median <= disabled median * (1+${threshold}/100)`,
+      passed: res.overheadMedianPct <= threshold,
+      rule: `paired enabled-vs-disabled overhead (median of per-pair %) <= ${threshold}%`,
     }
     gateRows.push(res)
   }
@@ -287,14 +290,11 @@ async function main(): Promise<void> {
         run: () => (runProbe({ scenario: "root", runtime: "bun", telemetry: false, entry: baseEntry }) as unknown as Body).ttfmMs,
       },
     ]
-    const res = compare(arms, samples)
-    const [b, f] = res.aLabel === "branch-disabled" ? [res.a, res.b] : [res.b, res.a]
-    const overheadPct = (b.median / f.median - 1) * 100
-    res.overheadMedianPct = Math.round(overheadPct * 100) / 100
+    const res = compare(arms[0]!, arms[1]!, samples)
     res.gate = {
       thresholdPct: threshold,
-      passed: overheadPct <= threshold,
-      rule: `branch-disabled median <= fastpatch median * (1+${threshold}/100)`,
+      passed: res.overheadMedianPct <= threshold,
+      rule: `paired branch-disabled-vs-fastpatch overhead (median of per-pair %) <= ${threshold}%`,
     }
     gateRows.push(res)
   }
