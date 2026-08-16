@@ -84,16 +84,18 @@ Fundament für jeden weiteren Punkt; ohne Zähler/Reason-Histogramm keine Umbau-
 > Opt-in-Telemetrie `src/telemetry.ts` + Frame-Reason-Histogramm + Import-/First-commit-Spans in `renderer.ts`/`index.ts`.
 > Eingefrorener Baseline-Artefakt: `.yesmem/bench/wave0-baseline/` (Bun 1.3.14, Commit 1d845924; Go-Gate PASS −1,77 %).
 > Node- + Dist-Pfad-Baseline: als Serie-L-/Welle-6-Thema dokumentiert (Node 26 inzwischen installiert, aber dist-Consumer-Matrix ist L3-Scope).
+> 
+> ✅ Review-R2-Abnahme 2026-08-16 (`cce76f4a`): A1–A4/B7 nach Cold-Review-Runde-2-Korrektur (echte Randomisierung der Paar-Ausführungsreihenfolge, Arm-Reinheit im Artefakt belegt) erfüllt. Akzeptanz-Gate wave0-r3: **overhead 1,69 % ≤ 3 % → PASS**; Aufzeichnungskosten 0,02 %. Evidence: `packages/core/bench/base/wave0-r3/` (raw.ndjson + report.md, Harness v3, Protocol v3). Gesamt-Suite 5444 pass / 0 fail.
 
-- [~] **A1 · Mess-Harness für Cold-Import + Time-to-First-Frame** als reproduzierbares Script im Repo (Benchmark-Inventar + Opt-in-Tracing) [`[W01-Messagenda]` `[X-4.1/4.2]`] 🔴
+- [x] **A1 · Mess-Harness für Cold-Import + Time-to-First-Frame** als reproduzierbares Script im Repo (Benchmark-Inventar + Opt-in-Tracing) [`[W01-Messagenda]` `[X-4.1/4.2]`] 🔴
   - Rohdatenformat: Commit, Runtime (Bun/Node), CPU, Geometrie, Warmup, Samples, Median/p95/p99, RME.
   - Baseline auf Bun **und** Node + Dist-Pfad einfrieren.
   - Szenarien: Root, Minimalentry, `zig.ts`, Rendererbau, First JS render, First native commit, First output write und Destroy; Source und gebautes Paket nicht vermischen.
   - Rohdaten append-only unter einem eindeutig benannten Benchmark-Artefakt ablegen; Bericht wird daraus generiert, nicht manuell abgeschrieben.
-- [~] **A2 · Reason-Histogramm / Frame-Counter** (`[W01] [W03]`): Requestquelle, normal/partial/live/RAF, Folgeframegrund, Partial-Promotiongrund, native statuses, Queue-/Feedwartezeit. [`[X-7.1]`] 🔴
+- [x] **A2 · Reason-Histogramm / Frame-Counter** (`[W01] [W03]`): Requestquelle, normal/partial/live/RAF, Folgeframegrund, Partial-Promotiongrund, native statuses, Queue-/Feedwartezeit. [`[X-7.1]`] 🔴
   - Go-Gate Serie A: Counter erklären ≥95 % der Frames; deaktivierter Pfad verschlechtert Primärbenchmarks nicht >3 %.
-- [~] **A3 · Opt-in-Performanceevents/Counter mit ~Nullkosten im deaktivierten Zustand** [`[X-Serie A]`] 🔴
-- [~] **A4 · A/B-Rahmenwerk** auf identischer Hardware/Commitbasis (nicht addierbare Versprechen; jede einzelne Änderung isoliert messen) [`[X-1/15]`] 🔴
+- [x] **A3 · Opt-in-Performanceevents/Counter mit ~Nullkosten im deaktivierten Zustand** [`[X-Serie A]`] 🔴
+- [x] **A4 · A/B-Rahmenwerk** auf identischer Hardware/Commitbasis (nicht addierbare Versprechen; jede einzelne Änderung isoliert messen) [`[X-1/15]`] 🔴
   - Alternierende Reihenfolge, Warmupstrategie und Outlierregel vor dem Lauf festlegen; Vergleich bricht bei Artefakt-/Runtime-Drift ab.
   - Smoke-Gate im normalen CI klein halten; lange p95/p99-, PTY-, Memory- und `perf`-Läufe als explizite Performancejobs.
 
@@ -118,7 +120,7 @@ Der größte gemessene Hebel: ~380 ms Import vs. ~3 ms erster Frame. [`[X-P0.1] 
   - Nur optimieren, falls Assetauflösung/-einbindung im Importtrace relevant ist; Worker-, WASM- und Parserauswertung bleiben first-use Messpunkte in Serie C.
 - [ ] **B6 · UI-first-Rahmen mit expliziten Ready-Stufen** (Core ready → First frame committed → Enhanced ready → Application ready) **ohne** `setupTerminal()` zu serialisieren (Capabilities laufen bereits parallel, kein 5-s-Capability-Timeout im First-Frame-await). [`[X-P0.2]`] 🟠
   - Skeleton funktional (Fokus, Escape/Cancel, Lade-/Fehlerzustand); Fehlschlag optionaler Pakete darf sichtbare UI nicht zurücksetzen.
-- [~] **B7 · Import-/First-commit-Spans als Low-overhead-Telemetrie** (module ready, native loaded, renderer created, terminal setup started, first JS render, first native commit, first output write) [`[X-P0.1]`] 🟠
+- [x] **B7 · Import-/First-commit-Spans als Low-overhead-Telemetrie** (module ready, native loaded, renderer created, terminal setup started, first JS render, first native commit, first output write) [`[X-P0.1]`] 🟠
 - [ ] **B8 · `--delay-start` (5 s, Debug-only) aus Produktionsmessungen ausschließen** — bereits als F3 verifiziert, kein Fund [`[W06§3]`] 🔵 (nur Messprotokoll-Hinweis)
 - [ ] **Go-Gate Serie B:** Cold-TTFMF p50 ≥30 % unter Baseline (392,63 ms); Root-API unverändert; Bun & Node laden dieselben nativen Assets; UI bleibt bei fehlgeschlagenem optionalem Import nutzbar. [`[X-P0.1]`]
 
