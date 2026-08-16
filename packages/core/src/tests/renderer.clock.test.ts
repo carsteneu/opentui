@@ -401,3 +401,40 @@ test("requestRender() and requestPartialRender() share one delayed activation ow
   // @ts-expect-error - inspect private scheduler state in regression test
   expect(renderer.updateScheduled).toBe(true)
 })
+
+test("an old activation completion cannot clear a newer scheduled generation", async () => {
+  let resolveFirst!: () => void
+  const firstLoop = new Promise<void>((resolve) => {
+    resolveFirst = resolve
+  })
+  let loopCalls = 0
+  const internals = renderer as any
+  internals.loop = () => {
+    loopCalls++
+    return loopCalls === 1 ? firstLoop : Promise.resolve()
+  }
+
+  renderer.requestRender()
+  clock.advance(17)
+  expect(loopCalls).toBe(1)
+
+  // Invalidate the in-flight owner and schedule a replacement while its
+  // asynchronous loop is still pending.
+  internals.cancelDelayedActivation()
+  internals.lastTime = clock.now()
+  renderer.requestRender()
+  expect(internals.updateScheduled).toBe(true)
+  expect(internals.activationTimer).not.toBeNull()
+
+  resolveFirst()
+  await Promise.resolve()
+  await Promise.resolve()
+
+  // The old activateFrame finally block must not erase the replacement.
+  expect(internals.updateScheduled).toBe(true)
+  expect(internals.activationTimer).not.toBeNull()
+
+  clock.advance(17)
+  await Promise.resolve()
+  expect(loopCalls).toBe(2)
+})

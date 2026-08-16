@@ -203,6 +203,27 @@ test("a frame callback that throws synchronously does not hang the loop", async 
   expect(renderer.isDestroyed).toBe(false)
 })
 
+test("a synchronous JavaScript frame callback remains supported without an error report", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+  const errors: unknown[][] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => errors.push(args)
+
+  let calls = 0
+  ;(renderer as any).setFrameCallback(() => {
+    calls++
+  })
+
+  try {
+    await renderOnce()
+  } finally {
+    console.error = originalError
+  }
+
+  expect(calls).toBe(1)
+  expect(errors).toEqual([])
+})
+
 test("a frame callback that rejects asynchronously does not hang the loop", async () => {
   const { renderer, renderOnce } = await createTestRenderer({})
 

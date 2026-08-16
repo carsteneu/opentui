@@ -1155,16 +1155,25 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // bound feed teardown (see settleAllPendingWrites below).
     this._feed = feed
     if (feed) {
+      let sinkErrorReported = false
+      const reportSinkError = (error: unknown) => {
+        if (sinkErrorReported) return
+        sinkErrorReported = true
+        console.error(
+          "[CliRenderer] NativeSpanFeed sink error: " + (error instanceof Error ? error.message : String(error)),
+        )
+      }
       // Bound teardown against an unreliable custom Writable (plan 5.4): a sink
       // that never invokes its write callback must not pin feed chunks into
       // destroy forever. Every in-flight write is settled by the first of the
       // write callback, the sink's error/close/finish, or renderer destroy.
-      const settleAllPendingWrites = () => {
+      const settleAllPendingWrites = (error?: unknown) => {
+        if (error !== undefined) reportSinkError(error)
         this._feedSinkTerminal = true
         for (const settle of [...this._feedPendingWrites]) settle()
         this._feedPendingWrites.clear()
       }
-      const onSinkError = () => settleAllPendingWrites()
+      const onSinkError = (error: unknown) => settleAllPendingWrites(error)
       const onSinkClose = () => settleAllPendingWrites()
       const onSinkFinish = () => settleAllPendingWrites()
       stdout.on("error", onSinkError)
@@ -1177,6 +1186,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
 
       this._detachFeed = feed.onData((bytes: Uint8Array) => {
+        if (this._feedSinkTerminal) return
         // Owned copy: hand the sink only JS-owned bytes. The sink may outlive
         // the feed chunk (slow or never-firing write callback), so releasing
         // the native Zig chunk on any settlement path is always safe. Feeding
@@ -1185,7 +1195,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         // write, so we never hand the borrowed native view to the sink.
         const owned = bytes.slice()
         this.recordFirstOutputWriteTelemetry()
-        if (this._feedSinkTerminal) return
         return new Promise<void>((resolve) => {
           let done = false
           const settle = () => {
@@ -1196,12 +1205,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           }
           this._feedPendingWrites.add(settle)
           try {
-            this.realStdoutWrite.call(this.stdout, owned, settle)
+            this.realStdoutWrite.call(this.stdout, owned, (error?: Error | null) => {
+              if (error) {
+                settleAllPendingWrites(error)
+                return
+              }
+              settle()
+            })
           } catch (error) {
-            settle()
-            console.error(
-              `[CliRenderer] NativeSpanFeed write error: ${error instanceof Error ? error.message : String(error)}`,
-            )
+            settleAllPendingWrites(error)
           }
         })
       })
@@ -1710,7 +1722,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           this.resolveIdleIfNeeded()
           return
         }
-        this.activateFrame()
+        void this.activateFrame(token)
       })
       return
     }
@@ -1723,7 +1735,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         this.resolveIdleIfNeeded()
         return
       }
-      this.activateFrame()
+      void this.activateFrame(token)
     }, delay)
   }
 
@@ -1742,8 +1754,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.updateScheduled = false
   }
 
-  private async activateFrame() {
-    if (!this.updateScheduled) {
+  private async activateFrame(token: number = this.activationToken) {
+    if (token !== this.activationToken || !this.updateScheduled) {
       this.resolveIdleIfNeeded()
       return
     }
@@ -1751,9 +1763,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     try {
       await this.loop()
     } finally {
-      // A callback that reaches here belongs to the current owner, so clearing
-      // updateScheduled cannot erase a newer generation (see token guards above).
-      this.updateScheduled = false
+      // A control transition can invalidate this owner while loop() is
+      // awaiting asynchronous frame work, then schedule a newer activation.
+      // Only the still-current owner may clear the shared scheduled flag.
+      if (token === this.activationToken) {
+        this.updateScheduled = false
+      }
       this.resolveIdleIfNeeded()
     }
   }
@@ -4258,9 +4273,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private async boundFrameCallbackWait(
-    callbackPromise: Promise<void>,
+    callbackResult: void | PromiseLike<void>,
     abort: { promise: Promise<void>; trigger: () => void },
   ): Promise<void> {
+    const callbackPromise = Promise.resolve(callbackResult)
     // Keep observing the original promise: if it settles late (after abort), a
     // rejection must not surface as an unhandled rejection. The race with the
     // destroy-driven abort lets loop() stop waiting on a callback that never

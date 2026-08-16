@@ -1327,7 +1327,10 @@ describe("TreeSitterClient Edge Cases", () => {
     await client.initialize()
 
     const internals = client as unknown as {
-      worker?: { terminate: () => void | Promise<number> }
+      worker?: {
+        onexit?: ((event: { code: number }) => void) | null
+        terminate: () => void | Promise<number>
+      }
     }
     const worker = internals.worker
     expect(worker).toBeDefined()
@@ -1336,12 +1339,14 @@ describe("TreeSitterClient Edge Cases", () => {
     }
 
     const originalTerminate = worker.terminate.bind(worker)
+    const originalExit = worker.onexit
     worker.terminate = async () => {
       throw new Error("synthetic termination failure")
     }
 
     await expect(client.destroy()).rejects.toThrow("synthetic termination failure")
     expect(internals.worker).toBe(worker)
+    expect(worker.onexit).toBe(originalExit)
     await expect(client.initialize()).rejects.toThrow("retry destroy()")
 
     worker.terminate = originalTerminate
@@ -1504,9 +1509,7 @@ describe("TreeSitterClient lifecycle hardening", () => {
         console.warn = originalWarn
       },
       hasDisposeTimeoutWarning: () =>
-        warnings.some((args) =>
-          Array.from(args).some((arg) => typeof arg === "string" && arg.includes("Timed out")),
-        ),
+        warnings.some((args) => Array.from(args).some((arg) => typeof arg === "string" && arg.includes("Timed out"))),
     }
   }
 
@@ -1519,7 +1522,7 @@ describe("TreeSitterClient lifecycle hardening", () => {
         worker?: { onmessage: ((event: { data: unknown }) => void) | null }
       }
       const worker = internals.worker!
-      await client.createBuffer(1, 'const a = 1', "javascript")
+      await client.createBuffer(1, "const a = 1", "javascript")
 
       const dispose = client.removeBuffer(1).then(
         () => "resolved",
@@ -1547,7 +1550,7 @@ describe("TreeSitterClient lifecycle hardening", () => {
         worker?: { onmessage: ((event: { data: unknown }) => void) | null }
       }
       const worker = internals.worker!
-      await client.createBuffer(1, 'const a = 1', "javascript")
+      await client.createBuffer(1, "const a = 1", "javascript")
 
       const start = Date.now()
       await client.removeBuffer(1)
@@ -1578,7 +1581,7 @@ describe("TreeSitterClient lifecycle hardening", () => {
         if (message.type === "DISPOSE_BUFFER") return
         originalPost(message)
       }
-      await client.createBuffer(1, 'const a = 1', "javascript")
+      await client.createBuffer(1, "const a = 1", "javascript")
 
       const dispose = client.removeBuffer(1).then(
         () => "resolved",
@@ -1612,7 +1615,7 @@ describe("TreeSitterClient lifecycle hardening", () => {
         if (message.type === "DISPOSE_BUFFER") return
         originalPost(message)
       }
-      await client.createBuffer(1, 'const a = 1', "javascript")
+      await client.createBuffer(1, "const a = 1", "javascript")
 
       const dispose = client.removeBuffer(1).then(
         () => "resolved",
@@ -1631,7 +1634,7 @@ describe("TreeSitterClient lifecycle hardening", () => {
     const client = new TreeSitterClient({ dataPath }, { disposeTimeoutMs: 30 })
     try {
       await client.initialize()
-      await client.createBuffer(1, 'const a = 1', "javascript")
+      await client.createBuffer(1, "const a = 1", "javascript")
 
       const first = client.removeBuffer(1).then(
         () => "resolved",
@@ -1662,7 +1665,7 @@ describe("TreeSitterClient lifecycle hardening", () => {
         buffers: Map<number, unknown>
       }
       const worker = internals.worker!
-      await client.createBuffer(1, 'const a = 1', "javascript")
+      await client.createBuffer(1, "const a = 1", "javascript")
 
       const highlight = client.highlightOnce("const a = 1", "javascript").then(
         () => "resolved",
@@ -1684,18 +1687,133 @@ describe("TreeSitterClient lifecycle hardening", () => {
   test("worker restart budget blocks recreation after consecutive failures", async () => {
     const client = new TreeSitterClient({ dataPath })
     try {
-      await client.initialize()
       const internals = client as unknown as {
         worker?: { onerror: ((event: { message?: string }) => void) | null }
-        consecutiveWorkerFailures: number
       }
-      // Simulate one failure (nulls the worker), then exhaust the budget.
-      internals.worker?.onerror?.({ message: "synthetic exit failure" })
-      internals.consecutiveWorkerFailures = 5
+
+      // Exercise five real client failure/recreate generations. Successful
+      // initialization alone must not reset the crash-loop budget.
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        await client.initialize()
+        const worker = internals.worker
+        expect(worker).toBeDefined()
+        worker?.onerror?.({ message: `synthetic consecutive failure ${attempt}` })
+        expect(client.isInitialized()).toBe(false)
+      }
 
       await expect(client.initialize()).rejects.toThrow(/restart budget exceeded/)
     } finally {
       await client.destroy().catch(() => {})
     }
   }, 5000)
+
+  test("resetBuffer propagates real debounced work failures", async () => {
+    const client = new TreeSitterClient({ dataPath }, { autoStartWorker: false })
+    try {
+      const internals = client as unknown as {
+        initialized: boolean
+        buffers: Map<number, { id: number; content: string; filetype: string; version: number; hasParser: true }>
+        processEdit: () => Promise<void>
+      }
+      internals.initialized = true
+      internals.buffers.set(1, {
+        id: 1,
+        content: "const a = 1",
+        filetype: "javascript",
+        version: 1,
+        hasParser: true,
+      })
+      internals.processEdit = async () => {
+        throw new Error("synthetic reset send failure")
+      }
+
+      const outcome = await client.resetBuffer(1, 2, "const b = 2").then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      expect(outcome.ok).toBe(false)
+      if (!outcome.ok) {
+        expect(outcome.error).toBeInstanceOf(Error)
+        expect((outcome.error as Error).message).toBe("synthetic reset send failure")
+      }
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("rapid resetBuffer calls settle and only send the latest reset", async () => {
+    const client = new TreeSitterClient({ dataPath }, { autoStartWorker: false })
+    try {
+      const sent: string[] = []
+      const internals = client as unknown as {
+        initialized: boolean
+        buffers: Map<number, { id: number; content: string; filetype: string; version: number; hasParser: true }>
+        processEdit: (
+          bufferId: number,
+          edits: unknown[],
+          content: string,
+          version: number,
+          isReset: boolean,
+        ) => Promise<void>
+      }
+      internals.initialized = true
+      internals.buffers.set(1, {
+        id: 1,
+        content: "const a = 1",
+        filetype: "javascript",
+        version: 1,
+        hasParser: true,
+      })
+      internals.processEdit = async (_bufferId, _edits, content) => {
+        sent.push(content)
+      }
+
+      const first = client.resetBuffer(1, 2, "const b = 2")
+      const second = client.resetBuffer(1, 3, "const c = 3")
+      await Promise.all([first, second])
+
+      expect(sent).toEqual(["const c = 3"])
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("destroying one client does not cancel another client's debounced reset", async () => {
+    const first = new TreeSitterClient({ dataPath }, { autoStartWorker: false })
+    const second = new TreeSitterClient({ dataPath }, { autoStartWorker: false })
+    try {
+      const sent: string[] = []
+      const internals = first as unknown as {
+        initialized: boolean
+        buffers: Map<number, { id: number; content: string; filetype: string; version: number; hasParser: true }>
+        processEdit: (
+          bufferId: number,
+          edits: unknown[],
+          content: string,
+          version: number,
+          isReset: boolean,
+        ) => Promise<void>
+      }
+      internals.initialized = true
+      internals.buffers.set(1, {
+        id: 1,
+        content: "const a = 1",
+        filetype: "javascript",
+        version: 1,
+        hasParser: true,
+      })
+      internals.processEdit = async (_bufferId, _edits, content) => {
+        sent.push(content)
+      }
+
+      const pendingReset = first.resetBuffer(1, 2, "const b = 2")
+      await second.destroy()
+      await pendingReset
+
+      expect(sent).toEqual(["const b = 2"])
+    } finally {
+      await first.destroy().catch(() => {})
+      await second.destroy().catch(() => {})
+    }
+  })
 })

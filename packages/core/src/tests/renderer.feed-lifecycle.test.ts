@@ -169,15 +169,23 @@ test("sink error settles the pinned write and bounds teardown", async () => {
   const stdout = createControlledStdout()
   const { renderer, feed } = await createRenderer(stdout)
   stdout.mode = "error"
+  const errors: unknown[][] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => errors.push(args)
 
-  renderer.setTerminalTitle("err")
-  await settleTurns()
+  try {
+    renderer.setTerminalTitle("err")
+    await settleTurns()
 
-  renderer.destroy()
-  await settleTurns()
+    renderer.destroy()
+    await settleTurns()
+  } finally {
+    console.error = originalError
+  }
 
   expect((feed as any).destroyed).toBe(true)
   expect(feed.isBackpressured()).toBe(false)
+  expect(errors.flat().join(" ")).toContain("simulated sink error")
 })
 
 test("sink close during a pinned write bounds teardown", async () => {

@@ -1,5 +1,5 @@
 import { EventEmitter } from "events"
-import { createDebounce, clearDebounceScope, DebounceController } from "../debounce.js"
+import { createDebounce, DebounceController, DebounceSupersededError } from "../debounce.js"
 import { ProcessQueue } from "../queue.js"
 import type {
   TreeSitterClientOptions,
@@ -46,11 +46,15 @@ interface EditQueueItem {
 }
 
 type TreeSitterWorkerPath = string | URL
-type TreeSitterWorkerHandle = Pick<PlatformWorkerHandle, "onerror" | "onmessage" | "onexit" | "postMessage" | "terminate">
+type TreeSitterWorkerHandle = Pick<
+  PlatformWorkerHandle,
+  "onerror" | "onmessage" | "onexit" | "postMessage" | "terminate"
+>
 
 // Conservative internal bound on consecutive worker failures (crash-looping
-// worker). Resets after a successful stable initialization.
+// worker). Resets only after the recreated worker completes useful work.
 const MAX_CONSECUTIVE_WORKER_FAILURES = 5
+let nextDebounceScopeId = 1
 
 interface TreeSitterClientInternalOptions {
   autoStartWorker?: boolean
@@ -105,7 +109,7 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     super()
     this.options = options
     this.internalOptions = internalOptions
-    this.debouncer = createDebounce("tree-sitter-client")
+    this.debouncer = createDebounce(`tree-sitter-client-${nextDebounceScopeId++}`)
     if (internalOptions.autoStartWorker ?? true) {
       this.startWorker()
     }
@@ -262,6 +266,7 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
 
     const onmessage = worker.onmessage
     const onerror = worker.onerror
+    const onexit = worker.onexit
     worker.onmessage = null
     worker.onerror = null
     worker.onexit = null
@@ -276,6 +281,7 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
       if (!this.worker) {
         worker.onmessage = onmessage
         worker.onerror = onerror
+        worker.onexit = onexit
         this.worker = worker
       }
       throw error
@@ -368,8 +374,7 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     await this.registerDefaultParsers(generation, worker)
     this.assertCurrentInitialization(generation, worker)
     this.initialized = true
-    this.consecutiveWorkerFailures = 0
-    }
+  }
 
   private async registerDefaultParsers(
     generation: number = this.lifecycleGeneration,
@@ -463,6 +468,19 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
   private handleWorkerMessage(event: WorkerMessageEvent<TreeSitterWorkerResponse>) {
     const message = event.data
 
+    // A completed post-initialization request proves that a recreated worker is
+    // serving useful work. Initialization alone is not enough: a worker that
+    // repeatedly crashes immediately after INIT must still exhaust the budget.
+    if (
+      this.initialized &&
+      message.type !== "INIT_RESPONSE" &&
+      message.type !== "ERROR" &&
+      message.type !== "WARNING" &&
+      message.type !== "WORKER_LOG"
+    ) {
+      this.consecutiveWorkerFailures = 0
+    }
+
     switch (message.type) {
       case "HIGHLIGHT_RESPONSE": {
         const buffer = this.buffers.get(message.bufferId)
@@ -471,7 +489,12 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
         }
 
         if (buffer.version !== message.version) {
-          this.resetBuffer(message.bufferId, buffer.version, buffer.content)
+          void this.resetBuffer(message.bufferId, buffer.version, buffer.content).catch((error) => {
+            this.emitError(
+              `Failed to reset stale buffer ${message.bufferId}: ${error instanceof Error ? error.message : String(error)}`,
+              message.bufferId,
+            )
+          })
           return
         }
 
@@ -778,7 +801,6 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     }
     this.destroyCallbacks.clear()
 
-    clearDebounceScope("tree-sitter-client")
     this.debouncer.clear()
 
     this.editQueues.clear()
@@ -817,11 +839,16 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     // Update buffer state
     this.buffers.set(bufferId, { ...buffer, content, version })
 
-    // Use debouncer to avoid excessive resets. Fire-and-forget: a superseded
-    // or cleared reset is expected and must not surface as an unhandled rejection.
-    void this.debouncer
-      .debounce(`reset-${bufferId}`, 10, () => this.processEdit(bufferId, [], content, version, true))
-      .catch(() => {})
+    // A superseded reset is expected and resolves this public operation
+    // harmlessly. Real worker/send failures remain observable to callers.
+    try {
+      await this.debouncer.debounce(`reset-${bufferId}`, 10, () =>
+        this.processEdit(bufferId, [], content, version, true),
+      )
+    } catch (error) {
+      if (error instanceof DebounceSupersededError) return
+      throw error
+    }
   }
 
   public getBuffer(bufferId: number): BufferState | undefined {

@@ -1084,7 +1084,7 @@ test("feed-backed renderer coalesces requests while waiting for feed idle", asyn
 
   await idle.resolve()
   clock.advance(17)
-  await Promise.resolve()
+  await renderer.idle()
 
   expect(calls).toBe(2)
   expect(observed).toEqual([1, 2])
