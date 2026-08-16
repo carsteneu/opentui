@@ -829,6 +829,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _controlState: RendererControlState = RendererControlState.IDLE
 
   private frameCallbacks: ((deltaTime: number) => Promise<void>)[] = []
+  // Per-frame handle that destroy() resolves to end a never-resolving frame
+  // callback wait, so the render loop can exit before layout/native commit.
+  private _frameAbort: { promise: Promise<void>; trigger: () => void } | null = null
   // Partial frames mutate the retained next buffer and are valid only while its native commit is known-good.
   private partialRequests = new Set<Renderable>()
   private partialFramePending: boolean = false
@@ -4149,6 +4152,38 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.frameCallbacks = []
   }
 
+  private startFrameCallbackAbort(): void {
+    if (this._frameAbort) return
+    let trigger!: () => void
+    const promise = new Promise<void>((resolve) => {
+      trigger = resolve
+    })
+    this._frameAbort = { promise, trigger }
+  }
+
+  private stopFrameCallbackAbort(): void {
+    this._frameAbort = null
+  }
+
+  private abortPendingFrameCallbackWait(): void {
+    const abort = this._frameAbort
+    if (!abort) return
+    abort.trigger()
+    this._frameAbort = null
+  }
+
+  private async boundFrameCallbackWait(
+    callbackPromise: Promise<void>,
+    abort: { promise: Promise<void>; trigger: () => void },
+  ): Promise<void> {
+    // Keep observing the original promise: if it settles late (after abort), a
+    // rejection must not surface as an unhandled rejection. The race with the
+    // destroy-driven abort lets loop() stop waiting on a callback that never
+    // resolves without a hard timeout.
+    callbackPromise.catch(() => {})
+    await Promise.race([callbackPromise, abort.promise])
+  }
+
   public requestLive(): void {
     this.recordTelemetryRequest("live")
     this.liveRequestCounter++
@@ -4344,6 +4379,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._isDestroyed = true
     this._destroyPending = true
     this._palettePublishGeneration++
+    // Unblock a pending frame-callback await so loop() can reach finalizeDestroy()
+    // even when a callback never resolves.
+    this.abortPendingFrameCallbackWait()
 
     if (this.rendering) {
       // Restore terminal/input state immediately, but defer full native teardown until the frame unwinds.
@@ -4604,6 +4642,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.rendering = true
     this.ordinaryRequestsDuringFrame.clear()
     let renderFailed = false
+    this.startFrameCallbackAbort()
     try {
       // Bump before any work so all callers this iteration see the new id.
       this._frameId++
@@ -4645,15 +4684,21 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const animationRequestTime = animationRequestEnd - animationRequestStart
 
       const start = performance.now()
+      const frameAbort = this._frameAbort!
       for (const frameCallback of this.frameCallbacks) {
+        if (this._destroyPending) break
         try {
-          await frameCallback(deltaTime)
+          await this.boundFrameCallbackWait(frameCallback(deltaTime), frameAbort)
         } catch (error) {
           console.error("Error in frame callback:", error)
         }
       }
       const end = performance.now()
       this.renderStats.frameCallbackTime = end - start
+
+      // If destroy() was requested during a frame callback (possibly while one
+      // never resolves), exit before layout, native commit and further callbacks.
+      if (this._destroyPending) return
 
       const partialRegion =
         this.partialFramePending && this.canPartialRender() ? this.renderPartialFrame(deltaTime) : null
@@ -4810,6 +4855,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       if (!handled) this.handleError(renderError)
     } finally {
       this.rendering = false
+      this.stopFrameCallbackAbort()
       if (this._destroyPending) {
         this.finalizeDestroy()
       }
