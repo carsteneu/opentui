@@ -300,3 +300,26 @@ test("two normal frame callbacks run strictly serially in registration order", a
 
   expect(order).toEqual(["a:start", "a:end", "b"])
 })
+
+test("a frame callback rejecting after destroy does not leak an unhandled rejection", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+
+  const gate = deferred<void>()
+  renderer.setFrameCallback(() =>
+    gate.promise.then(() => {
+      throw new Error("late boom")
+    }),
+  )
+
+  const frame = renderOnce()
+  await Promise.resolve()
+
+  renderer.destroy()
+
+  gate.resolve() // reject long after destroy; must stay observed, not unhandled
+  await frame
+  await renderer.idle()
+
+  expect(renderer.isDestroyed).toBe(true)
+  expect(renderer.isRunning).toBe(false)
+})
