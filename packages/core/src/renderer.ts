@@ -4684,6 +4684,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const animationRequestTime = animationRequestEnd - animationRequestStart
 
       const start = performance.now()
+      // Set by startFrameCallbackAbort() above, so always non-null; only a
+      // destroy-triggered abort nulls it and that also sets _destroyPending,
+      // which the in-loop `break` checks before this wait can be dereferenced.
       const frameAbort = this._frameAbort!
       for (const frameCallback of this.frameCallbacks) {
         if (this._destroyPending) break
