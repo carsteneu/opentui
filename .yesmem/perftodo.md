@@ -152,12 +152,12 @@ Primärer Streaming-Hebel (konsistent F10 / Cluster 05). [`[P-F10] [W05] [X-P0.3
 - [ ] **C4 · Stale-Rerun-Supersede vor Konvertierung UND vor UI-Commit** — `_highlightSnapshotId`/`retryLatestHighlight` vorhanden (`Code.ts:448/462/483/516/556-566`); Version vor Parse, vor Chunks, vor Commit prüfen. [`[W05§F10-C] [X-P0.3]`] 🟠
 - [ ] **C5 · Kompakte Style-Spans in Transferables vom Worker** (reduziert Structured Clone O(n) je Rerun) [`[X-P0.3-5] [W05§F10-B/7]`] 🟠
 - [ ] **C6 · Queue-Längen-/Bytes-/Superseded-Counter** + Rapid-append-Regressionstest für denselben Buffer (begrenzte Queue, deutlich weniger real geparste Versionen als Updates) [`[X-7.3]`] 🔴
-- [ ] **C7 · Reset-Debounce-Dead-End beheben** — `client.ts:766`: ersetzte Promise bleibt unresolved; beim Ersetzen/Clear Promise definiert abbrechen/erfüllen/Superseded-Fehler. [`[X-7.3]`] 🟠
-- [ ] **C8 · Nicht gecancelten Dispose-Timer** (3 s, `client.ts:671`) nach schneller Antwort canceln — unnötiger Wakeup [`[X-7.2]`] 🔵
+- [x] **C7 · Reset-Debounce-Dead-End beheben** — `client.ts:766`: ersetzte Promise bleibt unresolved; beim Ersetzen/Clear Promise definiert abbrechen/erfüllen/Superseded-Fehler. [`[X-7.3]`] 🟠
+- [x] **C8 · Nicht gecancelten Dispose-Timer** (3 s, `client.ts:671`) nach schneller Antwort canceln — unnötiger Wakeup [`[X-7.2]`] 🔵
 - [ ] **C9 · Korrekter inkrementeller nativer TextBuffer-Tail-Reflow** — vorhandenes `TextBuffer.append()` nicht unverändert reaktivieren: Code nutzt wegen fehlerhaftem Wrap-/Graphem-Reflow bewusst `setText`/`setStyledText`. Append-only beweisen, letzte beeinflusste Wrap-/Graphemregion neu segmentieren, sonst Full-Replacement. [`[X-P1.1]` `[O6]`] 🟠
   - Differentialtests gegen Full-Replacement: Word-/Char-Wrap, CRLF, Surrogate, ZWJ, Flags, Skin-Tones, Hangul, Keycaps, Styles/Highlights sowie Width-/Wrap-Wechsel.
   - Native Bufferzeit, Layout und Terminalframes separat messen; nur aktivieren, wenn der E2E-Anteil relevant und die Ausgabe zellidentisch ist.
-- [ ] **C10 · Unerwarteten Tree-sitter-Worker-Exit terminieren und Recreate begrenzen** — korreliertes `ERROR`, `worker.onerror` Reject-all und Plain-Text-Fallback sind **vorhanden**; offen sind Exit-Propagation im `PlatformWorkerHandle`/Node-Shim sowie Restartbudget/Circuit-Breaker. [`[X-7.3]` `[O8]`] 🔵
+- [x] **C10 · Unerwarteten Tree-sitter-Worker-Exit terminieren und Recreate begrenzen** — korreliertes `ERROR`, `worker.onerror` Reject-all und Plain-Text-Fallback sind **vorhanden**; offen sind Exit-Propagation im `PlatformWorkerHandle`/Node-Shim sowie Restartbudget/Circuit-Breaker. [`[X-7.3]` `[O8]`] 🔵
   - Faulttests: Exit vor/während Init, während One-shot und Bufferupdate, wiederholter deterministischer Fehler, Exit/Destroy-Race; kein Pending Request und sichtbarer Plain Text.
 - [ ] **Go-Gate Serie C:** ≥30 % weniger Main-Thread-CPU im identischen Markdown/Code-Stream; 1k-Zeilen-Konvertierung p95 < 8 ms; Highlightoutput zell-/styleidentisch (Injections, Concealment, Unicode, Links); Appends mit klassierbaren Metacharakter-Tails (Fences/Listen/Tabellen) korrekt.
 
@@ -222,13 +222,17 @@ F7 = zentraler struktureller Streaming-Hotspot. [`[P-F7] [W03] [X-P0.4]`]
 
 ## Serie G — Hänger-/Backpressure-Härtung
 
-- [ ] **G1 · Frame-Callbacks budgetieren/abortbar machen** — `CliRenderer.loop()` awaited alle `frameCallbacks` serial (`renderer.ts:4601`); nie auflösender Callback hält `rendering=true`, verwirft Folgeframes, blockiert Destroy. [`[X-P0.5]`] 🔴
+> Implementiert auf `yesloop/wave1-lifecycle` bis `2f2b0b70`; Review-, Gate- und Messdetails stehen in
+> `.yesmem/wave1-lifecycle-results.md`. Die Fault-/Correctness-Seite ist geschlossen. Das gemeinsame 3-%-Performance-Gate
+> bleibt ausschließlich wegen des UAF-sicheren Custom-Writable-Pfads offen (serielles p95 +3,71 %, Burst-p95 +11,26 %).
+
+- [x] **G1 · Frame-Callbacks budgetieren/abortbar machen** — `CliRenderer.loop()` awaited alle `frameCallbacks` serial (`renderer.ts:4601`); nie auflösender Callback hält `rendering=true`, verwirft Folgeframes, blockiert Destroy. [`[X-P0.5]`] 🔴
   - Kein pauschales `Promise.all` (Ordnungs-/Mutierungsvertrag). `AbortSignal`/Destroy-Pfad; optional hartes Budget mit definierter Fehlerpolitik (Promise kann nicht erzwungen abgebrochen werden → spätes Ergebnis darf keinen State mehr committen).
   - Regressionstests: never-resolving, rejecting, destroying-during-callback, removed-during-iteration.
-- [ ] **G2 · Feed-/Sink-Lifecycle für Custom-Writable** — `NativeSpanFeed` pinnt Chunk bis alle async `onData` erfüllt; stillstehender `stdout.write`-Callback blockiert `idle()`, Startup, Backpressure-Retry, Shutdown. [`[X-P0.6]`] 🔴
+- [x] **G2 · Feed-/Sink-Lifecycle für Custom-Writable** — `NativeSpanFeed` pinnt Chunk bis alle async `onData` erfüllt; stillstehender `stdout.write`-Callback blockiert `idle()`, Startup, Backpressure-Retry, Shutdown. [`[X-P0.6]`] 🔴
   - Writable `error`/`close`/`finish` + Renderer-Destroy in expliziten Sink-Lifecycle (jede offene Op genau einmal beenden); konfigurierbares Backpressure-Budget. **Kein** Refcount-Release nach Timeout allein (UAF-Risiko).
   - Fake-Writable-Tests: Callback nie/spät, synchroner Throw, error, close, Destroy mit gepinntem Chunk, wiederholtes Close.
-- [ ] **G3 · Timerhandles/Generationen für delayed activation + Dispose** — `requestRender` außerhalb Running speichert Timeout-Handle nicht; Dispose-Timer (C8) canceln [`[X-7.2]`] 🟠
+- [x] **G3 · Timerhandles/Generationen für delayed activation + Dispose** — `requestRender` außerhalb Running speichert Timeout-Handle nicht; Dispose-Timer (C8) canceln [`[X-7.2]`] 🟠
   - Fake-/ManualClock-Tests für Start/Pause/Stop/Suspend/Destroy, stale Wakeup und wiederholte Aktivierung; höchstens ein Owner je Timer/Retry.
 - [ ] **Go-Gate Serie G:** Faultmatrix endet immer in begrenzter Zeit; Renderloop und Input bleiben responsiv; Destroy lässt keine gepinnten Chunks, Timer oder Late Commits zurück; Normalpfad p95 innerhalb 3 %.
 
