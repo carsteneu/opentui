@@ -79,7 +79,7 @@ Sourceänderungen bleiben isolierte, einzeln messbare Commits.
 Fundament für jeden weiteren Punkt; ohne Zähler/Reason-Histogramm keine Umbau-Freigabe.
 
 > Welle 0 umgesetzt 2026-08-15 (branch `yesloop/wave0-observability`, commits 54565831..b65a916f): A1–A4 + B7.
-> ⚠️ Review-Runde 2 (Codex, 2026-08-16): A1–A4/B7 zurück auf [~]. Blocker: Comparator-Reihenfolge nicht randomisiert; Telemetrie-Preload kaschierte Importkosten; Fastpatch-Arm mischte Bäume; TTFMF-Grenze arm-ungleich; hartes Akzeptanz-Gate = branch-disabled vs fastpatch; exakte Node v26.4.0; A2/B7-Vervollständigung; Baseline-Artefakte versionieren. Fixes + NEU-Einfrierung in Arbeit (Harness v3, getrennte Arme, identische Grenze).
+> ⚠️ Review-Runde 2 (Codex, 2026-08-16): A1–A4/B7 zurück auf [~]. Blocker: Comparator-Reihenfolge nicht randomisiert; Telemetrie-Preload kaschierte Importkosten; Fastpatch-Arm mischte Bäume; TTFMF-Grenze arm-ungleich; hartes Akzeptanz-Gate = branch-disabled vs fastpatch; exakte Node v26.4.0; A2/B7-Vervollständigung; Baseline-Artefakte versionieren. **RESOLVED** (6dbfc4cc, eb9d5a47, fa9627de, cce76f4a, 121a6f0d): Cold-Review-R2 deckte weitere Comparator-Verdrahtung auf (Werte in falsche Arm-Arrays) — echte Paar-Randomisierung + Arm-Pinung; Neu-Einfrierung wave0-r3, Akzeptanz PASS 1,69 %.
 > Basisschritt: reproduzierbarer Harness `packages/core/scripts/bench-cold-import.ts` (+ `cold-import-probe.ts`),
 > Opt-in-Telemetrie `src/telemetry.ts` + Frame-Reason-Histogramm + Import-/First-commit-Spans in `renderer.ts`/`index.ts`.
 > Eingefrorener Baseline-Artefakt: `.yesmem/bench/wave0-baseline/` (Bun 1.3.14, Commit 1d845924; Go-Gate PASS −1,77 %).
