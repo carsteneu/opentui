@@ -1493,7 +1493,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (!feed || this.feedIdleRenderScheduled || this._isDestroyed) return
 
     this.feedIdleRenderScheduled = true
+    // Feed backpressure wait (render stalls until native output drains).
+    const feedIdleStart = isTelemetryEnabled() ? performance.now() : 0
     feed.idle().then(() => {
+      if (isTelemetryEnabled() && feedIdleStart > 0) {
+        recordSpan("opentui.feedWait", feedIdleStart, performance.now())
+      }
       this.feedIdleRenderScheduled = false
       const ordinaryFrameWasWaiting = this.ordinaryFrameWaitingForFeed
       const ordinaryFrameWaitControlState = this.ordinaryFrameWaitControlState
