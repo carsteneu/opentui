@@ -151,3 +151,42 @@ test("Node worker shares concurrent termination attempts", async () => {
     await worker.terminate()
   }
 })
+
+test("Node worker propagates an unexpected exit through onexit", async () => {
+  const worker = new Worker(new URL("./worker-exit.fixture.js", import.meta.url))
+  let exitCode: number | undefined
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Worker exit test timed out")), 2_000)
+
+      worker.onexit = (event) => {
+        clearTimeout(timeout)
+        exitCode = event.code
+        resolve()
+      }
+      worker.onmessage = (event) => {
+        const message = event.data as { type?: string }
+        if (message.type === "READY") {
+          worker.postMessage("trigger")
+        }
+      }
+    })
+
+    expect(exitCode).toBe(4)
+  } finally {
+    await worker.terminate()
+  }
+})
+
+test("Node worker terminate does not propagate as an unexpected exit", async () => {
+  const worker = new Worker(new URL("./worker-startup.fixture.js", import.meta.url))
+  let exitFired = false
+  worker.onexit = () => {
+    exitFired = true
+  }
+
+  await worker.terminate()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  expect(exitFired).toBe(false)
+})

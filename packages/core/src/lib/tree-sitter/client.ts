@@ -21,6 +21,7 @@ import { isBunfsPath, normalizeBunfsPath } from "../bunfs.js"
 import {
   type PlatformWorkerHandle,
   type WorkerErrorEvent,
+  type WorkerExitEvent,
   type WorkerMessageEvent,
   Worker as PlatformWorker,
 } from "../../platform/worker.js"
@@ -45,15 +46,23 @@ interface EditQueueItem {
 }
 
 type TreeSitterWorkerPath = string | URL
-type TreeSitterWorkerHandle = Pick<PlatformWorkerHandle, "onerror" | "onmessage" | "postMessage" | "terminate">
+type TreeSitterWorkerHandle = Pick<PlatformWorkerHandle, "onerror" | "onmessage" | "onexit" | "postMessage" | "terminate">
+
+// Conservative internal bound on consecutive worker failures (crash-looping
+// worker). Resets after a successful stable initialization.
+const MAX_CONSECUTIVE_WORKER_FAILURES = 5
 
 interface TreeSitterClientInternalOptions {
   autoStartWorker?: boolean
+  /** Override for the dispose-response timeout (ms). Internal: enables deterministic tests. */
+  disposeTimeoutMs?: number
 }
 
 interface PendingRequest {
   resolve: (response: any) => void
   reject: (error: Error) => void
+  /** Idempotent teardown invoked exactly once on any settlement path (e.g. clears a timer). */
+  cleanup?: () => void
 }
 
 let DEFAULT_PARSER_OVERRIDES: FiletypeParserOptions[] = []
@@ -84,15 +93,18 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
   private editQueues: Map<number, ProcessQueue<EditQueueItem>> = new Map()
   private debouncer: DebounceController
   private options: TreeSitterClientOptions
+  private readonly internalOptions: TreeSitterClientInternalOptions
   private destroyCallbacks = new Set<() => void>()
   private lifecycleGeneration = 0
   private rejectInitialization: ((error: Error) => void) | undefined
   private destroyPromise: Promise<void> | undefined
   private workerTerminationFailed = false
+  private consecutiveWorkerFailures = 0
 
   constructor(options: TreeSitterClientOptions, internalOptions: TreeSitterClientInternalOptions = {}) {
     super()
     this.options = options
+    this.internalOptions = internalOptions
     this.debouncer = createDebounce("tree-sitter-client")
     if (internalOptions.autoStartWorker ?? true) {
       this.startWorker()
@@ -146,6 +158,17 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
       this.handleWorkerFailure(worker, workerError)
       this.emitError(`Worker error: ${error.message}`)
     }
+
+    worker.onexit = (event: WorkerExitEvent) => {
+      if (this.worker !== worker) {
+        return
+      }
+
+      console.error(`TreeSitter worker exited unexpectedly with code ${event.code}`)
+      const error = new Error(`TreeSitter worker exited unexpectedly with code ${event.code}`)
+      this.handleWorkerFailure(worker, error)
+      this.emitError(error.message)
+    }
   }
 
   private sendWorkerMessage(message: TreeSitterWorkerRequest): void {
@@ -159,8 +182,17 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     const requests = Array.from(this.messageCallbacks.values())
     this.messageCallbacks.clear()
     for (const request of requests) {
+      request.cleanup?.()
       request.reject(error)
     }
+  }
+
+  private completePendingRequest(messageId: string, settle: (request: PendingRequest) => void): void {
+    const request = this.messageCallbacks.get(messageId)
+    if (!request) return
+    this.messageCallbacks.delete(messageId)
+    request.cleanup?.()
+    settle(request)
   }
 
   private rejectActiveInitialization(error: Error): void {
@@ -178,23 +210,25 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
       return
     }
 
-    worker.onmessage = null
-    worker.onerror = null
-    this.worker = undefined
-    this.lifecycleGeneration++
-    this.initialized = false
-    this.initializePromise = undefined
-    this.rejectActiveInitialization(error)
-    this.rejectPendingRequests(error)
-    this.editQueues.clear()
-    this.buffers.clear()
-    this.debouncer.clear()
+      worker.onmessage = null
+      worker.onerror = null
+      worker.onexit = null
+      this.worker = undefined
+      this.lifecycleGeneration++
+      this.initialized = false
+      this.initializePromise = undefined
+      this.rejectActiveInitialization(error)
+      this.rejectPendingRequests(error)
+      this.editQueues.clear()
+      this.buffers.clear()
+      this.debouncer.clear()
+      this.consecutiveWorkerFailures++
 
-    try {
-      void Promise.resolve(worker.terminate()).catch(() => {})
-    } catch {
-      // The worker has already failed; cleanup is best effort.
-    }
+      try {
+        void Promise.resolve(worker.terminate()).catch(() => {})
+      } catch {
+        // The worker has already failed; cleanup is best effort.
+      }
   }
 
   // Path resolution stays in the client for now; runtime-specific Worker construction lives in platform/worker.
@@ -228,12 +262,13 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
 
     const onmessage = worker.onmessage
     const onerror = worker.onerror
-    worker.onmessage = null
-    worker.onerror = null
-    this.worker = undefined
+      worker.onmessage = null
+      worker.onerror = null
+      worker.onexit = null
+      this.worker = undefined
 
-    try {
-      const termination = worker.terminate()
+      try {
+        const termination = worker.terminate()
       if (termination && typeof (termination as PromiseLike<number>).then === "function") {
         await termination
       }
@@ -270,9 +305,12 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
       return this.initializePromise
     }
 
-    if (!this.worker) {
-      this.startWorker()
-    }
+      if (!this.worker) {
+        if (this.consecutiveWorkerFailures >= MAX_CONSECUTIVE_WORKER_FAILURES) {
+          throw new Error("TreeSitter worker restart budget exceeded (too many consecutive worker failures)")
+        }
+        this.startWorker()
+      }
 
     const worker = this.worker!
     const generation = this.lifecycleGeneration
@@ -328,9 +366,10 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
 
     this.assertCurrentInitialization(generation, worker)
     await this.registerDefaultParsers(generation, worker)
-    this.assertCurrentInitialization(generation, worker)
-    this.initialized = true
-  }
+      this.assertCurrentInitialization(generation, worker)
+      this.initialized = true
+      this.consecutiveWorkerFailures = 0
+    }
 
   private async registerDefaultParsers(
     generation: number = this.lifecycleGeneration,
@@ -476,16 +515,11 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
         return
       }
 
-      case "BUFFER_DISPOSED": {
-        const callback = this.messageCallbacks.get(`dispose_${message.bufferId}`)
-        if (callback) {
-          this.messageCallbacks.delete(`dispose_${message.bufferId}`)
-          callback.resolve(true)
+        case "BUFFER_DISPOSED": {
+          this.completePendingRequest(`dispose_${message.bufferId}`, (request) => request.resolve(true))
+          this.emit("buffer:disposed", message.bufferId)
+          return
         }
-
-        this.emit("buffer:disposed", message.bufferId)
-        return
-      }
 
       case "PERFORMANCE_RESPONSE": {
         const callback = this.messageCallbacks.get(message.messageId)
@@ -680,31 +714,37 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
       this.editQueues.delete(bufferId)
     }
 
-    if (this.worker) {
-      await new Promise<boolean>((resolve, reject) => {
+      if (this.worker) {
         const messageId = `dispose_${bufferId}`
-        this.messageCallbacks.set(messageId, { resolve, reject })
-        try {
-          this.sendWorkerMessage({
-            type: "DISPOSE_BUFFER",
-            bufferId,
-          })
-        } catch (error) {
-          console.error("Error disposing buffer", error)
-          this.messageCallbacks.delete(messageId)
-          resolve(false)
-        }
+        const timeoutMs = this.internalOptions.disposeTimeoutMs ?? 3000
 
-        // Add a timeout in case the worker doesn't respond
-        setTimeout(() => {
-          if (this.messageCallbacks.has(messageId)) {
-            this.messageCallbacks.delete(messageId)
+        // A repeated remove of the same buffer must not leave two competing
+        // callback/timer owners; settle any prior in-flight dispose first.
+        this.completePendingRequest(messageId, (request) => request.resolve(false))
+
+        await new Promise<boolean>((resolve, reject) => {
+          const timer = setTimeout(() => {
             console.warn({ bufferId }, "Timed out waiting for buffer to be disposed")
-            resolve(false)
+            this.completePendingRequest(messageId, (request) => request.resolve(false))
+          }, timeoutMs)
+
+          // The timer and the pending request share one owner: cleanup clears
+          // the timer, and every exit path funnels through completePendingRequest
+          // so the request settles at most once and a late response is harmless.
+          this.messageCallbacks.set(messageId, {
+            resolve: (response: boolean) => resolve(response),
+            reject: (error: Error) => reject(error),
+            cleanup: () => clearTimeout(timer),
+          })
+
+          try {
+            this.sendWorkerMessage({ type: "DISPOSE_BUFFER", bufferId })
+          } catch (error) {
+            console.error("Error disposing buffer", error)
+            this.completePendingRequest(messageId, (request) => request.resolve(false))
           }
-        }, 3000)
-      })
-    }
+        })
+      }
 
     this.debouncer.clearDebounce(`reset-${bufferId}`)
   }
@@ -777,8 +817,11 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     // Update buffer state
     this.buffers.set(bufferId, { ...buffer, content, version })
 
-    // Use debouncer to avoid excessive resets
-    this.debouncer.debounce(`reset-${bufferId}`, 10, () => this.processEdit(bufferId, [], content, version, true))
+      // Use debouncer to avoid excessive resets. Fire-and-forget: a superseded
+      // or cleared reset is expected and must not surface as an unhandled rejection.
+      void this.debouncer
+        .debounce(`reset-${bufferId}`, 10, () => this.processEdit(bufferId, [], content, version, true))
+        .catch(() => {})
   }
 
   public getBuffer(bufferId: number): BufferState | undefined {

@@ -1480,3 +1480,222 @@ describe("TreeSitterClient Edge Cases", () => {
     destroySingleton("data-paths-opentui")
   })
 })
+
+describe("TreeSitterClient lifecycle hardening", () => {
+  let dataPath: string
+  const sharedDataPath = join(tmpdir(), "tree-sitter-lifecycle-test-data")
+
+  beforeAll(async () => {
+    await mkdir(sharedDataPath, { recursive: true })
+  })
+
+  beforeEach(() => {
+    dataPath = sharedDataPath
+  })
+
+  const captureWarnTimedOut = () => {
+    const warnings: unknown[][] = []
+    const originalWarn = console.warn
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args)
+    }
+    return {
+      restore: () => {
+        console.warn = originalWarn
+      },
+      hasDisposeTimeoutWarning: () =>
+        warnings.some((args) =>
+          Array.from(args).some((arg) => typeof arg === "string" && arg.includes("Timed out")),
+        ),
+    }
+  }
+
+  test("removeBuffer cancels the dispose timer on a fast response", async () => {
+    const client = new TreeSitterClient({ dataPath }, { disposeTimeoutMs: 200 })
+    const warn = captureWarnTimedOut()
+    try {
+      await client.initialize()
+      const internals = client as unknown as {
+        worker?: { onmessage: ((event: { data: unknown }) => void) | null }
+      }
+      const worker = internals.worker!
+      await client.createBuffer(1, 'const a = 1', "javascript")
+
+      const dispose = client.removeBuffer(1).then(
+        () => "resolved",
+        (error: unknown) => `rejected: ${String(error)}`,
+      )
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      worker.onmessage?.({ data: { type: "BUFFER_DISPOSED", bufferId: 1 } })
+
+      expect(await dispose).toBe("resolved")
+      // Timer must have been cleared on the fast response; wait past the timeout
+      // and assert no stale "Timed out" warning fires.
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      expect(warn.hasDisposeTimeoutWarning()).toBe(false)
+    } finally {
+      warn.restore()
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("removeBuffer dispose timeout settles once and a late response is harmless", async () => {
+    const client = new TreeSitterClient({ dataPath }, { disposeTimeoutMs: 30 })
+    try {
+      await client.initialize()
+      const internals = client as unknown as {
+        worker?: { onmessage: ((event: { data: unknown }) => void) | null }
+      }
+      const worker = internals.worker!
+      await client.createBuffer(1, 'const a = 1', "javascript")
+
+      const start = Date.now()
+      await client.removeBuffer(1)
+      expect(Date.now() - start).toBeLessThan(1000)
+
+      // A late BUFFER_DISPOSED after the timeout is harmless (already settled once).
+      worker.onmessage?.({ data: { type: "BUFFER_DISPOSED", bufferId: 1 } })
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("worker error cancels the dispose timer", async () => {
+    const client = new TreeSitterClient({ dataPath }, { disposeTimeoutMs: 200 })
+    const warn = captureWarnTimedOut()
+    try {
+      await client.initialize()
+      const internals = client as unknown as {
+        worker?: {
+          onerror: ((event: { message?: string }) => void) | null
+          postMessage: (message: { type?: string }) => void
+        }
+      }
+      const worker = internals.worker!
+      // Prevent the real worker from resolving the dispose ahead of the synthetic error.
+      const originalPost = worker.postMessage.bind(worker)
+      worker.postMessage = (message) => {
+        if (message.type === "DISPOSE_BUFFER") return
+        originalPost(message)
+      }
+      await client.createBuffer(1, 'const a = 1', "javascript")
+
+      const dispose = client.removeBuffer(1).then(
+        () => "resolved",
+        () => "rejected",
+      )
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      worker.onerror?.({ message: "synthetic dispose worker failure" })
+
+      expect(await dispose).toBe("rejected")
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      expect(warn.hasDisposeTimeoutWarning()).toBe(false)
+    } finally {
+      warn.restore()
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("destroy cancels the dispose timer", async () => {
+    const client = new TreeSitterClient({ dataPath }, { disposeTimeoutMs: 50 })
+    try {
+      await client.initialize()
+      const internals = client as unknown as {
+        worker?: {
+          postMessage: (message: { type?: string }) => void
+        }
+      }
+      const worker = internals.worker!
+      // Prevent the real worker from resolving the dispose ahead of destroy().
+      const originalPost = worker.postMessage.bind(worker)
+      worker.postMessage = (message) => {
+        if (message.type === "DISPOSE_BUFFER") return
+        originalPost(message)
+      }
+      await client.createBuffer(1, 'const a = 1', "javascript")
+
+      const dispose = client.removeBuffer(1).then(
+        () => "resolved",
+        () => "rejected",
+      )
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      await client.destroy()
+
+      expect(await dispose).toBe("rejected")
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("repeated removeBuffer does not create competing dispose owners", async () => {
+    const client = new TreeSitterClient({ dataPath }, { disposeTimeoutMs: 30 })
+    try {
+      await client.initialize()
+      await client.createBuffer(1, 'const a = 1', "javascript")
+
+      const first = client.removeBuffer(1).then(
+        () => "resolved",
+        (error: unknown) => `rejected: ${String(error)}`,
+      )
+      const second = client.removeBuffer(1).then(
+        () => "resolved",
+        (error: unknown) => `rejected: ${String(error)}`,
+      )
+
+      expect(await first).toBe("resolved")
+      expect(await second).toBe("resolved")
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("worker exit propagates once through the failure path", async () => {
+    const client = new TreeSitterClient({ dataPath })
+    try {
+      await client.initialize()
+      const internals = client as unknown as {
+        worker?: {
+          onmessage: ((event: { data: unknown }) => void) | null
+          onexit: ((event: { code: number }) => void) | null
+        }
+        messageCallbacks: Map<string, unknown>
+        buffers: Map<number, unknown>
+      }
+      const worker = internals.worker!
+      await client.createBuffer(1, 'const a = 1', "javascript")
+
+      const highlight = client.highlightOnce("const a = 1", "javascript").then(
+        () => "resolved",
+        () => "rejected",
+      )
+      expect(internals.messageCallbacks.size).toBeGreaterThan(0)
+
+      worker.onexit?.({ code: 1 })
+
+      expect(await highlight).toBe("rejected")
+      expect(client.isInitialized()).toBe(false)
+      expect(internals.buffers.size).toBe(0)
+      expect(internals.messageCallbacks.size).toBe(0)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("worker restart budget blocks recreation after consecutive failures", async () => {
+    const client = new TreeSitterClient({ dataPath })
+    try {
+      await client.initialize()
+      const internals = client as unknown as {
+        worker?: { onerror: ((event: { message?: string }) => void) | null }
+        consecutiveWorkerFailures: number
+      }
+      // Simulate one failure (nulls the worker), then exhaust the budget.
+      internals.worker?.onerror?.({ message: "synthetic exit failure" })
+      internals.consecutiveWorkerFailures = 5
+
+      await expect(client.initialize()).rejects.toThrow(/restart budget exceeded/)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+})

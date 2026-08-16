@@ -9,6 +9,10 @@ export interface WorkerErrorEvent {
   readonly message: string
 }
 
+export interface WorkerExitEvent {
+  readonly code: number
+}
+
 export type WorkerMessageHandler<T = unknown> = (event: WorkerMessageEvent<T>) => void | Promise<void>
 export type WorkerErrorHandler = (event: WorkerErrorEvent) => void
 
@@ -21,6 +25,8 @@ export interface PlatformWorkerOptions {
 export interface PlatformWorkerHandle {
   onmessage: WorkerMessageHandler | null
   onerror: WorkerErrorHandler | null
+  /** Optional: fired when the worker process exits unexpectedly. Additive seam. */
+  onexit?: ((event: WorkerExitEvent) => void) | null
   postMessage(value: unknown): void
   terminate(): void | Promise<number>
   addEventListener(type: "message" | "error", listener: WorkerMessageHandler | WorkerErrorHandler): void
@@ -42,8 +48,10 @@ interface NodeWorkerThread {
   postMessage(value: unknown): void
   on(event: "message", listener: (value: unknown) => void): void
   on(event: "error", listener: (error: Error) => void): void
+  on(event: "exit", listener: (code: number) => void): void
   off(event: "message", listener: (value: unknown) => void): void
   off(event: "error", listener: (error: Error) => void): void
+  off(event: "exit", listener: (code: number) => void): void
   terminate(): Promise<number>
 }
 
@@ -163,48 +171,52 @@ function loadWorkerConstructor(): PlatformWorkerConstructor {
 }
 
 function createNodeWorkerConstructor(node: NodeWorkerThreadsModule): PlatformWorkerConstructor {
-  return class NodeWorkerShim implements PlatformWorkerHandle {
-    public onmessage: WorkerMessageHandler | null = null
-    public onerror: WorkerErrorHandler | null = null
+    return class NodeWorkerShim implements PlatformWorkerHandle {
+      public onmessage: WorkerMessageHandler | null = null
+      public onerror: WorkerErrorHandler | null = null
+      public onexit: ((event: WorkerExitEvent) => void) | null = null
 
-    private readonly errorListeners = new Set<WorkerErrorHandler>()
-    private readonly messageListeners = new Set<WorkerMessageHandler>()
-    private readonly worker: NodeWorkerThread
-    private terminationPromise: Promise<number> | undefined
+      private readonly errorListeners = new Set<WorkerErrorHandler>()
+      private readonly messageListeners = new Set<WorkerMessageHandler>()
+      private readonly worker: NodeWorkerThread
+      private terminationPromise: Promise<number> | undefined
 
-    constructor(specifier: string | URL, options: PlatformWorkerOptions = {}) {
-      const resolvedSpecifier = resolveWorkerImportSpecifier(specifier)
+      constructor(specifier: string | URL, options: PlatformWorkerOptions = {}) {
+        const resolvedSpecifier = resolveWorkerImportSpecifier(specifier)
 
-      this.worker = new node.Worker(createWorkerBootstrapSource(resolvedSpecifier), {
-        eval: true,
-        type: "module",
-        name: options.name,
-      })
+        this.worker = new node.Worker(createWorkerBootstrapSource(resolvedSpecifier), {
+          eval: true,
+          type: "module",
+          name: options.name,
+        })
 
-      this.worker.on("message", this.handleMessage)
-      this.worker.on("error", this.handleError)
-    }
+        this.worker.on("message", this.handleMessage)
+        this.worker.on("error", this.handleError)
+        this.worker.on("exit", this.handleExit)
+      }
 
     postMessage(value: unknown): void {
       this.worker.postMessage(value)
     }
 
-    terminate(): Promise<number> {
-      if (this.terminationPromise) {
-        return this.terminationPromise
-      }
+      terminate(): Promise<number> {
+        if (this.terminationPromise) {
+          return this.terminationPromise
+        }
 
-      this.worker.off("message", this.handleMessage)
-      this.worker.off("error", this.handleError)
-      const termination = this.worker.terminate().catch((error: unknown) => {
-        this.terminationPromise = undefined
-        this.worker.on("message", this.handleMessage)
-        this.worker.on("error", this.handleError)
-        throw error
-      })
-      this.terminationPromise = termination
-      return termination
-    }
+        this.worker.off("message", this.handleMessage)
+        this.worker.off("error", this.handleError)
+        this.worker.off("exit", this.handleExit)
+        const termination = this.worker.terminate().catch((error: unknown) => {
+          this.terminationPromise = undefined
+          this.worker.on("message", this.handleMessage)
+          this.worker.on("error", this.handleError)
+          this.worker.on("exit", this.handleExit)
+          throw error
+        })
+        this.terminationPromise = termination
+        return termination
+      }
 
     addEventListener(type: "message" | "error", listener: WorkerMessageHandler | WorkerErrorHandler): void {
       if (type === "message") {
@@ -234,18 +246,23 @@ function createNodeWorkerConstructor(node: NodeWorkerThreadsModule): PlatformWor
       }
     }
 
-    private readonly handleError = (error: Error): void => {
-      const event: WorkerErrorEvent = {
-        error,
-        message: error.message,
+      private readonly handleError = (error: Error): void => {
+        const event: WorkerErrorEvent = {
+          error,
+          message: error.message,
+        }
+
+        this.onerror?.(event)
+
+        for (const listener of this.errorListeners) {
+          listener(event)
+        }
       }
 
-      this.onerror?.(event)
-
-      for (const listener of this.errorListeners) {
-        listener(event)
+      private readonly handleExit = (code: number): void => {
+        const event: WorkerExitEvent = { code }
+        this.onexit?.(event)
       }
-    }
   }
 }
 
