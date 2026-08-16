@@ -1,6 +1,6 @@
-# Cold-import / TTFMF report — artifact `wave0-r2`
+# Cold-import / TTFMF report — artifact `wave0-r3`
 
-Generiert am 2026-08-16T17:42:59.421Z · Commit `1363b3e9597de2ddc1c2853a1bab4202df1bce7b` · base `2cd44364513f59a7a5937ef257042ddb0fca4fb7` · node
+Generiert am 2026-08-16T17:57:19.959Z · Commit `fa9627dedeffa9f6c8c341f255786aff3d428920` · base `2cd44364513f59a7a5937ef257042ddb0fca4fb7` · node
 
 
 ## Rohdaten
@@ -11,19 +11,19 @@ Generiert am 2026-08-16T17:42:59.421Z · Commit `1363b3e9597de2ddc1c2853a1bab420
 
 | Row | Runtime | Scenario | importMs | ttfmMs |
 | --- | --- | --- | --- | --- |
-| 1363b3e | bun | root | 286.162 / 361.421 / 379.057 / 4.79% | 305.156 / 385.273 / 404.653 / 4.76% |
-| 1363b3e | bun | zig | 187.603 / 339.594 / 346.186 / 9.01% | 214.627 / 380.87 / 394.827 / 8.66% |
-| 1363b3e | node | dist | 58.818 / 75.324 / 115.906 / 6.93% | 58.818 / 75.324 / 115.906 / 6.93% |
+| fa9627d | bun | root | 590.081 / 664.646 / 691.74 / 2.84% | 630.192 / 709.418 / 731.706 / 2.76% |
+| fa9627d | bun | zig | 288.314 / 411.868 / 431.263 / 6.05% | 330.919 / 470.033 / 478.572 / 5.68% |
+| fa9627d | node | dist | 96.192 / 123.683 / 141.087 / 5.71% | 96.192 / 123.683 / 141.087 / 5.71% |
 
 ## Gate (acceptance): fastpatch vs branch-disabled (<= 3%)
 
-- fastpatch median: 226.513 ms; branch-disabled median: 227.19 ms
-- overhead median: 0% — **PASS**
+- fastpatch median: 585.47 ms; branch-disabled median: 619.721 ms
+- overhead median: 1.69% — **PASS**
 
 ## Gate: disabled vs enabled (<= 3%)
 
-- disabled median: 221.464 ms; enabled median: 218.705 ms
-- overhead median: 0.23% — **PASS**
+- disabled median: 375.546 ms; enabled median: 376.835 ms
+- overhead median: 0.02% — **PASS**
 
 ## Limitationen (dokumentiert, Review-R2)
 

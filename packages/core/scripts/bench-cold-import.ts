@@ -205,19 +205,29 @@ function measure(opts: {
 }
 
 // Paired A/B. Each iteration runs both arms back-to-back whose MEASUREMENT
-// ORDER is truly randomized 50/50 per pair (base first OR treat first), so no
-// fixed base-first bias and slow load drift is canceled by pairing. Values are
-// pushed into their correct arm array regardless of spawn order. The gate
-// decision uses the median of per-pair (treat-base)/base %. `base` = reference.
+// ORDER is truly randomized 50/50 per pair (base first OR treat first — the
+// actual spawn sequence swaps, not just the labels), and each value is pushed
+// into its OWN arm array regardless of order. The gate decision uses the median
+// of per-pair (treat-base)/base % — cancels load drift. `base` = reference.
 function compare(base: { label: string; run: () => number }, treat: { label: string; run: () => number }, samples: number): GateResult {
   const baseVals: number[] = []
   const treatVals: number[] = []
   for (let i = 0; i < samples; i++) {
+    // Randomize which arm EXECUTES first; each result always lands in its own
+    // arm array. (An earlier version relabeled values instead of swapping the
+    // spawn order — that mixes arms and collapses the paired delta toward 0.)
     const baseFirst = Math.random() < 0.5
-    const v0 = base.run()
-    const v1 = treat.run()
-    baseVals.push(baseFirst ? v0 : v1)
-    treatVals.push(baseFirst ? v1 : v0)
+    let baseVal: number
+    let treatVal: number
+    if (baseFirst) {
+      baseVal = base.run()
+      treatVal = treat.run()
+    } else {
+      treatVal = treat.run()
+      baseVal = base.run()
+    }
+    baseVals.push(baseVal)
+    treatVals.push(treatVal)
   }
   const aStats = stats(baseVals)
   const bStats = stats(treatVals)
@@ -297,8 +307,10 @@ async function main(): Promise<void> {
   const threshold = Number(args["threshold"] ?? 3)
   const doGate = args["gate"] !== undefined // acceptance: branch-disabled vs fastpatch
   const doGateRecord = args["gate-record"] !== undefined // informational: enabled vs disabled
-  if (doGate && runtime === "node")
-    throw new Error("--gate is bun-src-only (compares src trees); use --runtime=bun")
+  if (doGate && (runtime === "node" || scenario !== "root"))
+    throw new Error("--gate is bun-src/root-only (branch root-src vs fastpatch root-src); use --scenario=root --runtime=bun")
+  if (doGateRecord && runtime === "node")
+    throw new Error("--gate-record is bun-only (probe disables telemetry under node, so the arms would be identical)")
 
   const commit = gitRevparse("HEAD")
   const ct = gitRevparse("fastpatch")
@@ -319,7 +331,8 @@ async function main(): Promise<void> {
       .filter(Boolean)
       .map((l) => JSON.parse(l) as Record<string, unknown>)
     const last = rows[rows.length - 1] ?? {}
-    const rt = (last.runtime as { engine?: string } | undefined)?.engine ?? String(last.runtime ?? "?")
+    const engines = [...new Set(rows.map((r) => (r.runtime as { engine?: string } | undefined)?.engine ?? String(r.runtime ?? "?")))]
+    const rt = engines.length > 1 ? `mixed(${engines.join(",")})` : (engines[0] ?? "?")
     const report = join(artifactDir, "report.md")
     writeFileSync(report, buildReport(rows, { artifact, commit: String(last.commit ?? "unknown"), base: String(last["commit.base"] ?? "unknown"), runtime: rt }))
     console.log(JSON.stringify({ artifact, regenerated: true, rows: rows.length, report }))

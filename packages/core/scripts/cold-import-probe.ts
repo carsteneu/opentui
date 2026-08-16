@@ -73,7 +73,11 @@ let firstCommitAt: number | null = null
 let ttfmMs = importMs
 let marks: { name: string; atMs: number }[] = []
 let spans: { name: string; startMs: number; endMs: number }[] = []
-if (doRender && src) {
+  if (doRender && !src) {
+    console.error("cold-import-probe: RENDER requested but OPENTUI_BENCH_SRC unset — refusing to report importMs as ttfmMs (run via bench-cold-import.ts, which always sets SRC)")
+    process.exit(2)
+  }
+  if (doRender && src) {
   const testRendererModule = await import(join(src, "testing/test-renderer.js"))
   const { TextRenderable } = await import(join(src, "renderables/Text.js"))
   const testRenderer = await testRendererModule.createTestRenderer({ width: 80, height: 24, useThread: false })
