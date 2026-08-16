@@ -841,6 +841,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private telemetryFirstOutputWriteMarked: boolean = false
   private telemetryScheduledAsFollowup: boolean = false
   private telemetryRequestQueuedAt: number = 0
+  private telemetryPendingSource: TelemetryFrameSource | null = null
   private renderStats: {
     frameCount: number
     fps: number
@@ -1144,6 +1145,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           // Renderer-owned frame bytes must bypass any later stdout.write
           // interception (e.g. split-footer capture) and go straight to the
           // caller's actual sink.
+          this.recordFirstOutputWriteTelemetry()
           this.realStdoutWrite.call(this.stdout, bytes, () => resolve())
         })
       })
@@ -1292,6 +1294,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     global.requestAnimationFrame = (callback: FrameRequestCallback) => {
       const id = CliRenderer.animationFrameId++
       this.animationRequest.set(id, callback)
+      this.recordTelemetryRequest("rAF")
       this.requestLive()
       return id
     }
@@ -1485,6 +1488,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return true
     }
 
+    this.recordFirstOutputWriteTelemetry()
     return this.realStdoutWrite.call(this.stdout, chunk, encoding, callback)
   }
 
@@ -1571,9 +1575,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
-    if (isTelemetryEnabled() && this.telemetryRequestQueuedAt === 0) {
-      this.telemetryRequestQueuedAt = performance.now()
-    }
+    this.recordTelemetryRequest("request")
 
     this.ordinaryRenderGeneration++
 
@@ -1622,9 +1624,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   public requestPartialRender(renderable: Renderable) {
     if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED || renderable.isDestroyed) return
 
-    if (isTelemetryEnabled() && this.telemetryRequestQueuedAt === 0) {
-      this.telemetryRequestQueuedAt = performance.now()
-    }
+    this.recordTelemetryRequest("requestPartial")
 
     this.partialRequests.add(renderable)
     this.partialFramePending = true
@@ -4150,6 +4150,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public requestLive(): void {
+    this.recordTelemetryRequest("live")
     this.liveRequestCounter++
 
     if (this._controlState === RendererControlState.IDLE && this.liveRequestCounter > 0) {
@@ -4339,6 +4340,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   public destroy(): void {
     if (this._isDestroyed) return
+    mark("opentui.destroyStarted")
     this._isDestroyed = true
     this._destroyPending = true
     this._palettePublishGeneration++
@@ -4570,6 +4572,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
     }
 
+    mark("opentui.destroyCompleted")
+
     // Resolve any pending idle() calls
     this.resolveIdleIfNeeded()
   }
@@ -4606,6 +4610,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
       const telemetryActive = isTelemetryEnabled()
       const telemetryFollowup = this.telemetryScheduledAsFollowup
+      const telemetrySource = this.telemetryPendingSource
+      this.telemetryPendingSource = null
       if (telemetryFollowup) this.telemetryScheduledAsFollowup = false
       const hadPartialRequest = this.partialFramePending
 
@@ -4624,6 +4630,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         }
       } else {
         this.telemetryRequestQueuedAt = 0
+        this.telemetryPendingSource = null
       }
 
       const hadAnimation = this.animationRequest.size > 0
@@ -4692,15 +4699,17 @@ export class CliRenderer extends EventEmitter implements RenderContext {
               : this._splitHeight > 0 && this._externalOutputMode === "capture-stdout"
                 ? "splitFooter"
                 : "full"
-          const source: TelemetryFrameSource = hadAnimation
-            ? "rAF"
-            : hadPartialRequest && partialRegion !== null
-              ? "requestPartial"
-              : telemetryFollowup
-                ? "timer"
-                : this._isRunning
-                  ? "live"
-                  : "request"
+          const source: TelemetryFrameSource =
+            telemetrySource ??
+            (hadAnimation
+              ? "rAF"
+              : hadPartialRequest && partialRegion !== null
+                ? "requestPartial"
+                : telemetryFollowup
+                  ? "timer"
+                  : this._isRunning
+                    ? "live"
+                    : "request")
           this.recordFrameTelemetry(telemetryType, source, nativeStatus, telemetryFollowup)
         }
         if (nativeStatus === "rendered") this.frameCount++
@@ -4743,7 +4752,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
             // Best-effort label for the next loop as an immediate-rerender follow-up;
             // an unrelated loop may consume the flag first (heuristic, label only).
             // Guarded so the disabled path writes no state at all (strict zero-cost).
-            if (isTelemetryEnabled() && this.immediateRerenderRequested) this.telemetryScheduledAsFollowup = true
+            if (isTelemetryEnabled() && this.immediateRerenderRequested) {
+              this.telemetryScheduledAsFollowup = true
+              this.recordTelemetryRequest("timer")
+            } else if (isTelemetryEnabled() && this._isRunning) {
+              this.recordTelemetryRequest("live")
+            }
             this.immediateRerenderRequested = false
             this.renderTimeout = this.clock.setTimeout(() => {
               this.renderTimeout = null
@@ -4762,7 +4776,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
             // Best-effort label for the next loop as an immediate-rerender follow-up;
             // an unrelated loop may consume the flag first (heuristic, label only).
             // Guarded so the disabled path writes no state at all (strict zero-cost).
-            if (isTelemetryEnabled() && this.immediateRerenderRequested) this.telemetryScheduledAsFollowup = true
+            if (isTelemetryEnabled() && this.immediateRerenderRequested) {
+              this.telemetryScheduledAsFollowup = true
+              this.recordTelemetryRequest("timer")
+            } else if (isTelemetryEnabled() && this._isRunning) {
+              this.recordTelemetryRequest("live")
+            }
             this.immediateRerenderRequested = false
             this.renderTimeout = this.clock.setTimeout(() => {
               this.renderTimeout = null
@@ -4915,13 +4934,18 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (!isTelemetryEnabled() || this.telemetryFirstNativeCommitMarked) return
     this.telemetryFirstNativeCommitMarked = true
     mark("opentui.firstNativeCommit")
-    // firstOutputWrite is only claimed when this commit actually writes to a real
-    // sink (process stdout / feed). For memory-buffered output the native commit
-    // is not an observed external write, so we do not emit the mark then.
-    if (!this.telemetryFirstOutputWriteMarked && this._terminalIsSetup && !this._bufferedOutputMemory) {
-      this.telemetryFirstOutputWriteMarked = true
-      mark("opentui.firstOutputWrite")
-    }
+  }
+
+  private recordTelemetryRequest(source: TelemetryFrameSource): void {
+    if (!isTelemetryEnabled()) return
+    if (this.telemetryRequestQueuedAt === 0) this.telemetryRequestQueuedAt = performance.now()
+    if (this.telemetryPendingSource === null) this.telemetryPendingSource = source
+  }
+
+  private recordFirstOutputWriteTelemetry(): void {
+    if (!isTelemetryEnabled() || this.telemetryFirstOutputWriteMarked || this._bufferedOutputMemory) return
+    this.telemetryFirstOutputWriteMarked = true
+    mark("opentui.firstOutputWrite")
   }
 
   private recordFrameTelemetry(

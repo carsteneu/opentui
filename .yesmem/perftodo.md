@@ -78,14 +78,27 @@ Sourceänderungen bleiben isolierte, einzeln messbare Commits.
 
 Fundament für jeden weiteren Punkt; ohne Zähler/Reason-Histogramm keine Umbau-Freigabe.
 
-> Welle 0 umgesetzt 2026-08-15 (branch `yesloop/wave0-observability`, commits 54565831..b65a916f): A1–A4 + B7.
-> ⚠️ Review-Runde 2 (Codex, 2026-08-16): A1–A4/B7 zurück auf [~]. Blocker: Comparator-Reihenfolge nicht randomisiert; Telemetrie-Preload kaschierte Importkosten; Fastpatch-Arm mischte Bäume; TTFMF-Grenze arm-ungleich; hartes Akzeptanz-Gate = branch-disabled vs fastpatch; exakte Node v26.4.0; A2/B7-Vervollständigung; Baseline-Artefakte versionieren. **RESOLVED** (6dbfc4cc, eb9d5a47, fa9627de, cce76f4a, 121a6f0d): Cold-Review-R2 deckte weitere Comparator-Verdrahtung auf (Werte in falsche Arm-Arrays) — echte Paar-Randomisierung + Arm-Pinung; Neu-Einfrierung wave0-r3, Akzeptanz PASS 1,69 %.
-> Basisschritt: reproduzierbarer Harness `packages/core/scripts/bench-cold-import.ts` (+ `cold-import-probe.ts`),
-> Opt-in-Telemetrie `src/telemetry.ts` + Frame-Reason-Histogramm + Import-/First-commit-Spans in `renderer.ts`/`index.ts`.
-> Eingefrorener Baseline-Artefakt: `.yesmem/bench/wave0-baseline/` (Bun 1.3.14, Commit 1d845924; Go-Gate PASS −1,77 %).
-> Node- + Dist-Pfad-Baseline: als Serie-L-/Welle-6-Thema dokumentiert (Node 26 inzwischen installiert, aber dist-Consumer-Matrix ist L3-Scope).
-> 
-> ✅ Review-R2-Abnahme 2026-08-16 (`cce76f4a`): A1–A4/B7 nach Cold-Review-Runde-2-Korrektur (echte Randomisierung der Paar-Ausführungsreihenfolge, Arm-Reinheit im Artefakt belegt) erfüllt. Akzeptanz-Gate wave0-r3: **overhead 1,69 % ≤ 3 % → PASS**; Aufzeichnungskosten 0,02 %. Evidence: `packages/core/bench/base/wave0-r3/` (raw.ndjson + report.md, Harness v3, Protocol v3). Gesamt-Suite 5444 pass / 0 fail.
+> Welle 0 wurde auf `yesloop/wave0-observability` implementiert. Review-R3/R4 hat jedoch gezeigt, dass die frühere
+> Abnahme statistisch nicht belastbar war: `wave0-r3` entschied nur über den Median der Paarquoten und ist deshalb
+> **ungültig/superseded**. Sein historischer Bericht trägt jetzt einen entsprechenden Warnhinweis; die Rohdaten bleiben
+> append-only unverändert.
+>
+> Korrigierter Stand 2026-08-16: Harness v4 nutzt den bestehenden reihenfolgestratifizierten Bootstrap-Seam,
+> deterministischen 15/15-Order-Split, Rohwerte je Paar und ein gemeinsames 95-%-Familien-Gate für `importMs` und
+> TTFMF. Beide Arme verwenden vollständige eigene JS-Bäume; ein gemeinsames Fastpatch-Native-Artefakt wird explizit
+> gepinnt und per Pfad, SHA-256 und Symbolset geprüft. Bun-Minimal/Root/Zig/Dist sowie exakt Node v26.4.0 Dist sind in
+> `packages/core/bench/base/wave0-r4/` eingefroren. Lifecycle enthält echten Feed-Write und Destroy-Start/-Ende.
+>
+> **Aktuelles Ergebnis:** Punktwerte fastpatch → branch-disabled: Import +0,69 %, TTFMF +1,06 %. Wegen hoher
+> Hoststreuung reichen die familienweisen 97,5-%-Intervalle aber bis +11,92 % beziehungsweise +12,17 %; das ≤3-%-
+> Gate ist daher korrekt **FAIL/unklar**, nicht PASS. Auch die Recording-Kosten sind mit oberen Grenzen +6,08 % /
+> +5,35 % nicht freigegeben. Welle 0 ist funktional vollständig, die A3-Performanceabnahme bleibt offen.
+>
+> Verifikation: fokussierte Telemetrie-/Feed-/Statistiktests 88/88, reguläre Core-JS-Suite 5451 pass / 0 fail,
+> `build:lib`, Lint und gepackter Bun-/Node-Dist-Test grün. `test:js:node` erreicht weiterhin die zwei bereits in
+> Fastpatch vorhandenen `Code.test.ts`-Typfehler bei `requestPartialRender`; identischer Fehler im Basisworktree
+> gegengeprüft. Der Root-Formatcheck wird nur von acht fremden, ungetrackten `.yesmem`-Dateien blockiert; alle hier
+> geänderten Dateien bestehen `oxfmt --check` und `git diff --check`.
 
 - [x] **A1 · Mess-Harness für Cold-Import + Time-to-First-Frame** als reproduzierbares Script im Repo (Benchmark-Inventar + Opt-in-Tracing) [`[W01-Messagenda]` `[X-4.1/4.2]`] 🔴
   - Rohdatenformat: Commit, Runtime (Bun/Node), CPU, Geometrie, Warmup, Samples, Median/p95/p99, RME.
@@ -94,9 +107,12 @@ Fundament für jeden weiteren Punkt; ohne Zähler/Reason-Histogramm keine Umbau-
   - Rohdaten append-only unter einem eindeutig benannten Benchmark-Artefakt ablegen; Bericht wird daraus generiert, nicht manuell abgeschrieben.
 - [x] **A2 · Reason-Histogramm / Frame-Counter** (`[W01] [W03]`): Requestquelle, normal/partial/live/RAF, Folgeframegrund, Partial-Promotiongrund, native statuses, Queue-/Feedwartezeit. [`[X-7.1]`] 🔴
   - Go-Gate Serie A: Counter erklären ≥95 % der Frames; deaktivierter Pfad verschlechtert Primärbenchmarks nicht >3 %.
-- [x] **A3 · Opt-in-Performanceevents/Counter mit ~Nullkosten im deaktivierten Zustand** [`[X-Serie A]`] 🔴
+- [~] **A3 · Opt-in-Performanceevents/Counter mit ~Nullkosten im deaktivierten Zustand** [`[X-Serie A]`] 🔴
+  - Funktionaler Off-State ist getestet; Performance noch nicht abgenommen. R4-Punktwerte liegen innerhalb 3 %, die
+    familienweisen Obergrenzen (+11,92 % Import / +12,17 % TTFMF) sind auf dem belasteten Host zu breit.
 - [x] **A4 · A/B-Rahmenwerk** auf identischer Hardware/Commitbasis (nicht addierbare Versprechen; jede einzelne Änderung isoliert messen) [`[X-1/15]`] 🔴
-  - Alternierende Reihenfolge, Warmupstrategie und Outlierregel vor dem Lauf festlegen; Vergleich bricht bei Artefakt-/Runtime-Drift ab.
+  - Alternierende Reihenfolge, Warmupstrategie und Outlierregel vor dem Lauf festlegen; Vergleich bricht bei
+    Runtime-Drift ab und pinnt oder verwirft Native-Artefaktdrift explizit.
   - Smoke-Gate im normalen CI klein halten; lange p95/p99-, PTY-, Memory- und `perf`-Läufe als explizite Performancejobs.
 
 ---

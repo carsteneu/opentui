@@ -5,6 +5,7 @@ import { BoxRenderable } from "../renderables/Box.js"
 import { ImageRenderable } from "../renderables/Image.js"
 import { ManualClock } from "../testing/manual-clock.js"
 import { createTestStdin, TestWriteStream } from "../testing/test-streams.js"
+import { getTelemetrySnapshot, resetTelemetry, setTelemetryEnabled } from "../telemetry.js"
 
 const PNG_1X1 = Uint8Array.from(
   Buffer.from(
@@ -1420,6 +1421,26 @@ test("slow Writable marks feed as backpressured until write callback settles", a
   await feed.idle()
 
   expect(feed.isBackpressured()).toBe(false)
+})
+
+test("feed-idle retry records the actual telemetry wait span", async () => {
+  setTelemetryEnabled(true)
+  resetTelemetry()
+  try {
+    const { renderer } = createRetryRenderer(true)
+    const deferred = deferFeedIdle(renderer)
+
+    ;(renderer as any).scheduleRenderAfterFeedIdle()
+    expect(deferred.calls()).toBe(1)
+    await deferred.resolve()
+
+    const span = getTelemetrySnapshot().spans.find((entry) => entry.name === "opentui.feedWait")
+    expect(span).toBeDefined()
+    expect(span!.endMs).toBeGreaterThanOrEqual(span!.startMs)
+  } finally {
+    setTelemetryEnabled(false)
+    resetTelemetry()
+  }
 })
 
 test("split-footer custom stdout can flush captured commits while feed writes are in flight", async () => {

@@ -1,467 +1,698 @@
-// Cold-import / TTFMF measurement harness with a hard zero-cost acceptance gate.
+// Reproducible cold-import / time-to-first-meaningful-frame benchmark.
 //
-// Spawns a fresh cold-import-probe child process per sample (real cold import),
-// aggregates median/p95/p99/RME, persists a provenance row to
-// <worktree>/.yesmem/bench/<artifact>/raw.ndjson (append-only), regenerates
-// <artifact>/report.md from that raw file (never hand-edited), and optionally
-// records the telemetry lifecycle marks/spans snapshot.
-//
-// Arms (each imports COMPLETELY from its own tree — no cross-worktree mixing):
-//   branch-disabled  this worktree's src, telemetry off (true import graph)
-//   branch-enabled   this worktree's src, telemetry on
-//   fastpatch        UNMODIFIED fastpatch worktree's src, telemetry off
-//
-// Gates (paired per-iteration A/B, randomized 50/50 measurement order, decision
-// on the MEDIAN of per-pair % difference — cancels background load drift):
-//   --gate        THE acceptance gate: branch-disabled vs fastpatch, PASS iff
-//                 (branch - fastpatch)/fastpatch <= threshold%. Drives exit.
-//   --gate-record secondary/informational: branch-enabled vs branch-disabled
-//                 (recording cost). No exit impact.
+// The acceptance gate compares the current worktree with the fastpatch
+// worktree. Every pair executes both complete trees in a fresh process. The
+// execution order is deterministic, seeded, and exactly balanced. PASS needs
+// the familywise bootstrap upper bound for BOTH importMs and ttfmMs to remain
+// within the configured regression budget.
 //
 // Options:
-//   --scenario=root|zig|dist   (default root)
-//   --runtime=bun|node         (default bun; node requires EXACT v26.4.0)
-//   --samples=N (default 30)  --warmup=N (default 3)
-//   --threshold=<pct> (default 3)
-//   --force-fail     debug/CI hook: force acceptance to FAIL (proves exit code)
-//   --artifact=<name> (default cold-import-<commit>)
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+//   --scenario=minimal|root|zig|dist (default root)
+//   --runtime=bun|node               (default bun; node is exactly v26.4.0)
+//   --samples=N --warmup=N           (defaults 30 / 3; gates need even N >= 10)
+//   --threshold=<percent>            (default 3)
+//   --confidence=<fraction>          (default 0.95, familywise across 2 metrics)
+//   --bootstrap=N                    (default 20000)
+//   --seed=N                         (default: current commit prefix)
+//   --gate                            fastpatch vs current, drives exit status
+//   --gate-record                     telemetry disabled vs enabled, informational
+//   --allow-dirty                     allow, but fully record, dirty worktrees
+//   --force-fail                      prove the acceptance exit path
+//   --artifact=<name>
 import { spawnSync } from "node:child_process"
-import { cpus, platform, arch } from "node:os"
-import { join, dirname, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
+import { createHash } from "node:crypto"
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
+import { arch, cpus, loadavg, platform, tmpdir, uptime } from "node:os"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import {
+  analyzeColdImportPairs,
+  createColdImportSchedule,
+  type ColdImportPair,
+  type ColdImportMeasurement,
+} from "./bench-cold-import-analysis.js"
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(scriptDir, "..", "..", "..")
 const coreDir = resolve(repoRoot, "packages", "core")
 const branchSrcRoot = resolve(coreDir, "src")
-const fastpatchCore = resolve(repoRoot, "..", "fastpatch", "packages", "core")
+const fastpatchRoot = resolve(repoRoot, "..", "fastpatch")
+const fastpatchCore = resolve(fastpatchRoot, "packages", "core")
 const fastpatchSrcRoot = resolve(fastpatchCore, "src")
-
 const NODE26_REQUIRED = "v26.4.0"
+let probeSerial = 0
 
-function sourceEntry(name: string): string {
-  return resolve(branchSrcRoot, `${name}.ts`)
-}
-function distEntry(runtime: "bun" | "node"): string {
-  return resolve(coreDir, "dist", runtime === "node" ? "index.node.js" : "index.bun.js")
+type Runtime = "bun" | "node"
+type Scenario = "minimal" | "root" | "zig" | "dist"
+
+interface ProbeBody extends ColdImportMeasurement {
+  scenario: string
+  runtime: Runtime
+  telemetry: boolean
+  firstCommitAt: number | null
+  destroyMs: number | null
+  marks: Array<{ name: string; atMs: number }>
+  spans: Array<{ name: string; startMs: number; endMs: number }>
 }
 
-interface GateStats {
+interface SummaryStats {
   median: number
   p95: number
   p99: number
   rmePct: number
   n: number
 }
-interface GateResult {
-  kind: string
-  aLabel: string
-  bLabel: string
-  a: GateStats
-  b: GateStats
-  overheadMedianPct: number
-  gate: { thresholdPct: number; passed: boolean; rule: string }
+
+interface RawPair extends ColdImportPair {
+  baselineProbe: ProbeBody
+  candidateProbe: ProbeBody
 }
-type Stats = ReturnType<typeof stats>
+
+type PairedAnalysis = ReturnType<typeof analyzeColdImportPairs>
+
+interface GateRecord {
+  kind: "gate.paired-familywise"
+  name: string
+  baselineLabel: string
+  candidateLabel: string
+  pairs: RawPair[]
+  analysis: PairedAnalysis
+  nativeAssetRoot: string | null
+  forcedFailure: boolean
+  passed: boolean
+}
 
 function parseArgs(): Record<string, string> {
-  const out: Record<string, string> = {}
+  const values: Record<string, string> = {}
   for (const arg of process.argv.slice(2)) {
-    const m = /^--([^=]+)(?:=(.*))?$/.exec(arg)
-    if (m) out[m[1]!] = m[2] ?? ""
+    const match = /^--([^=]+)(?:=(.*))?$/.exec(arg)
+    if (match) values[match[1]!] = match[2] ?? ""
   }
-  return out
+  return values
 }
 
-function gitRevparse(ref: string): string {
-  const r = spawnSync("git", ["rev-parse", ref], { cwd: repoRoot, encoding: "utf8" })
-  return r.status === 0 ? r.stdout.trim() : "unknown"
+function run(command: string, args: string[], cwd = repoRoot): string {
+  const result = spawnSync(command, args, { cwd, encoding: "utf8" })
+  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed: ${result.stderr || result.stdout}`)
+  return result.stdout.trim()
 }
 
-function gitMergeBase(a: string, b: string): string {
-  const r = spawnSync("git", ["merge-base", a, b], { cwd: repoRoot, encoding: "utf8" })
-  return r.status === 0 ? r.stdout.trim() : "unknown"
+function gitRev(tree: string, ref = "HEAD"): string {
+  return run("git", ["rev-parse", ref], tree)
+}
+
+function gitStatus(tree: string): string[] {
+  return run("git", ["status", "--porcelain=v1", "--untracked-files=all"], tree)
+    .split("\n")
+    .filter(Boolean)
+    .filter((line) => !line.includes(".yesmem/"))
+}
+
+function worktreeState(tree: string) {
+  const status = gitStatus(tree)
+  const diff = spawnSync("git", ["diff", "--binary", "HEAD"], { cwd: tree, encoding: "utf8" }).stdout
+  const contentHash = createHash("sha256").update(diff)
+  for (const row of status) {
+    const relative = row.slice(3).replace(/^"|"$/g, "").split(" -> ").at(-1)!
+    const path = resolve(tree, relative)
+    try {
+      if (statSync(path).isFile()) contentHash.update(relative).update(readFileSync(path))
+    } catch {}
+  }
+  return {
+    clean: status.length === 0,
+    status,
+    contentSha256: contentHash.digest("hex"),
+  }
+}
+
+function readOptional(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8").trim() || null
+  } catch {
+    return null
+  }
+}
+
+function sha256File(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex")
+}
+
+let nativeImportSerial = 0
+
+async function nativeProvenance(srcRoot: string, runtime: Runtime, assetRoot?: string) {
+  const modulePath = resolve(
+    srcRoot,
+    "platform",
+    runtime === "node" ? "runtime-assets.node.ts" : "runtime-assets.bun.ts",
+  )
+  const originalAssetRoot = process.env.OTUI_ASSET_ROOT
+  if (assetRoot) process.env.OTUI_ASSET_ROOT = assetRoot
+  else delete process.env.OTUI_ASSET_ROOT
+  let path: string
+  try {
+    const assets = (await import(`${pathToFileURL(modulePath).href}?bench=${nativeImportSerial++}`)) as {
+      resolveNativeLibraryPath: () => Promise<string>
+    }
+    path = resolve(await assets.resolveNativeLibraryPath())
+  } finally {
+    if (originalAssetRoot === undefined) delete process.env.OTUI_ASSET_ROOT
+    else process.env.OTUI_ASSET_ROOT = originalAssetRoot
+  }
+  const symbols = spawnSync("nm", ["-D", "--defined-only", path], { encoding: "utf8" })
+  const symbolNames =
+    symbols.status === 0
+      ? symbols.stdout
+          .split("\n")
+          .map((line) => line.trim().split(/\s+/).at(-1) ?? "")
+          .filter(Boolean)
+          .sort()
+      : []
+  return {
+    path,
+    bytes: statSync(path).size,
+    sha256: sha256File(path),
+    symbolCount: symbolNames.length,
+    symbolSetSha256: symbolNames.length ? createHash("sha256").update(symbolNames.join("\n")).digest("hex") : null,
+    symbolInspectionError: symbols.status === 0 ? null : symbols.stderr.trim() || "nm unavailable",
+  }
 }
 
 let nodeCache: { bin: string; version: string } | null = null
-// Node baseline requires EXACTLY v26.4.0 (per scripts/node26.mjs). Resolve a bin
-// reporting that exact version; mismatch/absence -> throw (no silent fallback).
+
 function resolveNode26(): { bin: string; version: string } {
   if (nodeCache) return nodeCache
   const exact = (bin: string): string | null => {
-    const r = spawnSync(bin, ["--version"], { encoding: "utf8" })
-    return r.status === 0 && r.stdout.trim() === NODE26_REQUIRED ? bin : null
+    const result = spawnSync(bin, ["--version"], { encoding: "utf8" })
+    return result.status === 0 && result.stdout.trim() === NODE26_REQUIRED ? bin : null
   }
-  let bin: string | null = null
-  const override = process.env.OPENTUI_BENCH_NODE
-  if (override) bin = exact(override)
+  let bin = process.env.OPENTUI_BENCH_NODE ? exact(process.env.OPENTUI_BENCH_NODE) : null
   if (!bin) {
-    const nvmDir = join(process.env.HOME ?? "/root", ".nvm", "versions", "node")
+    const nvmRoot = join(process.env.HOME ?? "/root", ".nvm", "versions", "node")
     try {
-      for (const v of readdirSync(nvmDir)) {
-        const b = join(nvmDir, v, "bin", "node")
-        if (exact(b)) {
-          bin = b
+      for (const version of readdirSync(nvmRoot)) {
+        const candidate = join(nvmRoot, version, "bin", "node")
+        if (exact(candidate)) {
+          bin = candidate
           break
         }
       }
     } catch {}
   }
-  if (!bin)
-    throw new Error(
-      `Node.js ${NODE26_REQUIRED} is required but not found. Install exactly ${NODE26_REQUIRED} via nvm, or set OPENTUI_BENCH_NODE to its bin.`,
-    )
+  if (!bin) {
+    throw new Error(`Node.js ${NODE26_REQUIRED} is required; install it or set OPENTUI_BENCH_NODE to its binary`)
+  }
   nodeCache = { bin, version: NODE26_REQUIRED }
   return nodeCache
 }
 
-function runProbe(opts: {
-  scenario: string
-  runtime: "bun" | "node"
+function sourceEntry(srcRoot: string, scenario: Scenario): string {
+  if (scenario === "minimal") return resolve(srcRoot, "Renderable.ts")
+  return resolve(srcRoot, scenario === "root" ? "index.ts" : "zig.ts")
+}
+
+function distEntry(targetCore: string, runtime: Runtime): string {
+  return resolve(targetCore, "dist", runtime === "node" ? "index.node.js" : "index.bun.js")
+}
+
+function scenarioTarget(tree: "branch" | "fastpatch", scenario: Scenario, runtime: Runtime) {
+  const src = tree === "branch" ? branchSrcRoot : fastpatchSrcRoot
+  const targetCore = tree === "branch" ? coreDir : fastpatchCore
+  return {
+    src,
+    entry: scenario === "dist" ? distEntry(targetCore, runtime) : sourceEntry(src, scenario),
+    render: runtime === "bun" && (scenario === "root" || scenario === "zig"),
+  }
+}
+
+function runProbe(options: {
+  scenario: Scenario
+  runtime: Runtime
   telemetry: boolean
+  lifecycle?: boolean
+  assetRoot?: string
   src: string
   entry: string
-}): Record<string, unknown> {
-  const env: NodeJS.ProcessEnv = {
+  render: boolean
+}): ProbeBody {
+  const environment: NodeJS.ProcessEnv = {
     ...process.env,
-    OPENTUI_BENCH_ENTRY: opts.entry,
-    OPENTUI_BENCH_SRC: opts.src,
-    OPENTUI_BENCH_SCENARIO: opts.scenario,
-    OPENTUI_BENCH_RENDER: opts.runtime === "node" ? "0" : "1",
-    OPENTUI_BENCH_TELEMETRY: opts.telemetry ? "1" : "0",
+    OPENTUI_BENCH_ENTRY: options.entry,
+    OPENTUI_BENCH_SRC: options.src,
+    OPENTUI_BENCH_SCENARIO: options.scenario,
+    OPENTUI_BENCH_RENDER: options.render ? "1" : "0",
+    OPENTUI_BENCH_TELEMETRY: options.telemetry ? "1" : "0",
+    OPENTUI_BENCH_LIFECYCLE: options.lifecycle ? "1" : "0",
+    ...(options.assetRoot ? { OTUI_ASSET_ROOT: options.assetRoot } : {}),
   }
+  if (!options.assetRoot) delete environment.OTUI_ASSET_ROOT
   const probe = join(scriptDir, "cold-import-probe.ts")
-  let cmd: string
-  let args: string[]
-  if (opts.runtime === "bun") {
-    cmd = "bun"
-    args = ["run", probe]
-  } else {
-    const nodeBin = resolveNode26().bin
-    cmd = nodeBin
-    args = [probe]
+  const command = options.runtime === "bun" ? "bun" : resolveNode26().bin
+  const childArgs = options.runtime === "bun" ? ["run", probe] : [probe]
+  // Bun 1.3.x can lose stdout from a synchronously spawned Node process.
+  // Node probes therefore return through an exact, controller-owned temp file.
+  const outputFile =
+    options.runtime === "node" ? join(tmpdir(), `opentui-cold-import-${process.pid}-${probeSerial++}.json`) : null
+  if (outputFile) environment.OPENTUI_BENCH_OUTPUT = outputFile
+  let output = ""
+  try {
+    const result = spawnSync(command, childArgs, {
+      cwd: scriptDir,
+      env: environment,
+      encoding: "utf8",
+      timeout: 60_000,
+    })
+    if (result.status !== 0) {
+      throw new Error(
+        `probe failed (${options.scenario} ${options.runtime} telemetry=${options.telemetry}): ${result.stderr || result.stdout}`,
+      )
+    }
+    output = outputFile ? readFileSync(outputFile, "utf8") : result.stdout
+  } finally {
+    if (outputFile && existsSync(outputFile)) unlinkSync(outputFile)
   }
-  const r = spawnSync(cmd, args, { cwd: scriptDir, env, encoding: "utf8", timeout: 60_000 })
-  if (r.status !== 0) {
-    throw new Error(
-      `probe failed (${opts.scenario} ${opts.runtime} telemetry=${opts.telemetry}): ${r.stderr || r.stdout}`,
-    )
-  }
-  const lines = r.stdout.split("\n").filter((l) => l.trim().startsWith("{"))
-  if (lines.length === 0) throw new Error(`no JSON from probe: ${r.stdout}`)
-  return JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>
+  const json = output
+    .split("\n")
+    .filter((line) => line.trim().startsWith("{"))
+    .at(-1)
+  if (!json) throw new Error(`probe returned no JSON: ${output}`)
+  const body = JSON.parse(json) as ProbeBody
+  if (!Number.isFinite(body.importMs) || !Number.isFinite(body.ttfmMs)) throw new Error(`invalid probe result: ${json}`)
+  return body
 }
 
-function quantile(sorted: number[], q: number): number {
-  if (sorted.length === 0) return NaN
-  const pos = (sorted.length - 1) * q
-  const lo = Math.floor(pos)
-  const hi = Math.ceil(pos)
-  if (lo === hi) return sorted[lo]!
-  return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (pos - lo)
+function quantile(sorted: number[], percentile: number): number {
+  const position = (sorted.length - 1) * percentile
+  const low = Math.floor(position)
+  const high = Math.ceil(position)
+  if (low === high) return sorted[low]!
+  return sorted[low]! + (sorted[high]! - sorted[low]!) * (position - low)
 }
 
-function stats(values: number[]): GateStats {
-  const sorted = [...values].sort((a, b) => a - b)
-  const mean = values.reduce((s, v) => s + v, 0) / values.length
-  const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / Math.max(1, values.length - 1)
-  const std = Math.sqrt(variance)
-  const rme = Math.abs((1.96 * (std / Math.sqrt(values.length))) / mean) * 100
+function stats(values: number[]): SummaryStats {
+  const sorted = [...values].sort((left, right) => left - right)
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, values.length - 1)
+  const rmePct = Math.abs((1.96 * Math.sqrt(variance / values.length)) / mean) * 100
   return {
-    median: Math.round(quantile(sorted, 0.5) * 1000) / 1000,
-    p95: Math.round(quantile(sorted, 0.95) * 1000) / 1000,
-    p99: Math.round(quantile(sorted, 0.99) * 1000) / 1000,
-    rmePct: Math.round(rme * 100) / 100,
+    median: quantile(sorted, 0.5),
+    p95: quantile(sorted, 0.95),
+    p99: quantile(sorted, 0.99),
+    rmePct,
     n: values.length,
   }
 }
 
-interface Body {
-  overallMs: number
-  importMs: number
-  ttfmMs: number
-  firstCommitAt: number | null
-}
-
-function measure(opts: {
-  scenario: string
-  runtime: "bun" | "node"
-  telemetry: boolean
-  src: string
-  entry: string
-  samples: number
-  warmup: number
-}): { ttfm: GateStats; importMs: GateStats } {
-  for (let i = 0; i < opts.warmup; i++) runProbe(opts)
-  const ttfm: number[] = []
-  const importMs: number[] = []
-  for (let i = 0; i < opts.samples; i++) {
-    const row = runProbe(opts) as unknown as Body
-    ttfm.push(row.ttfmMs)
-    importMs.push(row.importMs)
-  }
-  return { ttfm: stats(ttfm), importMs: stats(importMs) }
-}
-
-// Paired A/B. Each iteration runs both arms back-to-back whose MEASUREMENT
-// ORDER is truly randomized 50/50 per pair (base first OR treat first — the
-// actual spawn sequence swaps, not just the labels), and each value is pushed
-// into its OWN arm array regardless of order. The gate decision uses the median
-// of per-pair (treat-base)/base % — cancels load drift. `base` = reference.
-function compare(base: { label: string; run: () => number }, treat: { label: string; run: () => number }, samples: number): GateResult {
-  const baseVals: number[] = []
-  const treatVals: number[] = []
-  for (let i = 0; i < samples; i++) {
-    // Randomize which arm EXECUTES first; each result always lands in its own
-    // arm array. (An earlier version relabeled values instead of swapping the
-    // spawn order — that mixes arms and collapses the paired delta toward 0.)
-    const baseFirst = Math.random() < 0.5
-    let baseVal: number
-    let treatVal: number
-    if (baseFirst) {
-      baseVal = base.run()
-      treatVal = treat.run()
-    } else {
-      treatVal = treat.run()
-      baseVal = base.run()
-    }
-    baseVals.push(baseVal)
-    treatVals.push(treatVal)
-  }
-  const aStats = stats(baseVals)
-  const bStats = stats(treatVals)
-  const pairedPct = baseVals.map((bv, i) => ((treatVals[i]! - bv) / bv) * 100)
-  const pairedMedian = quantile([...pairedPct].sort((x, y) => x - y), 0.5)
+function summarize(samples: ProbeBody[]) {
+  const destroyValues = samples.map((sample) => sample.destroyMs).filter((value): value is number => value !== null)
   return {
-    kind: "gate.zero-cost",
-    aLabel: base.label,
-    bLabel: treat.label,
-    a: aStats,
-    b: bStats,
-    overheadMedianPct: Math.round(pairedMedian * 100) / 100,
-    gate: { thresholdPct: 0, passed: false, rule: "" },
+    importMs: stats(samples.map((sample) => sample.importMs)),
+    ttfmMs: stats(samples.map((sample) => sample.ttfmMs)),
+    destroyMs: destroyValues.length > 0 ? stats(destroyValues) : null,
   }
 }
 
-// Documented A2/B7 measurement limitations (review round 2) — rendered into
-// every generated report so the evidence is self-describing.
-const LIMITATIONS = `## Limitationen (dokumentiert, Review-R2)
+function measure(options: Parameters<typeof runProbe>[0], samples: number, warmup: number): ProbeBody[] {
+  for (let index = 0; index < warmup; index++) runProbe(options)
+  return Array.from({ length: samples }, () => runProbe(options))
+}
 
-- Request-Ursachen (rAF/requestPartial/timer/live/request) werden zur Frame-Zeit
-  heuristisch zugeordnet (hadAnimation/hadPartialRequest/Followup-Flag/_isRunning),
-  nicht am Anforderungsursprung gespeichert. Genau eine Quelle pro Frame,
-  Summe == frame.total (getestet), aber Einzelzuordnung ist heuristisch.
-- firstOutputWrite wird am Native-Commit abgeleitet (echtes Memory-Buffer-Flag
-  _bufferedOutputMemory + Terminal-Setup), nicht an einem individuellen Write-
-  Callback beobachtet. Approximation des Write-Sinks; offene Limitation.
-- frame.promote.partialToFull zählt nur den kanonischen Promote-Pfad
-  (Partial-Render hob eine normale Invalidation aus). Andere immediateRerender-
-  Stellen sind Full-Render-Nachläufe/Request-Marker, keine echten Promotes
-  (Code-Inspektion Review-R2); keine zusätzlichen Zähler gesetzt.
-- Bun-Prozess-Cold-Import hat intrinsisches RME ~4-9 % (Heavy-Tail p99 ≈ 2×
-  Median, Scheduler-Rauschen); RME < 3 % ist mit dieser Methode nicht erreichbar.
-  Das gepaarte Akzeptanz-Gate ist davon unberührt (Paar-Differenz koppelt Drift aus).
-- Node-Baseline misst ausschließlich den Dist-Cold-Import (kein Render/Telemetrie
-  unter Node, src-Hooks sind bun-only).
+function pairedGate(options: {
+  name: string
+  baselineLabel: string
+  candidateLabel: string
+  baseline: Parameters<typeof runProbe>[0]
+  candidate: Parameters<typeof runProbe>[0]
+  pairs: number
+  warmup: number
+  threshold: number
+  confidence: number
+  bootstrapSamples: number
+  seed: number
+  nativeAssetRoot?: string
+  forceFailure?: boolean
+}): GateRecord {
+  for (let index = 0; index < options.warmup; index++) {
+    const baselineFirst = index % 2 === 0
+    runProbe(baselineFirst ? options.baseline : options.candidate)
+    runProbe(baselineFirst ? options.candidate : options.baseline)
+  }
+
+  const pairs: RawPair[] = []
+  for (const scheduled of createColdImportSchedule(options.pairs, options.seed)) {
+    let baselineProbe: ProbeBody
+    let candidateProbe: ProbeBody
+    let firstFinished: number
+    let secondStarted: number
+    if (scheduled.order === "baseline-first") {
+      baselineProbe = runProbe(options.baseline)
+      firstFinished = performance.now()
+      secondStarted = performance.now()
+      candidateProbe = runProbe(options.candidate)
+    } else {
+      candidateProbe = runProbe(options.candidate)
+      firstFinished = performance.now()
+      secondStarted = performance.now()
+      baselineProbe = runProbe(options.baseline)
+    }
+    pairs.push({
+      pair: scheduled.pair,
+      order: scheduled.order,
+      gapMs: secondStarted - firstFinished,
+      baseline: { importMs: baselineProbe.importMs, ttfmMs: baselineProbe.ttfmMs },
+      candidate: { importMs: candidateProbe.importMs, ttfmMs: candidateProbe.ttfmMs },
+      baselineProbe,
+      candidateProbe,
+    })
+  }
+
+  const analysis = analyzeColdImportPairs(pairs, {
+    bootstrapSamples: options.bootstrapSamples,
+    confidence: options.confidence,
+    maximumRegression: options.threshold / 100,
+    minimumPairs: 10,
+    seed: options.seed,
+  })
+  return {
+    kind: "gate.paired-familywise",
+    name: options.name,
+    baselineLabel: options.baselineLabel,
+    candidateLabel: options.candidateLabel,
+    pairs,
+    analysis,
+    nativeAssetRoot: options.nativeAssetRoot ?? null,
+    forcedFailure: options.forceFailure === true,
+    passed: analysis.safety.passed && options.forceFailure !== true,
+  }
+}
+
+function percent(value: number): string {
+  return `${(value * 100).toFixed(2)}%`
+}
+
+function milliseconds(value: number | undefined): string {
+  return value === undefined || !Number.isFinite(value) ? "—" : value.toFixed(3)
+}
+
+const LIMITATIONS = `## Grenzen
+
+- \`minimal\` ist ein interner, reiner Import-Messpunkt für \`Renderable.ts\`, kein
+  zugesagter Package-Subpath. Der unterstützte Minimal-Entrypoint bleibt B1.
+- \`dist\` und Node messen in Welle 0 nur den Paketimport; TTFMF entspricht dort
+  der Importgrenze. Source- und Dist-Module werden in keinem Arm vermischt.
+- \`firstOutputWrite\` wird an einem tatsächlich aufgerufenen TypeScript-/Feed-
+  Sink beobachtet. Ein vollständig nativer direkter Prozess-stdout-Write ist aus
+  JavaScript heraus weiterhin nicht einzeln beobachtbar.
+- Eine Framequelle wird am ersten Request-Ursprung gespeichert. Bei mehreren
+  koaleszierten Ursachen beschreibt sie absichtlich den ersten Auslöser.
+- \`frame.promote.partialToFull\` zählt den kanonischen Partial-zu-Full-Pfad;
+  Full-Render-Nachläufe sind keine zusätzlichen Promotions.
 `
 
-function buildReport(
-  rawLines: Record<string, unknown>[],
-  header: { artifact: string; commit: string; base: string; runtime: string },
-): string {
-  const m = (f: { median?: number; p95?: number; p99?: number; rmePct?: number } | undefined) =>
-    `${f?.median ?? "—"} / ${f?.p95 ?? "—"} / ${f?.p99 ?? "—"} / ${f?.rmePct ?? "—"}%`
-  let md = `# Cold-import / TTFMF report — artifact \`${header.artifact}\`\n\n`
-  md += `Generiert am ${new Date().toISOString()} · Commit \`${header.commit}\` · base \`${header.base}\` · ${header.runtime}\n\n`
-  md += "\n## Rohdaten\n\n`raw.ndjson` (append-only) — `" + rawLines.length + "` rows.\n\n"
-  md += "## Baselines (Med / p95 / p99 / RME %)\n\n"
-  md += "| Row | Runtime | Scenario | importMs | ttfmMs |\n"
-  md += "| --- | --- | --- | --- | --- |\n"
-  for (const line of rawLines) {
-    if (line.kind !== "baseline.cold-import") continue
-    const r = (line.runtime as { engine?: string } | undefined)?.engine ?? line.runtime ?? "?"
-    md += `| ${String(line.commit ?? "?").slice(0, 7)} | ${r} | ${line.scenario} | ${m(line.importMs as never)} | ${m(line.ttfmMs as never)} |\n`
+function buildReport(rows: Array<Record<string, unknown>>, artifact: string): string {
+  const last = rows.at(-1) ?? {}
+  let report = `# Cold-import / TTFMF — \`${artifact}\`\n\n`
+  report += `Generiert ${new Date().toISOString()} · Commit \`${String(last.commit ?? "unknown")}\`\n\n`
+  report += `Rohdaten: \`raw.ndjson\` (${rows.length} append-only row(s)).\n\n`
+  report += "## Messungen\n\n"
+  report += "| Commit | Runtime | Szenario | import p50/p95/p99 ms | TTFMF p50/p95/p99 ms |\n"
+  report += "| --- | --- | --- | --- | --- |\n"
+  for (const row of rows) {
+    if (row.kind !== "baseline.cold-import") continue
+    const summary = row.summary as ReturnType<typeof summarize>
+    const runtime = (row.runtime as { engine?: string } | undefined)?.engine ?? "?"
+    report += `| ${String(row.commit).slice(0, 7)} | ${runtime} | ${row.scenario} | ${milliseconds(summary.importMs.median)} / ${milliseconds(summary.importMs.p95)} / ${milliseconds(summary.importMs.p99)} | ${milliseconds(summary.ttfmMs.median)} / ${milliseconds(summary.ttfmMs.p95)} / ${milliseconds(summary.ttfmMs.p99)} |\n`
   }
-  for (const line of rawLines) {
-    const gates = line.gates as GateResult[] | undefined
-    if (!gates) continue
-    for (const g of gates) {
-      if (g.kind !== "gate.zero-cost") continue
-      const extra = g.aLabel === "fastpatch" ? " (acceptance)" : ""
-      md += `\n## Gate${extra}: ${g.aLabel} vs ${g.bLabel} (<= ${g.gate?.thresholdPct ?? "?"}%)\n\n`
-      md += `- ${g.aLabel} median: ${g.a?.median ?? "—"} ms; ${g.bLabel} median: ${g.b?.median ?? "—"} ms\n`
-      md += `- overhead median: ${g.overheadMedianPct ?? "—"}% — **${g.gate?.passed ? "PASS" : "FAIL"}**\n`
+  for (const row of rows) {
+    for (const gate of (row.gates as GateRecord[] | undefined) ?? []) {
+      report += `\n## Gate: ${gate.name}\n\n`
+      report += `${gate.baselineLabel} → ${gate.candidateLabel}; ${gate.analysis.safety.criterion}.\n\n`
+      report += "| Metrik | gepaarte Änderung | nominales CI | familienweises CI | Gate |\n"
+      report += "| --- | ---: | ---: | ---: | --- |\n"
+      for (const metric of ["importMs", "ttfmMs"] as const) {
+        const result = gate.analysis.metrics[metric]
+        const pass = gate.analysis.safety.metricPasses[metric]
+        report += `| ${metric} | ${percent(result.familywise.pairedChange)} | ${percent(result.nominal.ci.lower)} … ${percent(result.nominal.ci.upper)} | ${percent(result.familywise.ci.lower)} … ${percent(result.familywise.ci.upper)} | ${pass ? "PASS" : "FAIL"} |\n`
+      }
+      report += `\nGesamt: **${gate.passed ? "PASS" : "FAIL"}**${gate.forcedFailure ? " (erzwungener Testfehler)" : ""}. Reihenfolge: ${gate.analysis.metrics.importMs.familywise.orderCounts.baselineFirst}/${gate.analysis.metrics.importMs.familywise.orderCounts.candidateFirst}.\n`
     }
   }
-  md += "\n" + LIMITATIONS
-  return md
+  const gateRow = rows.find((row) => ((row.gates as GateRecord[] | undefined) ?? []).length > 0)
+  if (gateRow) {
+    const source = gateRow.source as {
+      branch: { clean: boolean; contentSha256: string }
+      fastpatch: { clean: boolean; contentSha256: string }
+    }
+    const native = gateRow.native as {
+      discovered: { branch: { sha256: string }; fastpatch: { sha256: string } }
+      gatePinned: { assetRoot: string; branch: { sha256: string; symbolCount: number } }
+    }
+    const host = gateRow.host as {
+      cpu: string
+      loadAverage: number[]
+      scalingGovernor: string | null
+      intelPstate: string | null
+    }
+    const protocol = gateRow.protocol as {
+      seed: number
+      warmup: number
+      samples: number
+      bootstrapSamples: number
+    }
+    const lifecycle = gateRow.lifecycle as ProbeBody | null
+    report += "\n## Gate-Provenienz\n\n"
+    report += `- Source: candidate ${source.branch.clean ? "clean" : "dirty, explizit erlaubt"} (${source.branch.contentSha256}); fastpatch ${source.fastpatch.clean ? "clean" : "dirty"} (${source.fastpatch.contentSha256}).\n`
+    report += `- Entdeckte Native-SHAs: candidate ${native.discovered.branch.sha256}; fastpatch ${native.discovered.fastpatch.sha256}.\n`
+    report += `- Gate-Pinning: ${native.gatePinned.assetRoot}; SHA ${native.gatePinned.branch.sha256}; ${native.gatePinned.branch.symbolCount} exportierte Symbole.\n`
+    report += `- Host: ${host.cpu}; Load ${host.loadAverage.join("/")}; Governor ${host.scalingGovernor ?? "unbekannt"}; Intel-Pstate ${host.intelPstate ?? "unbekannt"}.\n`
+    report += `- Protokoll: Seed ${protocol.seed}; Warmup ${protocol.warmup}; ${protocol.samples} Paare; ${protocol.bootstrapSamples} Bootstrap-Samples.\n`
+    if (lifecycle) {
+      report += `- Lifecycle-Probe: ${lifecycle.marks.map((entry) => entry.name).join(" → ")}; Destroy ${lifecycle.destroyMs ?? "—"} ms.\n`
+    }
+  }
+  report += `\n${LIMITATIONS}`
+  return report
 }
 
 async function main(): Promise<void> {
   const args = parseArgs()
-  const scenario = args["scenario"] ?? "root"
-  const runtime = (args["runtime"] === "node" ? "node" : "bun") as "bun" | "node"
-  const samples = Number(args["samples"] ?? 30)
-  const warmup = Number(args["warmup"] ?? 3)
-  const threshold = Number(args["threshold"] ?? 3)
-  const doGate = args["gate"] !== undefined // acceptance: branch-disabled vs fastpatch
-  const doGateRecord = args["gate-record"] !== undefined // informational: enabled vs disabled
-  if (doGate && (runtime === "node" || scenario !== "root"))
-    throw new Error("--gate is bun-src/root-only (branch root-src vs fastpatch root-src); use --scenario=root --runtime=bun")
-  if (doGateRecord && runtime === "node")
-    throw new Error("--gate-record is bun-only (probe disables telemetry under node, so the arms would be identical)")
+  const scenario = (args.scenario ?? "root") as Scenario
+  const runtime: Runtime = args.runtime === "node" ? "node" : "bun"
+  const samples = Number(args.samples ?? 30)
+  const warmup = Number(args.warmup ?? 3)
+  const threshold = Number(args.threshold ?? 3)
+  const confidence = Number(args.confidence ?? 0.95)
+  const bootstrapSamples = Number(args.bootstrap ?? 20_000)
+  const doGate = args.gate !== undefined
+  const doGateRecord = args["gate-record"] !== undefined
+  const allowDirty = args["allow-dirty"] !== undefined
+  const forceFailure = args["force-fail"] !== undefined
 
-  const commit = gitRevparse("HEAD")
-  const ct = gitRevparse("fastpatch")
-  const mergeBase = gitMergeBase("fastpatch", "HEAD")
-  const nodeInfo = runtime === "node" ? resolveNode26() : null
-  const artifact = args["artifact"] ?? `cold-import-${commit.slice(0, 7)}`
-  const benchDir = process.env.OPENTUI_BENCH_DIR ?? join(repoRoot, ".yesmem", "bench")
-  const artifactDir = join(benchDir, artifact)
+  if (!["minimal", "root", "zig", "dist"].includes(scenario)) throw new Error(`unknown scenario: ${scenario}`)
+  if (!Number.isInteger(samples) || samples < 1) throw new Error("--samples must be a positive integer")
+  if (!Number.isInteger(warmup) || warmup < 0) throw new Error("--warmup must be a non-negative integer")
+  if (!Number.isFinite(threshold) || threshold < 0) throw new Error("--threshold must be non-negative")
+  if (!(confidence > 0 && confidence < 1)) throw new Error("--confidence must be between 0 and 1")
+  if (!Number.isInteger(bootstrapSamples) || bootstrapSamples < 1) throw new Error("--bootstrap must be positive")
+  if ((doGate || doGateRecord) && (samples < 10 || samples % 2 !== 0)) {
+    throw new Error("gates require an even --samples count >= 10")
+  }
+  if (doGate && (runtime !== "bun" || scenario !== "root")) {
+    throw new Error("--gate is the Bun source-root fastpatch comparison; use --scenario=root --runtime=bun")
+  }
+  if (doGateRecord && runtime !== "bun") throw new Error("--gate-record is Bun-only")
+  if (forceFailure && !doGate) throw new Error("--force-fail requires --gate")
+  if (runtime === "node" && scenario !== "dist") throw new Error("Node Welle-0 measurement requires --scenario=dist")
+
+  const commit = gitRev(repoRoot)
+  const fastpatchCommit = gitRev(fastpatchRoot)
+  const mergeBase = run("git", ["merge-base", commit, fastpatchCommit], repoRoot)
+  const artifact = args.artifact ?? `cold-import-${commit.slice(0, 7)}`
+  const benchRoot = process.env.OPENTUI_BENCH_DIR ?? join(repoRoot, ".yesmem", "bench")
+  const artifactDir = join(benchRoot, artifact)
   const rawFile = join(artifactDir, "raw.ndjson")
-  mkdirSync(artifactDir, { recursive: true })
-
-  // Report-only mode: regenerate report.md from the append-only raw ledger
-  // without taking a new measurement (used after template changes).
   if (args["regen-report"] !== undefined) {
     if (!existsSync(rawFile)) throw new Error(`no raw data at ${rawFile}`)
     const rows = readFileSync(rawFile, "utf8")
       .split("\n")
       .filter(Boolean)
-      .map((l) => JSON.parse(l) as Record<string, unknown>)
-    const last = rows[rows.length - 1] ?? {}
-    const engines = [...new Set(rows.map((r) => (r.runtime as { engine?: string } | undefined)?.engine ?? String(r.runtime ?? "?")))]
-    const rt = engines.length > 1 ? `mixed(${engines.join(",")})` : (engines[0] ?? "?")
-    const report = join(artifactDir, "report.md")
-    writeFileSync(report, buildReport(rows, { artifact, commit: String(last.commit ?? "unknown"), base: String(last["commit.base"] ?? "unknown"), runtime: rt }))
-    console.log(JSON.stringify({ artifact, regenerated: true, rows: rows.length, report }))
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    writeFileSync(join(artifactDir, "report.md"), buildReport(rows, artifact))
     return
   }
-
-  let entry: string
-  let src = branchSrcRoot
-  if (scenario === "dist") {
-    entry = distEntry(runtime)
-  } else if (scenario === "root" || scenario === "zig") {
-    if (runtime === "node")
-      throw new Error(`scenario ${scenario} is bun-source only; use --scenario=dist --runtime=node`)
-    entry = sourceEntry(scenario === "root" ? "index" : scenario)
-  } else {
-    throw new Error(`unknown scenario: ${scenario}`)
+  const seed = Number(args.seed ?? Number.parseInt(commit.slice(0, 8), 16)) >>> 0
+  const branchState = worktreeState(repoRoot)
+  const fastpatchState = worktreeState(fastpatchRoot)
+  if (!allowDirty && (!branchState.clean || !fastpatchState.clean)) {
+    throw new Error(
+      `benchmark worktrees must be clean (branch=${branchState.status.join(", ") || "clean"}; fastpatch=${fastpatchState.status.join(", ") || "clean"}); commit/stash changes or pass --allow-dirty`,
+    )
   }
 
-  const cpu = cpus()[0]?.model ?? "unknown"
-  const provenance = {
-    commit,
-    "commit.base": mergeBase,
-    "fastpatch.tip": ct,
-    runtime: {
-      engine: runtime,
-      version: runtime === "bun" ? process.versions.bun : nodeInfo!.version,
-      required: runtime === "node" ? NODE26_REQUIRED : undefined,
-    },
-    cpu,
-    platform,
-    arch,
-    geometry: scenario === "zig" || runtime === "node" ? null : "80x24",
-    warmup,
-    samples,
-    thresholdPct: threshold,
-    harness_version: 3,
-    protocol: "cold-import-probe-v3",
-    generated: new Date().toISOString(),
+  const branchNative = await nativeProvenance(branchSrcRoot, runtime)
+  const fastpatchNative = doGate ? await nativeProvenance(fastpatchSrcRoot, runtime) : null
+  // A local build may leave different native packages in the two worktrees.
+  // Pin both source arms to one asset root so the gate isolates the TypeScript
+  // change, then verify both resolvers observe the identical file/symbol set.
+  // The independently discovered binaries are still recorded below.
+  const gateNativeAssetRoot = doGate ? resolve(fastpatchCore, "node_modules") : null
+  const pinnedBranchNative = gateNativeAssetRoot
+    ? await nativeProvenance(branchSrcRoot, runtime, gateNativeAssetRoot)
+    : null
+  const pinnedFastpatchNative = gateNativeAssetRoot
+    ? await nativeProvenance(fastpatchSrcRoot, runtime, gateNativeAssetRoot)
+    : null
+  if (
+    pinnedBranchNative &&
+    pinnedFastpatchNative &&
+    (pinnedBranchNative.sha256 !== pinnedFastpatchNative.sha256 ||
+      pinnedBranchNative.symbolSetSha256 !== pinnedFastpatchNative.symbolSetSha256)
+  ) {
+    throw new Error("pinned native artifact drift between fastpatch and candidate; refusing paired source gate")
   }
 
-  const baseline = measure({ scenario, runtime, telemetry: false, src, entry, samples, warmup })
+  const node = runtime === "node" ? resolveNode26() : null
+  const target = scenarioTarget("branch", scenario, runtime)
+  const probeOptions = { scenario, runtime, telemetry: false, ...target }
+  const baselineSamples = measure(probeOptions, samples, warmup)
 
-  // Lifecycle evidence: one telemetry-enabled render probe snapshots the full
-  // startup marks + spans for the raw record (bun render scenarios only).
-  let lifecycle: { marks: unknown[]; spans: unknown[] } | null = null
-  if (runtime === "bun" && (scenario === "root" || scenario === "zig")) {
-    const row = runProbe({ scenario, runtime, telemetry: true, src, entry }) as unknown as {
-      marks: { name: string; atMs: number }[]
-      spans: { name: string; startMs: number; endMs: number }[]
-    }
-    lifecycle = { marks: row.marks ?? [], spans: row.spans ?? [] }
+  let lifecycle: ProbeBody | null = null
+  if (runtime === "bun" && target.render) {
+    lifecycle = runProbe({ ...probeOptions, telemetry: true, lifecycle: true })
   }
 
-  const gateRows: GateResult[] = []
-  let acceptGate: { passed: boolean } | null = null
+  const gates: GateRecord[] = []
   if (doGate) {
-    // ACCEPTANCE: does the instrumented (disabled-telemetry) branch regress cold
-    // import/TTFMF vs UNMODIFIED fastpatch by more than threshold%? Fully
-    // separated arms: each imports its own tree's index + own render/telemetry.
-    const base = {
-      label: "fastpatch",
-      run: () =>
-        (runProbe({ scenario: "root", runtime: "bun", telemetry: false, src: fastpatchSrcRoot, entry: resolve(fastpatchSrcRoot, "index.ts") }) as unknown as Body).ttfmMs,
-    }
-    const treat = {
-      label: "branch-disabled",
-      run: () => (runProbe({ scenario: "root", runtime: "bun", telemetry: false, src, entry }) as unknown as Body).ttfmMs,
-    }
-    const res = compare(base, treat, samples)
-    res.gate = {
-      thresholdPct: threshold,
-      passed: res.overheadMedianPct <= threshold,
-      rule: `paired branch-disabled-vs-fastpatch overhead (median of per-pair %) <= ${threshold}%`,
-    }
-    acceptGate = res.gate
-    gateRows.push(res)
+    const base = scenarioTarget("fastpatch", "root", "bun")
+    const pinnedCandidate = { ...probeOptions, assetRoot: gateNativeAssetRoot! }
+    gates.push(
+      pairedGate({
+        name: "fastpatch vs branch-disabled (acceptance)",
+        baselineLabel: "fastpatch",
+        candidateLabel: "branch-disabled",
+        baseline: {
+          scenario: "root",
+          runtime: "bun",
+          telemetry: false,
+          ...base,
+          assetRoot: gateNativeAssetRoot!,
+        },
+        candidate: pinnedCandidate,
+        pairs: samples,
+        warmup,
+        threshold,
+        confidence,
+        bootstrapSamples,
+        seed,
+        nativeAssetRoot: gateNativeAssetRoot!,
+        forceFailure,
+      }),
+    )
   }
   if (doGateRecord) {
-    // Recording cost only (informational): enabling telemetry on this branch.
-    const base = {
-      label: "disabled",
-      run: () => (runProbe({ scenario, runtime, telemetry: false, src, entry }) as unknown as Body).ttfmMs,
-    }
-    const treat = {
-      label: "enabled",
-      run: () => (runProbe({ scenario, runtime, telemetry: true, src, entry }) as unknown as Body).ttfmMs,
-    }
-    const res = compare(base, treat, samples)
-    res.gate = {
-      thresholdPct: threshold,
-      passed: res.overheadMedianPct <= threshold,
-      rule: `paired enabled-vs-disabled overhead (median of per-pair %) <= ${threshold}%`,
-    }
-    gateRows.push(res)
+    gates.push(
+      pairedGate({
+        name: "telemetry disabled vs enabled (informational)",
+        baselineLabel: "disabled",
+        candidateLabel: "enabled",
+        baseline: probeOptions,
+        candidate: { ...probeOptions, telemetry: true },
+        pairs: samples,
+        warmup,
+        threshold,
+        confidence,
+        bootstrapSamples,
+        seed: seed ^ 0xa5a5a5a5,
+      }),
+    )
   }
 
-  const forceFail = args["force-fail"] !== undefined
-  if (forceFail && acceptGate) acceptGate.passed = false
+  mkdirSync(artifactDir, { recursive: true })
 
   const row = {
     kind: "baseline.cold-import",
+    generated: new Date().toISOString(),
+    commit,
+    mergeBase,
+    fastpatchCommit,
     scenario,
-    ...provenance,
-    ...(lifecycle ? { lifecycle } : {}),
-    importMs: baseline.importMs,
-    ttfmMs: baseline.ttfm,
+    runtime: {
+      engine: runtime,
+      version: runtime === "bun" ? process.versions.bun : node!.version,
+      executable: runtime === "bun" ? process.execPath : node!.bin,
+    },
+    source: { branch: branchState, fastpatch: fastpatchState },
+    native: {
+      discovered: { branch: branchNative, fastpatch: fastpatchNative },
+      gatePinned: {
+        assetRoot: gateNativeAssetRoot,
+        branch: pinnedBranchNative,
+        fastpatch: pinnedFastpatchNative,
+      },
+    },
+    host: {
+      platform,
+      arch,
+      cpu: cpus()[0]?.model ?? "unknown",
+      logicalCpus: cpus().length,
+      loadAverage: loadavg(),
+      uptimeSeconds: uptime(),
+      scalingGovernor: readOptional("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"),
+      intelPstate: readOptional("/sys/devices/system/cpu/intel_pstate/status"),
+    },
+    workload: {
+      geometry: target.render ? "80x24" : null,
+      content: target.render ? "TextRenderable('cold-start', 10x1)" : "import-only",
+      render: target.render,
+      lifecycleProbe: lifecycle !== null,
+    },
+    protocol: {
+      harnessVersion: 4,
+      probeVersion: 4,
+      warmup,
+      samples,
+      seed,
+      confidence,
+      perMetricConfidence: 1 - (1 - confidence) / 2,
+      bootstrapSamples,
+      thresholdPct: threshold,
+      order: "deterministic balanced paired schedule, stratified analysis",
+    },
+    samples: baselineSamples,
+    summary: summarize(baselineSamples),
+    lifecycle,
+    gates,
   }
-
-  appendFileSync(rawFile, JSON.stringify({ ...row, ...(gateRows.length ? { gates: gateRows } : {}) }) + "\n")
-
-  const rawLines = readFileSync(rawFile, "utf8")
+  appendFileSync(rawFile, `${JSON.stringify(row)}\n`)
+  const rows = readFileSync(rawFile, "utf8")
     .split("\n")
     .filter(Boolean)
-    .map((l) => JSON.parse(l) as Record<string, unknown>)
-  writeFileSync(join(artifactDir, "report.md"), buildReport(rawLines, { artifact, commit, base: mergeBase, runtime }))
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+  const reportFile = join(artifactDir, "report.md")
+  writeFileSync(reportFile, buildReport(rows, artifact))
 
-  const failed = forceFail ? true : acceptGate ? !acceptGate.passed : false
+  const acceptance = gates.find((gate) => gate.name.includes("acceptance"))
+  const failed = acceptance ? !acceptance.passed : false
   console.log(
     JSON.stringify({
       artifact,
       commit: commit.slice(0, 7),
       scenario,
       runtime,
-      importMs: baseline.importMs,
-      ttfmMs: baseline.ttfm,
-      gates: gateRows.map((g) => ({ name: `${g.aLabel}-vs-${g.bLabel}`, overheadMedianPct: g.overheadMedianPct, passed: g.gate.passed, acceptance: g.aLabel === "fastpatch" })),
+      summary: row.summary,
+      gates: gates.map((gate) => ({ name: gate.name, passed: gate.passed, safety: gate.analysis.safety })),
       failed,
       raw: rawFile,
-      report: join(artifactDir, "report.md"),
+      report: reportFile,
     }),
   )
   if (failed) process.exitCode = 1

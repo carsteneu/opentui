@@ -10,6 +10,7 @@
 //   OPENTUI_BENCH_SCENARIO   scenario label (root|zig|dist) provenance
 //   OPENTUI_BENCH_RENDER     "0" to skip renderer construction + TTFMF
 //   OPENTUI_BENCH_TELEMETRY  "1" to enable opt-in telemetry (marks/spans)
+//   OPENTUI_BENCH_LIFECYCLE  "1" to use a real setupTerminal/feed-output path
 //
 // Output fields (ms):
 //   importMs      t0 -> entry module import resolves
@@ -18,6 +19,8 @@
 //                  metric uses this SAME boundary in every arm so no arm is
 //                  favored by an earlier telemetry mark.
 //   marks/spans   lifecycle marks + spans snapshot (telemetry on, bun only)
+//   destroyMs     synchronous renderer destroy duration (render scenarios)
+import { writeFileSync } from "node:fs"
 import { performance } from "node:perf_hooks"
 import { join } from "node:path"
 
@@ -29,6 +32,7 @@ const isBun = !!process.versions.bun
 // the headless render path; node baseline = cold dist import time (importMs).
 const doRender = isBun && process.env.OPENTUI_BENCH_RENDER !== "0"
 const telemetryOn = isBun && process.env.OPENTUI_BENCH_TELEMETRY === "1"
+const lifecycleOn = doRender && process.env.OPENTUI_BENCH_LIFECYCLE === "1"
 
 if (!entry) {
   console.error("OPENTUI_BENCH_ENTRY is required")
@@ -41,15 +45,13 @@ const t0 = performance.now()
 // telemetry; fastpatch index.ts does not — that delta is the real regression
 // signal). Enabled arm needs telemetry active before the measured entry so the
 // import-time marks (nativeLoaded, importReady) fire.
-let telemetryModule:
-  | null
-  | {
-      setTelemetryEnabled: (v: boolean) => void
-      getTelemetrySnapshot: () => {
-        marks: { name: string; atMs: number }[]
-        spans: { name: string; startMs: number; endMs: number }[]
-      }
-    } = null
+let telemetryModule: null | {
+  setTelemetryEnabled: (v: boolean) => void
+  getTelemetrySnapshot: () => {
+    marks: { name: string; atMs: number }[]
+    spans: { name: string; startMs: number; endMs: number }[]
+  }
+} = null
 if (isBun && telemetryOn && src) {
   const mod = (await import(join(src, "telemetry.js"))) as {
     setTelemetryEnabled: (v: boolean) => void
@@ -71,23 +73,55 @@ try {
 
 let firstCommitAt: number | null = null
 let ttfmMs = importMs
+let destroyMs: number | null = null
 let marks: { name: string; atMs: number }[] = []
 let spans: { name: string; startMs: number; endMs: number }[] = []
-  if (doRender && !src) {
-    console.error("cold-import-probe: RENDER requested but OPENTUI_BENCH_SRC unset — refusing to report importMs as ttfmMs (run via bench-cold-import.ts, which always sets SRC)")
-    process.exit(2)
-  }
-  if (doRender && src) {
-  const testRendererModule = await import(join(src, "testing/test-renderer.js"))
+if (doRender && !src) {
+  console.error(
+    "cold-import-probe: RENDER requested but OPENTUI_BENCH_SRC unset — refusing to report importMs as ttfmMs (run via bench-cold-import.ts, which always sets SRC)",
+  )
+  process.exit(2)
+}
+if (doRender && src) {
   const { TextRenderable } = await import(join(src, "renderables/Text.js"))
-  const testRenderer = await testRendererModule.createTestRenderer({ width: 80, height: 24, useThread: false })
-  const text = new TextRenderable(testRenderer.renderer, { content: "cold-start", width: 10, height: 1 })
-  testRenderer.renderer.root.add(text)
-  await testRenderer.renderOnce()
+  let renderer: {
+    root: { add: (renderable: unknown) => void }
+    requestRender: () => void
+    idle: () => Promise<void>
+    destroy: () => void
+  }
+  let renderFrame: () => Promise<void>
+
+  if (lifecycleOn) {
+    const { createCliRenderer } = await import(join(src, "renderer.js"))
+    const { createTestStdin, createTestStdout } = await import(join(src, "testing/test-streams.js"))
+    renderer = await createCliRenderer({
+      stdin: createTestStdin(),
+      stdout: createTestStdout(80, 24),
+      consoleMode: "disabled",
+      useThread: false,
+    })
+    renderFrame = async () => {
+      renderer.requestRender()
+      await renderer.idle()
+    }
+  } else {
+    const { createTestRenderer } = await import(join(src, "testing/test-renderer.js"))
+    const testRenderer = await createTestRenderer({ width: 80, height: 24, useThread: false })
+    renderer = testRenderer.renderer
+    renderFrame = testRenderer.renderOnce
+  }
+
+  const text = new TextRenderable(renderer, { content: "cold-start", width: 10, height: 1 })
+  renderer.root.add(text)
+  await renderFrame()
   // TTFMF = first committed frame: stop the clock here (BEFORE destroy).
   // IDENTICAL boundary for every arm; the enabled arm does NOT reuse an earlier
   // telemetry mark here so it is never favored.
   ttfmMs = performance.now() - t0
+  const destroyStarted = performance.now()
+  renderer.destroy()
+  destroyMs = performance.now() - destroyStarted
   if (telemetryModule) {
     const snap = telemetryModule.getTelemetrySnapshot()
     const commit = snap.marks.find((m) => m.name === "opentui.firstNativeCommit")
@@ -95,19 +129,20 @@ let spans: { name: string; startMs: number; endMs: number }[] = []
     marks = snap.marks
     spans = snap.spans
   }
-  testRenderer.renderer.destroy()
 }
 
 const round = (v: number | null): number | null => (v === null ? null : Math.round(v * 1000) / 1000)
-console.log(
-  JSON.stringify({
-    scenario,
-    runtime: isBun ? "bun" : "node",
-    telemetry: telemetryOn,
-    importMs: round(importMs),
-    firstCommitAt: round(firstCommitAt),
-    ttfmMs: round(ttfmMs),
-    marks,
-    spans,
-  }),
-)
+const result = JSON.stringify({
+  scenario,
+  runtime: isBun ? "bun" : "node",
+  telemetry: telemetryOn,
+  importMs: round(importMs),
+  firstCommitAt: round(firstCommitAt),
+  ttfmMs: round(ttfmMs),
+  destroyMs: round(destroyMs),
+  marks,
+  spans,
+})
+const outputFile = process.env.OPENTUI_BENCH_OUTPUT
+if (outputFile) writeFileSync(outputFile, `${result}\n`)
+else console.log(result)
