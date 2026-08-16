@@ -1032,6 +1032,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _feed: NativeSpanFeed | null = null
   private _detachFeed: (() => void) | null = null
   private _detachFeedError: (() => void) | null = null
+  /** Idempotent settlers for in-flight feed→Writable writes (plan 5.4). */
+  private readonly _feedPendingWrites = new Set<() => void>()
+  /** True once the sink reported error/close/finish; stops scheduling new writes. */
+  private _feedSinkTerminal = false
+  private _detachFeedSinkListeners: (() => void) | null = null
   private feedIdleRenderScheduled = false
   private ordinaryFrameWaitingForFeed = false
   private ordinaryFrameWaitControlState: RendererControlState | null = null
@@ -1141,21 +1146,63 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     lib.setKittyKeyboardFlags(rendererPtr, kittyFlags)
 
     // Wire feed → Writable piping. The returned Promise keeps the chunk
-    // pinned (refcount held) until Node's write callback fires; this turns
-    // Node's Writable flow control into async backpressure for the feed.
-    // Write errors are surfaced via feed.onError / console.error; we do not
-    // interfere with the Writable's own error handling (matches the
-    // pre-feed-integration posture where process.stdout EPIPE was the OS's
-    // problem, not the renderer's).
+    // pinned (refcount held) until the write settles; this turns Node's
+    // Writable flow control into async backpressure for the feed. This only
+    // applies to a custom stdout (process.stdout never uses the feed path).
+    // Write errors are surfaced via feed.onError / console.error; the sink's
+    // own error handling is left intact (its 'error' event still fires to any
+    // other listener) — we additionally observe error/close/finish only to
+    // bound feed teardown (see settleAllPendingWrites below).
     this._feed = feed
     if (feed) {
+      // Bound teardown against an unreliable custom Writable (plan 5.4): a sink
+      // that never invokes its write callback must not pin feed chunks into
+      // destroy forever. Every in-flight write is settled by the first of the
+      // write callback, the sink's error/close/finish, or renderer destroy.
+      const settleAllPendingWrites = () => {
+        this._feedSinkTerminal = true
+        for (const settle of [...this._feedPendingWrites]) settle()
+        this._feedPendingWrites.clear()
+      }
+      const onSinkError = () => settleAllPendingWrites()
+      const onSinkClose = () => settleAllPendingWrites()
+      const onSinkFinish = () => settleAllPendingWrites()
+      stdout.on("error", onSinkError)
+      stdout.on("close", onSinkClose)
+      stdout.on("finish", onSinkFinish)
+      this._detachFeedSinkListeners = () => {
+        stdout.removeListener("error", onSinkError)
+        stdout.removeListener("close", onSinkClose)
+        stdout.removeListener("finish", onSinkFinish)
+      }
+
       this._detachFeed = feed.onData((bytes: Uint8Array) => {
+        // Owned copy: hand the sink only JS-owned bytes. The sink may outlive
+        // the feed chunk (slow or never-firing write callback), so releasing
+        // the native Zig chunk on any settlement path is always safe. Feeding
+        // borrowed native bytes to an unreliable Writable would be a UAF once
+        // destroy force-settles and frees the chunk underneath an in-flight
+        // write, so we never hand the borrowed native view to the sink.
+        const owned = bytes.slice()
+        this.recordFirstOutputWriteTelemetry()
+        if (this._feedSinkTerminal) return
         return new Promise<void>((resolve) => {
-          // Renderer-owned frame bytes must bypass any later stdout.write
-          // interception (e.g. split-footer capture) and go straight to the
-          // caller's actual sink.
-          this.recordFirstOutputWriteTelemetry()
-          this.realStdoutWrite.call(this.stdout, bytes, () => resolve())
+          let done = false
+          const settle = () => {
+            if (done) return
+            done = true
+            this._feedPendingWrites.delete(settle)
+            resolve()
+          }
+          this._feedPendingWrites.add(settle)
+          try {
+            this.realStdoutWrite.call(this.stdout, owned, settle)
+          } catch (error) {
+            settle()
+            console.error(
+              `[CliRenderer] NativeSpanFeed write error: ${error instanceof Error ? error.message : String(error)}`,
+            )
+          }
         })
       })
       this._detachFeedError = feed.onError((code) => {
@@ -4632,6 +4679,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this._detachFeed = null
       this._detachFeedError?.()
       this._detachFeedError = null
+      // Force-settle in-flight writes so feed.close() can reach its terminal
+      // state even if the sink never invokes its write callback (plan 5.4).
+      // Safe: the sink only ever received JS-owned copies, never the borrowed
+      // native chunk that is freed here, so no use-after-free can occur.
+      for (const settle of [...this._feedPendingWrites]) settle()
+      this._feedPendingWrites.clear()
+      this._detachFeedSinkListeners?.()
+      this._detachFeedSinkListeners = null
       this._feed.close()
       this._feed = null
     }
