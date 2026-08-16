@@ -1718,10 +1718,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       // process.nextTick cannot be cancelled; guard it with the activation token so a
       // stale tick after a control transition neither renders nor clears a newer owner.
       process.nextTick(() => {
-        if (token !== this.activationToken) {
-          this.resolveIdleIfNeeded()
-          return
-        }
         void this.activateFrame(token)
       })
       return
@@ -1729,12 +1725,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this.activationTimer = this.clock.setTimeout(() => {
       this.activationTimer = null
-      // Defensive only: cancel clears the handle, so this fires only for a leaked
-      // platform timer — never for a newer owner's activation.
-      if (token !== this.activationToken) {
-        this.resolveIdleIfNeeded()
-        return
-      }
       void this.activateFrame(token)
     }, delay)
   }
@@ -4272,17 +4262,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._frameAbort = null
   }
 
-  private async boundFrameCallbackWait(
+  private boundFrameCallbackWait(
     callbackResult: void | PromiseLike<void>,
     abort: { promise: Promise<void>; trigger: () => void },
   ): Promise<void> {
-    const callbackPromise = Promise.resolve(callbackResult)
-    // Keep observing the original promise: if it settles late (after abort), a
-    // rejection must not surface as an unhandled rejection. The race with the
-    // destroy-driven abort lets loop() stop waiting on a callback that never
-    // resolves without a hard timeout.
-    callbackPromise.catch(() => {})
-    await Promise.race([callbackPromise, abort.promise])
+    // Promise.race installs both fulfillment and rejection reactions on the
+    // callback thenable. That reaction keeps a late rejection observed even
+    // when the destroy abort wins first, without allocating a redundant catch
+    // promise for every callback on every frame.
+    return Promise.race([callbackResult, abort.promise])
   }
 
   public requestLive(): void {
