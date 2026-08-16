@@ -1,28 +1,31 @@
-// A1/A4 harness: cold-import + time-to-first-frame measurement.
+// Cold-import / TTFMF measurement harness with a hard zero-cost acceptance gate.
 //
 // Spawns a fresh cold-import-probe child process per sample (real cold import),
-// aggregates median/p95/p99/RME, appends a provenance row to
-// <worktree>/.yesmem/bench/<artifact>/raw.ndjson (append-only), then
-// regenerates <artifact>/report.md from that raw file (never hand-edited).
+// aggregates median/p95/p99/RME, persists a provenance row to
+// <worktree>/.yesmem/bench/<artifact>/raw.ndjson (append-only), regenerates
+// <artifact>/report.md from that raw file (never hand-edited), and optionally
+// records the telemetry lifecycle marks/spans snapshot.
 //
-// Gates:
-//   --gate       disabled-vs-enabled on THIS branch (true A/B). THE acceptance:
-//                PASS iff paired enabled <= disabled*(1+threshold/100). Sets exit.
-//   --gate-base  disabled-instrumented branch vs UNMODIFIED fastpatch tree.
-//                INFORMATIONAL only: branch HEAD vs fastpatch@2cd44364 differ by
-//                far more than instrumentation, so the delta swings with host
-//                load (-43%..+10% across runs) and is not a usable acceptance
-//                signal. Recorded for reference; does NOT affect exit code.
-//   --force-fail debug/CI hook: force all gates to FAIL (proves nonzero exit)
+// Arms (each imports COMPLETELY from its own tree — no cross-worktree mixing):
+//   branch-disabled  this worktree's src, telemetry off (true import graph)
+//   branch-enabled   this worktree's src, telemetry on
+//   fastpatch        UNMODIFIED fastpatch worktree's src, telemetry off
+//
+// Gates (paired per-iteration A/B, randomized 50/50 measurement order, decision
+// on the MEDIAN of per-pair % difference — cancels background load drift):
+//   --gate        THE acceptance gate: branch-disabled vs fastpatch, PASS iff
+//                 (branch - fastpatch)/fastpatch <= threshold%. Drives exit.
+//   --gate-record secondary/informational: branch-enabled vs branch-disabled
+//                 (recording cost). No exit impact.
 //
 // Options:
 //   --scenario=root|zig|dist   (default root)
-//   --runtime=bun|node                 (default bun)
+//   --runtime=bun|node         (default bun; node requires EXACT v26.4.0)
 //   --samples=N (default 30)  --warmup=N (default 3)
-//   --artifact=<name> (default "cold-import-<commit>")
-//   --threshold=<pct> (default 3, gate pass bound)
-//   --force-fail      debug/CI hook: force all gates to FAIL (proves nonzero exit)
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
+//   --threshold=<pct> (default 3)
+//   --force-fail     debug/CI hook: force acceptance to FAIL (proves exit code)
+//   --artifact=<name> (default cold-import-<commit>)
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { cpus, platform, arch } from "node:os"
 import { join, dirname, resolve } from "node:path"
@@ -31,10 +34,14 @@ import { fileURLToPath } from "node:url"
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(scriptDir, "..", "..", "..")
 const coreDir = resolve(repoRoot, "packages", "core")
+const branchSrcRoot = resolve(coreDir, "src")
 const fastpatchCore = resolve(repoRoot, "..", "fastpatch", "packages", "core")
+const fastpatchSrcRoot = resolve(fastpatchCore, "src")
+
+const NODE26_REQUIRED = "v26.4.0"
 
 function sourceEntry(name: string): string {
-  return resolve(coreDir, "src", `${name}.ts`)
+  return resolve(branchSrcRoot, `${name}.ts`)
 }
 function distEntry(runtime: "bun" | "node"): string {
   return resolve(coreDir, "dist", runtime === "node" ? "index.node.js" : "index.bun.js")
@@ -77,30 +84,49 @@ function gitMergeBase(a: string, b: string): string {
   return r.status === 0 ? r.stdout.trim() : "unknown"
 }
 
-function resolveNode(): string | null {
-  if (process.env.OPENTUI_BENCH_NODE) return process.env.OPENTUI_BENCH_NODE
-  const nvmDir = join(process.env.HOME ?? "/root", ".nvm", "versions", "node")
-  try {
-    const versions = readdirSync(nvmDir).map((v) => ({ v, n: Number(v.replace(/^v/, "").split(".")[0] ?? 0) }))
-    versions.sort((a, b) => b.n - a.n)
-    for (const { v } of versions) {
-      const bin = join(nvmDir, v, "bin", "node")
-      const probe = spawnSync("test", ["-x", bin], { shell: true })
-      if (probe.status === 0) return bin
-    }
-  } catch {}
-  return null
+let nodeCache: { bin: string; version: string } | null = null
+// Node baseline requires EXACTLY v26.4.0 (per scripts/node26.mjs). Resolve a bin
+// reporting that exact version; mismatch/absence -> throw (no silent fallback).
+function resolveNode26(): { bin: string; version: string } {
+  if (nodeCache) return nodeCache
+  const exact = (bin: string): string | null => {
+    const r = spawnSync(bin, ["--version"], { encoding: "utf8" })
+    return r.status === 0 && r.stdout.trim() === NODE26_REQUIRED ? bin : null
+  }
+  let bin: string | null = null
+  const override = process.env.OPENTUI_BENCH_NODE
+  if (override) bin = exact(override)
+  if (!bin) {
+    const nvmDir = join(process.env.HOME ?? "/root", ".nvm", "versions", "node")
+    try {
+      for (const v of readdirSync(nvmDir)) {
+        const b = join(nvmDir, v, "bin", "node")
+        if (exact(b)) {
+          bin = b
+          break
+        }
+      }
+    } catch {}
+  }
+  if (!bin)
+    throw new Error(
+      `Node.js ${NODE26_REQUIRED} is required but not found. Install exactly ${NODE26_REQUIRED} via nvm, or set OPENTUI_BENCH_NODE to its bin.`,
+    )
+  nodeCache = { bin, version: NODE26_REQUIRED }
+  return nodeCache
 }
 
 function runProbe(opts: {
   scenario: string
   runtime: "bun" | "node"
   telemetry: boolean
+  src: string
   entry: string
 }): Record<string, unknown> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     OPENTUI_BENCH_ENTRY: opts.entry,
+    OPENTUI_BENCH_SRC: opts.src,
     OPENTUI_BENCH_SCENARIO: opts.scenario,
     OPENTUI_BENCH_RENDER: opts.runtime === "node" ? "0" : "1",
     OPENTUI_BENCH_TELEMETRY: opts.telemetry ? "1" : "0",
@@ -112,8 +138,7 @@ function runProbe(opts: {
     cmd = "bun"
     args = ["run", probe]
   } else {
-    const nodeBin = resolveNode()
-    if (!nodeBin) throw new Error("Node 26 not found (set OPENTUI_BENCH_NODE or install via nvm)")
+    const nodeBin = resolveNode26().bin
     cmd = nodeBin
     args = [probe]
   }
@@ -163,13 +188,11 @@ function measure(opts: {
   scenario: string
   runtime: "bun" | "node"
   telemetry: boolean
+  src: string
   entry: string
   samples: number
   warmup: number
-}): {
-  ttfm: GateStats
-  importMs: GateStats
-} {
+}): { ttfm: GateStats; importMs: GateStats } {
   for (let i = 0; i < opts.warmup; i++) runProbe(opts)
   const ttfm: number[] = []
   const importMs: number[] = []
@@ -181,16 +204,16 @@ function measure(opts: {
   return { ttfm: stats(ttfm), importMs: stats(importMs) }
 }
 
-// Paired A/B. Each iteration runs both arms back-to-back with a randomized
-// order, so slow background drift is largely canceled by the pairing. The
-// gate decision uses the median of the per-pair percentage difference
-// (treat vs base), not the ratio of aggregate medians — robust to load drift
-// within the run. `base` is the zero-cost/reference arm.
+// Paired A/B. Each iteration runs both arms back-to-back whose MEASUREMENT
+// ORDER is truly randomized 50/50 per pair (base first OR treat first), so no
+// fixed base-first bias and slow load drift is canceled by pairing. Values are
+// pushed into their correct arm array regardless of spawn order. The gate
+// decision uses the median of per-pair (treat-base)/base %. `base` = reference.
 function compare(base: { label: string; run: () => number }, treat: { label: string; run: () => number }, samples: number): GateResult {
   const baseVals: number[] = []
   const treatVals: number[] = []
   for (let i = 0; i < samples; i++) {
-    const baseFirst = i % 2 === 0
+    const baseFirst = Math.random() < 0.5
     const v0 = base.run()
     const v1 = treat.run()
     baseVals.push(baseFirst ? v0 : v1)
@@ -218,12 +241,15 @@ async function main(): Promise<void> {
   const samples = Number(args["samples"] ?? 30)
   const warmup = Number(args["warmup"] ?? 3)
   const threshold = Number(args["threshold"] ?? 3)
-  const doGate = args["gate"] !== undefined
-  const doGateBase = args["gate-base"] !== undefined
+  const doGate = args["gate"] !== undefined // acceptance: branch-disabled vs fastpatch
+  const doGateRecord = args["gate-record"] !== undefined // informational: enabled vs disabled
+  if (doGate && runtime === "node")
+    throw new Error("--gate is bun-src-only (compares src trees); use --runtime=bun")
 
   const commit = gitRevparse("HEAD")
   const ct = gitRevparse("fastpatch")
   const mergeBase = gitMergeBase("fastpatch", "HEAD")
+  const nodeInfo = runtime === "node" ? resolveNode26() : null
   const artifact = args["artifact"] ?? `cold-import-${commit.slice(0, 7)}`
   const benchDir = process.env.OPENTUI_BENCH_DIR ?? join(repoRoot, ".yesmem", "bench")
   const artifactDir = join(benchDir, artifact)
@@ -231,6 +257,7 @@ async function main(): Promise<void> {
   mkdirSync(artifactDir, { recursive: true })
 
   let entry: string
+  let src = branchSrcRoot
   if (scenario === "dist") {
     entry = distEntry(runtime)
   } else if (scenario === "root" || scenario === "zig") {
@@ -248,7 +275,8 @@ async function main(): Promise<void> {
     "fastpatch.tip": ct,
     runtime: {
       engine: runtime,
-      version: runtime === "bun" ? process.versions.bun : (process.env.OPENTUI_BENCH_NODE_VERSION ?? "node26"),
+      version: runtime === "bun" ? process.versions.bun : nodeInfo!.version,
+      required: runtime === "node" ? NODE26_REQUIRED : undefined,
     },
     cpu,
     platform,
@@ -257,48 +285,38 @@ async function main(): Promise<void> {
     warmup,
     samples,
     thresholdPct: threshold,
-    harness_version: 2,
-    protocol: "cold-import-probe-v2",
+    harness_version: 3,
+    protocol: "cold-import-probe-v3",
     generated: new Date().toISOString(),
   }
 
-  const baseline = measure({ scenario, runtime, telemetry: false, entry, samples, warmup })
+  const baseline = measure({ scenario, runtime, telemetry: false, src, entry, samples, warmup })
+
+  // Lifecycle evidence: one telemetry-enabled render probe snapshots the full
+  // startup marks + spans for the raw record (bun render scenarios only).
+  let lifecycle: { marks: unknown[]; spans: unknown[] } | null = null
+  if (runtime === "bun" && (scenario === "root" || scenario === "zig")) {
+    const row = runProbe({ scenario, runtime, telemetry: true, src, entry }) as unknown as {
+      marks: { name: string; atMs: number }[]
+      spans: { name: string; startMs: number; endMs: number }[]
+    }
+    lifecycle = { marks: row.marks ?? [], spans: row.spans ?? [] }
+  }
 
   const gateRows: GateResult[] = []
-  // `--gate` is the acceptance gate and drives the exit code; --gate-base is
-  // informational (cross-tree vs older fastpatch, load-swamped).
   let acceptGate: { passed: boolean } | null = null
-  if (doGate && runtime === "node")
-    throw new Error("--gate under node is vacuous: src telemetry/render are bun-only; use --runtime=bun")
   if (doGate) {
-    const arms = [
-      { label: "disabled", run: () => (runProbe({ scenario, runtime, telemetry: false, entry }) as unknown as Body).ttfmMs },
-      { label: "enabled", run: () => (runProbe({ scenario, runtime, telemetry: true, entry }) as unknown as Body).ttfmMs },
-    ]
-    const res = compare(arms[0]!, arms[1]!, samples)
-    res.gate = {
-      thresholdPct: threshold,
-      passed: res.overheadMedianPct <= threshold,
-      rule: `paired enabled-vs-disabled overhead (median of per-pair %) <= ${threshold}%`,
-    }
-    acceptGate = res.gate
-    gateRows.push(res)
-  }
-  if (doGateBase) {
-    // disabled-instrumented branch vs unmodified fastpatch source (bun).
-    // base = fastpatch (reference), treat = this branch: overhead is
-    // (branch - fastpatch)/fastpatch, so it FAILS when the instrumented branch
-    // is slower than unmodified fastpatch (the property being validated).
-    const branchEntry = sourceEntry("index")
-    const baseEntry = resolve(fastpatchCore, "src", "index.ts")
+    // ACCEPTANCE: does the instrumented (disabled-telemetry) branch regress cold
+    // import/TTFMF vs UNMODIFIED fastpatch by more than threshold%? Fully
+    // separated arms: each imports its own tree's index + own render/telemetry.
     const base = {
       label: "fastpatch",
-      run: () => (runProbe({ scenario: "root", runtime: "bun", telemetry: false, entry: baseEntry }) as unknown as Body).ttfmMs,
+      run: () =>
+        (runProbe({ scenario: "root", runtime: "bun", telemetry: false, src: fastpatchSrcRoot, entry: resolve(fastpatchSrcRoot, "index.ts") }) as unknown as Body).ttfmMs,
     }
     const treat = {
       label: "branch-disabled",
-      run: () =>
-        (runProbe({ scenario: "root", runtime: "bun", telemetry: false, entry: branchEntry }) as unknown as Body).ttfmMs,
+      run: () => (runProbe({ scenario: "root", runtime: "bun", telemetry: false, src, entry }) as unknown as Body).ttfmMs,
     }
     const res = compare(base, treat, samples)
     res.gate = {
@@ -306,21 +324,36 @@ async function main(): Promise<void> {
       passed: res.overheadMedianPct <= threshold,
       rule: `paired branch-disabled-vs-fastpatch overhead (median of per-pair %) <= ${threshold}%`,
     }
+    acceptGate = res.gate
+    gateRows.push(res)
+  }
+  if (doGateRecord) {
+    // Recording cost only (informational): enabling telemetry on this branch.
+    const base = {
+      label: "disabled",
+      run: () => (runProbe({ scenario, runtime, telemetry: false, src, entry }) as unknown as Body).ttfmMs,
+    }
+    const treat = {
+      label: "enabled",
+      run: () => (runProbe({ scenario, runtime, telemetry: true, src, entry }) as unknown as Body).ttfmMs,
+    }
+    const res = compare(base, treat, samples)
+    res.gate = {
+      thresholdPct: threshold,
+      passed: res.overheadMedianPct <= threshold,
+      rule: `paired enabled-vs-disabled overhead (median of per-pair %) <= ${threshold}%`,
+    }
     gateRows.push(res)
   }
 
   const forceFail = args["force-fail"] !== undefined
-  if (forceFail) {
-    for (const g of gateRows) {
-      g.gate.passed = false
-      g.gate.rule = `${g.gate.rule} [forced-fail-test]`
-    }
-  }
+  if (forceFail && acceptGate) acceptGate.passed = false
 
   const row = {
     kind: "baseline.cold-import",
     scenario,
     ...provenance,
+    ...(lifecycle ? { lifecycle } : {}),
     importMs: baseline.importMs,
     ttfmMs: baseline.ttfm,
   }
@@ -348,7 +381,8 @@ async function main(): Promise<void> {
     if (!line.gates) continue
     for (const g of line.gates) {
       if (g.kind !== "gate.zero-cost") continue
-      md += `\n## Gate: ${g.aLabel} vs ${g.bLabel} (<= ${g.gate?.thresholdPct ?? "?"}%)\n\n`
+      const extra = g.aLabel === "fastpatch" ? " (acceptance)" : ""
+      md += `\n## Gate${extra}: ${g.aLabel} vs ${g.bLabel} (<= ${g.gate?.thresholdPct ?? "?"}%)\n\n`
       md += `- ${g.aLabel} median: ${g.a?.median ?? "—"} ms; ${g.bLabel} median: ${g.b?.median ?? "—"} ms\n`
       md += `- overhead median: ${g.overheadMedianPct ?? "—"}% — **${g.gate?.passed ? "PASS" : "FAIL"}**\n`
     }
@@ -364,11 +398,7 @@ async function main(): Promise<void> {
       runtime,
       importMs: baseline.importMs,
       ttfmMs: baseline.ttfm,
-      gates: gateRows.map((g) => ({
-        name: `${g.aLabel}-vs-${g.bLabel}`,
-        overheadMedianPct: g.overheadMedianPct,
-        passed: g.gate.passed,
-      })),
+      gates: gateRows.map((g) => ({ name: `${g.aLabel}-vs-${g.bLabel}`, overheadMedianPct: g.overheadMedianPct, passed: g.gate.passed, acceptance: g.aLabel === "fastpatch" })),
       failed,
       raw: rawFile,
       report: join(artifactDir, "report.md"),
