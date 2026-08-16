@@ -4753,7 +4753,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.rendering = true
     this.ordinaryRequestsDuringFrame.clear()
     let renderFailed = false
-    this.startFrameCallbackAbort()
     try {
       // Bump before any work so all callers this iteration see the new id.
       this._frameId++
@@ -4795,12 +4794,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const animationRequestTime = animationRequestEnd - animationRequestStart
 
       const start = performance.now()
-      // Set by startFrameCallbackAbort() above, so always non-null; only a
-      // destroy-triggered abort nulls it and that also sets _destroyPending,
-      // which the in-loop `break` checks before this wait can be dereferenced.
-      const frameAbort = this._frameAbort!
+      // Keep the overwhelmingly common callback-free frame allocation-free.
+      // The abort owner must exist before invoking the first callback because
+      // that callback may call destroy() synchronously.
+      if (this.frameCallbacks.length > 0) this.startFrameCallbackAbort()
+      const frameAbort = this._frameAbort
       for (const frameCallback of this.frameCallbacks) {
-        if (this._destroyPending) break
+        if (this._destroyPending || !frameAbort) break
         try {
           await this.boundFrameCallbackWait(frameCallback(deltaTime), frameAbort)
         } catch (error) {
