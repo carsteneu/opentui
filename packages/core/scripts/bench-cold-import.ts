@@ -25,7 +25,7 @@
 //   --threshold=<pct> (default 3)
 //   --force-fail     debug/CI hook: force acceptance to FAIL (proves exit code)
 //   --artifact=<name> (default cold-import-<commit>)
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { cpus, platform, arch } from "node:os"
 import { join, dirname, resolve } from "node:path"
@@ -234,6 +234,60 @@ function compare(base: { label: string; run: () => number }, treat: { label: str
   }
 }
 
+// Documented A2/B7 measurement limitations (review round 2) — rendered into
+// every generated report so the evidence is self-describing.
+const LIMITATIONS = `## Limitationen (dokumentiert, Review-R2)
+
+- Request-Ursachen (rAF/requestPartial/timer/live/request) werden zur Frame-Zeit
+  heuristisch zugeordnet (hadAnimation/hadPartialRequest/Followup-Flag/_isRunning),
+  nicht am Anforderungsursprung gespeichert. Genau eine Quelle pro Frame,
+  Summe == frame.total (getestet), aber Einzelzuordnung ist heuristisch.
+- firstOutputWrite wird am Native-Commit abgeleitet (echtes Memory-Buffer-Flag
+  _bufferedOutputMemory + Terminal-Setup), nicht an einem individuellen Write-
+  Callback beobachtet. Approximation des Write-Sinks; offene Limitation.
+- frame.promote.partialToFull zählt nur den kanonischen Promote-Pfad
+  (Partial-Render hob eine normale Invalidation aus). Andere immediateRerender-
+  Stellen sind Full-Render-Nachläufe/Request-Marker, keine echten Promotes
+  (Code-Inspektion Review-R2); keine zusätzlichen Zähler gesetzt.
+- Bun-Prozess-Cold-Import hat intrinsisches RME ~4-9 % (Heavy-Tail p99 ≈ 2×
+  Median, Scheduler-Rauschen); RME < 3 % ist mit dieser Methode nicht erreichbar.
+  Das gepaarte Akzeptanz-Gate ist davon unberührt (Paar-Differenz koppelt Drift aus).
+- Node-Baseline misst ausschließlich den Dist-Cold-Import (kein Render/Telemetrie
+  unter Node, src-Hooks sind bun-only).
+`
+
+function buildReport(
+  rawLines: Record<string, unknown>[],
+  header: { artifact: string; commit: string; base: string; runtime: string },
+): string {
+  const m = (f: { median?: number; p95?: number; p99?: number; rmePct?: number } | undefined) =>
+    `${f?.median ?? "—"} / ${f?.p95 ?? "—"} / ${f?.p99 ?? "—"} / ${f?.rmePct ?? "—"}%`
+  let md = `# Cold-import / TTFMF report — artifact \`${header.artifact}\`\n\n`
+  md += `Generiert am ${new Date().toISOString()} · Commit \`${header.commit}\` · base \`${header.base}\` · ${header.runtime}\n\n`
+  md += "\n## Rohdaten\n\n`raw.ndjson` (append-only) — `" + rawLines.length + "` rows.\n\n"
+  md += "## Baselines (Med / p95 / p99 / RME %)\n\n"
+  md += "| Row | Runtime | Scenario | importMs | ttfmMs |\n"
+  md += "| --- | --- | --- | --- | --- |\n"
+  for (const line of rawLines) {
+    if (line.kind !== "baseline.cold-import") continue
+    const r = (line.runtime as { engine?: string } | undefined)?.engine ?? line.runtime ?? "?"
+    md += `| ${String(line.commit ?? "?").slice(0, 7)} | ${r} | ${line.scenario} | ${m(line.importMs as never)} | ${m(line.ttfmMs as never)} |\n`
+  }
+  for (const line of rawLines) {
+    const gates = line.gates as GateResult[] | undefined
+    if (!gates) continue
+    for (const g of gates) {
+      if (g.kind !== "gate.zero-cost") continue
+      const extra = g.aLabel === "fastpatch" ? " (acceptance)" : ""
+      md += `\n## Gate${extra}: ${g.aLabel} vs ${g.bLabel} (<= ${g.gate?.thresholdPct ?? "?"}%)\n\n`
+      md += `- ${g.aLabel} median: ${g.a?.median ?? "—"} ms; ${g.bLabel} median: ${g.b?.median ?? "—"} ms\n`
+      md += `- overhead median: ${g.overheadMedianPct ?? "—"}% — **${g.gate?.passed ? "PASS" : "FAIL"}**\n`
+    }
+  }
+  md += "\n" + LIMITATIONS
+  return md
+}
+
 async function main(): Promise<void> {
   const args = parseArgs()
   const scenario = args["scenario"] ?? "root"
@@ -255,6 +309,22 @@ async function main(): Promise<void> {
   const artifactDir = join(benchDir, artifact)
   const rawFile = join(artifactDir, "raw.ndjson")
   mkdirSync(artifactDir, { recursive: true })
+
+  // Report-only mode: regenerate report.md from the append-only raw ledger
+  // without taking a new measurement (used after template changes).
+  if (args["regen-report"] !== undefined) {
+    if (!existsSync(rawFile)) throw new Error(`no raw data at ${rawFile}`)
+    const rows = readFileSync(rawFile, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+    const last = rows[rows.length - 1] ?? {}
+    const rt = (last.runtime as { engine?: string } | undefined)?.engine ?? String(last.runtime ?? "?")
+    const report = join(artifactDir, "report.md")
+    writeFileSync(report, buildReport(rows, { artifact, commit: String(last.commit ?? "unknown"), base: String(last["commit.base"] ?? "unknown"), runtime: rt }))
+    console.log(JSON.stringify({ artifact, regenerated: true, rows: rows.length, report }))
+    return
+  }
 
   let entry: string
   let src = branchSrcRoot
@@ -363,31 +433,8 @@ async function main(): Promise<void> {
   const rawLines = readFileSync(rawFile, "utf8")
     .split("\n")
     .filter(Boolean)
-    .map((l) => JSON.parse(l))
-  const m = (f: { median?: number; p95?: number; p99?: number; rmePct?: number } | undefined) =>
-    `${f?.median ?? "—"} / ${f?.p95 ?? "—"} / ${f?.p99 ?? "—"} / ${f?.rmePct ?? "—"}%`
-  let md = `# Cold-import / TTFMF report — artifact \`${artifact}\`\n\n`
-  md += `Generiert am ${provenance.generated} · Commit \`${commit}\` · base \`${mergeBase}\` · ${runtime}\n\n`
-  md += "\n## Rohdaten\n\n`raw.ndjson` (append-only) — `" + rawLines.length + "` rows.\n\n"
-  md += "## Baselines (Med / p95 / p99 / RME %)\n\n"
-  md += "| Row | Runtime | Scenario | importMs | ttfmMs |\n"
-  md += "| --- | --- | --- | --- | --- |\n"
-  for (const line of rawLines) {
-    if (line.kind !== "baseline.cold-import") continue
-    const r = line.runtime?.engine ?? line.runtime ?? "?"
-    md += `| ${String(line.commit ?? "?").slice(0, 7)} | ${r} | ${line.scenario} | ${m(line.importMs)} | ${m(line.ttfmMs)} |\n`
-  }
-  for (const line of rawLines) {
-    if (!line.gates) continue
-    for (const g of line.gates) {
-      if (g.kind !== "gate.zero-cost") continue
-      const extra = g.aLabel === "fastpatch" ? " (acceptance)" : ""
-      md += `\n## Gate${extra}: ${g.aLabel} vs ${g.bLabel} (<= ${g.gate?.thresholdPct ?? "?"}%)\n\n`
-      md += `- ${g.aLabel} median: ${g.a?.median ?? "—"} ms; ${g.bLabel} median: ${g.b?.median ?? "—"} ms\n`
-      md += `- overhead median: ${g.overheadMedianPct ?? "—"}% — **${g.gate?.passed ? "PASS" : "FAIL"}**\n`
-    }
-  }
-  writeFileSync(join(artifactDir, "report.md"), md)
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+  writeFileSync(join(artifactDir, "report.md"), buildReport(rawLines, { artifact, commit, base: mergeBase, runtime }))
 
   const failed = forceFail ? true : acceptGate ? !acceptGate.passed : false
   console.log(
