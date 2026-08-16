@@ -1,8 +1,28 @@
 /**
- * A module-level map to store timeout IDs for all debounced functions
- * Structure: Map<scopeId, Map<debounceId, timerId>>
+ * A module-level map to store debounce entries for all debounced functions
+ * Structure: Map<scopeId, Map<debounceId, DebounceEntry>>
  */
-const TIMERS_MAP = new Map<string | number, Map<string | number, ReturnType<typeof setTimeout>>>()
+const TIMERS_MAP = new Map<string | number, Map<string | number, DebounceEntry>>()
+
+/**
+ * Rejection reason when a debounced call is superseded by a newer call or
+ * cleared before its callback ran. Typed so consumers can recognize a normal
+ * supersede without treating it as a real failure.
+ */
+export class DebounceSupersededError extends Error {
+  readonly code = "DEBOUNCE_SUPERSEDED"
+
+  constructor() {
+    super("Debounced call was superseded or cleared before it ran")
+    this.name = "DebounceSupersededError"
+  }
+}
+
+interface DebounceEntry {
+  timerId: ReturnType<typeof setTimeout>
+  /** Rejects the pending call once with DebounceSupersededError and cleans up. */
+  cancel(): void
+}
 
 /**
  * Debounce controller that manages debounce instances for a specific scope
@@ -25,24 +45,43 @@ export class DebounceController {
   debounce<R>(id: string | number, ms: number, fn: () => Promise<R>): Promise<R> {
     const scopeMap = TIMERS_MAP.get(this.scopeId)!
 
-    return new Promise((resolve, reject) => {
-      // Clear any existing timeout for this ID
-      if (scopeMap.has(id)) {
-        clearTimeout(scopeMap.get(id))
+    // A newer call with the same id supersedes the pending one: settle it.
+    const previous = scopeMap.get(id)
+    if (previous) {
+      previous.cancel()
+    }
+
+    return new Promise<R>((resolve, reject) => {
+      let done = false
+      let entry!: DebounceEntry
+
+      // Idempotent settlement for every exit path: once finished, the timer is
+      // cleared and the map entry removed so a late callback is a no-op.
+      const finish = (run: () => void): void => {
+        if (done) return
+        done = true
+        if (scopeMap.get(id) === entry) {
+          scopeMap.delete(id)
+        }
+        clearTimeout(entry.timerId)
+        run()
       }
 
-      // Set a new timeout
-      const timerId = setTimeout(() => {
-        try {
-          resolve(fn())
-        } catch (error) {
-          reject(error)
-        }
-        scopeMap.delete(id)
-      }, ms)
+      entry = {
+        timerId: setTimeout(() => {
+          finish(() => {
+            try {
+              resolve(fn())
+            } catch (error) {
+              reject(error)
+            }
+          })
+        }, ms),
+        cancel: () => finish(() => reject(new DebounceSupersededError())),
+      }
 
       // Store the new timeout ID
-      scopeMap.set(id, timerId)
+      scopeMap.set(id, entry)
     })
   }
 
@@ -52,11 +91,8 @@ export class DebounceController {
    * @param id The debounce ID to clear
    */
   clearDebounce(id: string | number): void {
-    const scopeMap = TIMERS_MAP.get(this.scopeId)
-    if (scopeMap && scopeMap.has(id)) {
-      clearTimeout(scopeMap.get(id))
-      scopeMap.delete(id)
-    }
+    const entry = TIMERS_MAP.get(this.scopeId)?.get(id)
+    entry?.cancel()
   }
 
   /**
@@ -64,9 +100,11 @@ export class DebounceController {
    */
   clear(): void {
     const scopeMap = TIMERS_MAP.get(this.scopeId)
-    if (scopeMap) {
-      scopeMap.forEach((timerId) => clearTimeout(timerId))
-      scopeMap.clear()
+    if (!scopeMap) return
+    const entries = Array.from(scopeMap.values())
+    scopeMap.clear()
+    for (const entry of entries) {
+      entry.cancel()
     }
   }
 }
@@ -88,9 +126,11 @@ export function createDebounce(scopeId: string | number): DebounceController {
  */
 export function clearDebounceScope(scopeId: string | number): void {
   const scopeMap = TIMERS_MAP.get(scopeId)
-  if (scopeMap) {
-    scopeMap.forEach((timerId) => clearTimeout(timerId))
-    scopeMap.clear()
+  if (!scopeMap) return
+  const entries = Array.from(scopeMap.values())
+  scopeMap.clear()
+  for (const entry of entries) {
+    entry.cancel()
   }
 }
 
@@ -99,8 +139,11 @@ export function clearDebounceScope(scopeId: string | number): void {
  */
 export function clearAllDebounces(): void {
   TIMERS_MAP.forEach((scopeMap) => {
-    scopeMap.forEach((timerId) => clearTimeout(timerId))
+    const entries = Array.from(scopeMap.values())
     scopeMap.clear()
+    for (const entry of entries) {
+      entry.cancel()
+    }
   })
   TIMERS_MAP.clear()
 }
