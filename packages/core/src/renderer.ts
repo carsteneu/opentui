@@ -824,6 +824,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private minTargetFrameTime: number = 1000 / this._maxFps
   private immediateRerenderRequested: boolean = false
   private updateScheduled: boolean = false
+  // Single owner for a delayed one-shot activation (requestRender/requestPartialRender
+  // outside the running loop). updateScheduled marks a pending activation; bumping
+  // activationToken invalidates any queued callback (process.nextTick cannot be
+  // cancelled, so it is guarded by the token instead).
+  private activationTimer: TimerHandle | null = null
+  private activationToken: number = 0
 
   private liveRequestCounter: number = 0
   private _controlState: RendererControlState = RendererControlState.IDLE
@@ -1609,19 +1615,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
-    if (!this.updateScheduled && !this.renderTimeout) {
-      this.updateScheduled = true
-      const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
-      const elapsed = this.getElapsedMs(now, this.lastTime)
-      const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
-
-      if (delay === 0) {
-        process.nextTick(() => this.activateFrame())
-        return
-      }
-
-      this.clock.setTimeout(() => this.activateFrame(), delay)
-    }
+    this.scheduleDelayedActivation()
   }
 
   public requestPartialRender(renderable: Renderable) {
@@ -1644,19 +1638,61 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
-    if (!this.updateScheduled && !this.renderTimeout) {
-      this.updateScheduled = true
-      const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
-      const elapsed = this.getElapsedMs(now, this.lastTime)
-      const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
+    this.scheduleDelayedActivation()
+  }
 
-      if (delay === 0) {
-        process.nextTick(() => this.activateFrame())
+  /**
+   * Schedules the single one-shot activation owner shared by full and partial
+   * render requests issued outside the running loop. Coalesces repeated
+   * invalidations into at most one pending timer/microtask.
+   */
+  private scheduleDelayedActivation(): void {
+    if (this.updateScheduled || this.renderTimeout) return
+
+    this.updateScheduled = true
+    const token = ++this.activationToken
+    const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
+    const elapsed = this.getElapsedMs(now, this.lastTime)
+    const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
+
+    if (delay === 0) {
+      // process.nextTick cannot be cancelled; guard it with the activation token so a
+      // stale tick after a control transition neither renders nor clears a newer owner.
+      process.nextTick(() => {
+        if (token !== this.activationToken) {
+          this.resolveIdleIfNeeded()
+          return
+        }
+        this.activateFrame()
+      })
+      return
+    }
+
+    this.activationTimer = this.clock.setTimeout(() => {
+      this.activationTimer = null
+      // Defensive only: cancel clears the handle, so this fires only for a leaked
+      // platform timer — never for a newer owner's activation.
+      if (token !== this.activationToken) {
+        this.resolveIdleIfNeeded()
         return
       }
+      this.activateFrame()
+    }, delay)
+  }
 
-      this.clock.setTimeout(() => this.activateFrame(), delay)
+  /**
+   * Cancels any pending delayed activation. Called by suspend, by the
+   * transition to the continuous loop (internalStart), and on destroy.
+   * Bumping the token invalidates an already-queued process.nextTick, because
+   * that microtask itself cannot be removed.
+   */
+  private cancelDelayedActivation(): void {
+    this.activationToken++
+    if (this.activationTimer !== null) {
+      this.clock.clearTimeout(this.activationTimer)
+      this.activationTimer = null
     }
+    this.updateScheduled = false
   }
 
   private async activateFrame() {
@@ -1668,6 +1704,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     try {
       await this.loop()
     } finally {
+      // A callback that reaches here belongs to the current owner, so clearing
+      // updateScheduled cannot erase a newer generation (see token guards above).
       this.updateScheduled = false
       this.resolveIdleIfNeeded()
     }
@@ -4218,8 +4256,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
       // Invalidate any queued idle one-shot frame.
       // start()/live/resume transition to the continuous loop, so queued
-      // activateFrame callbacks must no-op via !updateScheduled.
-      this.updateScheduled = false
+      // activateFrame callbacks must no-op via the invalidated token.
+      this.cancelDelayedActivation()
 
       if (this.memorySnapshotInterval > 0) {
         this.startMemorySnapshotTimer()
@@ -4238,7 +4276,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._previousControlState = this._controlState
 
     this._controlState = RendererControlState.EXPLICIT_SUSPENDED
-    this.updateScheduled = false
+    this.cancelDelayedActivation()
     this.internalPause()
 
     if (this._terminalIsSetup) {
@@ -4425,6 +4463,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.clock.clearTimeout(this.renderTimeout)
       this.renderTimeout = null
     }
+
+    this.cancelDelayedActivation()
 
     this.themeModeState.cancelRefresh()
 
