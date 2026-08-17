@@ -36,6 +36,7 @@ interface BunBuildOptions {
   chunkNaming?: string
   entryPoints: string[]
   entryNaming?: string
+  entryRoot?: string
   externalPatterns?: string[]
   outputDirectory?: string
   outputFile?: string
@@ -126,6 +127,7 @@ const runBunBuild = ({
   chunkNaming,
   entryPoints,
   entryNaming,
+  entryRoot,
   externalPatterns = [],
   outputDirectory = "dist",
   outputFile,
@@ -142,6 +144,7 @@ const runBunBuild = ({
     outputFile ? `--outfile=${outputFile}` : `--outdir=${outputDirectory}`,
     "--sourcemap",
     ...(entryNaming ? [`--entry-naming=${entryNaming}`] : []),
+    ...(entryRoot ? [`--root=${entryRoot}`] : []),
     ...(chunkNaming ? [`--chunk-naming=${chunkNaming}`] : []),
     ...(splitting ? ["--splitting"] : []),
     ...externalPatterns.flatMap((pattern) => ["--external", pattern]),
@@ -348,6 +351,21 @@ if (buildLib) {
 
   const portableEntryPoints = [packageJson.module, "src/testing.ts", "src/yoga.ts"]
 
+  // Granular subpath entries build in their own groups: with all entries in
+  // one splitting group, modules shared with the root entry (lib/index,
+  // zig) drag optional subsystem code into shared chunks that a lean entry
+  // then loads. renderable-entry builds standalone so its dist graph stays
+  // tree-shaken to exactly its source graph; the remaining optional
+  // subsystem entries share one splitting group.
+  const leanStandaloneEntryPoints = ["src/renderable-entry.ts"]
+  const subsystemEntryPoints = [
+    "src/renderer-entry.ts",
+    "src/audio-entry.ts",
+    "src/image-entry.ts",
+    "src/markdown-tree-sitter-entry.ts",
+    "src/console-entry.ts",
+  ]
+
   runBunBuild({
     chunkNaming: "chunk-node-[hash].[ext]",
     entryPoints: portableEntryPoints,
@@ -364,6 +382,25 @@ if (buildLib) {
     splitting: true,
     target: "bun",
   })
+  for (const entryPoints of [leanStandaloneEntryPoints, subsystemEntryPoints]) {
+    runBunBuild({
+      chunkNaming: "chunk-node-[hash].[ext]",
+      entryPoints,
+      entryRoot: "src",
+      externalPatterns,
+      splitting: true,
+      target: "node",
+    })
+    runBunBuild({
+      chunkNaming: "chunk-bun-[hash].[ext]",
+      entryNaming: "[name].bun.[ext]",
+      entryPoints,
+      entryRoot: "src",
+      externalPatterns,
+      splitting: true,
+      target: "bun",
+    })
+  }
   runBunBuild({
     entryPoints: ["src/node-assets.ts"],
     externalPatterns,
@@ -394,18 +431,30 @@ if (buildLib) {
   // and: https://github.com/oven-sh/bun/issues/10631
   console.log("Post-processing bundled files to fix duplicate exports...")
   const bundledFiles = [
-    "dist/index.node.js",
-    "dist/node-assets.js",
-    "dist/testing.js",
+      "dist/index.node.js",
+      "dist/node-assets.js",
+      "dist/testing.js",
+      "dist/renderer-entry.js",
+      "dist/renderable-entry.js",
+      "dist/audio-entry.js",
+      "dist/image-entry.js",
+      "dist/markdown-tree-sitter-entry.js",
+      "dist/console-entry.js",
     "dist/runtime-plugin.js",
     "dist/runtime-plugin-support.js",
     "dist/runtime-plugin-support-configure.js",
     "dist/yoga.js",
     "dist/lib/tree-sitter/update-assets.js",
-    "dist/index.bun.js",
-    "dist/testing.bun.js",
-    "dist/yoga.bun.js",
-  ]
+      "dist/index.bun.js",
+      "dist/testing.bun.js",
+      "dist/yoga.bun.js",
+      "dist/renderer-entry.bun.js",
+      "dist/renderable-entry.bun.js",
+      "dist/audio-entry.bun.js",
+      "dist/image-entry.bun.js",
+      "dist/markdown-tree-sitter-entry.bun.js",
+      "dist/console-entry.bun.js",
+    ]
   for (const filePath of bundledFiles) {
     const fullPath = join(rootDir, filePath)
     if (existsSync(fullPath)) {
@@ -509,11 +558,41 @@ if (buildLib) {
       node: "./index.node.js",
       import: "./index.node.js",
     },
-    "./testing": {
-      bun: "./testing.bun.js",
-      import: "./testing.js",
-      types: "./testing.d.ts",
-    },
+      "./testing": {
+        bun: "./testing.bun.js",
+        import: "./testing.js",
+        types: "./testing.d.ts",
+      },
+      "./renderer": {
+        bun: "./renderer-entry.bun.js",
+        import: "./renderer-entry.js",
+        types: "./renderer-entry.d.ts",
+      },
+      "./renderable": {
+        bun: "./renderable-entry.bun.js",
+        import: "./renderable-entry.js",
+        types: "./renderable-entry.d.ts",
+      },
+      "./audio": {
+        bun: "./audio-entry.bun.js",
+        import: "./audio-entry.js",
+        types: "./audio-entry.d.ts",
+      },
+      "./image": {
+        bun: "./image-entry.bun.js",
+        import: "./image-entry.js",
+        types: "./image-entry.d.ts",
+      },
+      "./markdown-tree-sitter": {
+        bun: "./markdown-tree-sitter-entry.bun.js",
+        import: "./markdown-tree-sitter-entry.js",
+        types: "./markdown-tree-sitter-entry.d.ts",
+      },
+      "./console": {
+        bun: "./console-entry.bun.js",
+        import: "./console-entry.js",
+        types: "./console-entry.d.ts",
+      },
     "./runtime-plugin": {
       types: "./runtime-plugin.d.ts",
       bun: "./runtime-plugin.js",

@@ -92,6 +92,42 @@
       "bun": "./src/testing.ts",
       "import": "./src/testing.ts"
     },
+    "./renderer": {
+      "types": "./src/renderer-entry.ts",
+      "bun": "./src/renderer-entry.ts",
+      "node": "./src/renderer-entry.ts",
+      "import": "./src/renderer-entry.ts"
+    },
+    "./renderable": {
+      "types": "./src/renderable-entry.ts",
+      "bun": "./src/renderable-entry.ts",
+      "node": "./src/renderable-entry.ts",
+      "import": "./src/renderable-entry.ts"
+    },
+    "./audio": {
+      "types": "./src/audio-entry.ts",
+      "bun": "./src/audio-entry.ts",
+      "node": "./src/audio-entry.ts",
+      "import": "./src/audio-entry.ts"
+    },
+    "./image": {
+      "types": "./src/image-entry.ts",
+      "bun": "./src/image-entry.ts",
+      "node": "./src/image-entry.ts",
+      "import": "./src/image-entry.ts"
+    },
+    "./markdown-tree-sitter": {
+      "types": "./src/markdown-tree-sitter-entry.ts",
+      "bun": "./src/markdown-tree-sitter-entry.ts",
+      "node": "./src/markdown-tree-sitter-entry.ts",
+      "import": "./src/markdown-tree-sitter-entry.ts"
+    },
+    "./console": {
+      "types": "./src/console-entry.ts",
+      "bun": "./src/console-entry.ts",
+      "node": "./src/console-entry.ts",
+      "import": "./src/console-entry.ts"
+    },
     "./runtime-plugin": {
       "types": "./src/runtime-plugin.ts",
       "import": "./src/runtime-plugin.ts"

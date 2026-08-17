@@ -25,7 +25,18 @@ const packageJson = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8
 const nativePackageName = `${packageJson.name}-${process.platform}-${process.arch}`
 const nativePackageDir = join(rootDir, "node_modules", nativePackageName)
 
-const declarationPaths = ["index.d.ts", "node-assets.d.ts", "testing.d.ts", "lib/tree-sitter/parser.worker.d.ts"]
+const declarationPaths = [
+  "index.d.ts",
+  "node-assets.d.ts",
+  "testing.d.ts",
+  "renderer-entry.d.ts",
+  "renderable-entry.d.ts",
+  "audio-entry.d.ts",
+  "image-entry.d.ts",
+  "markdown-tree-sitter-entry.d.ts",
+  "console-entry.d.ts",
+  "lib/tree-sitter/parser.worker.d.ts",
+]
 
 function runCommand(
   command: string,
@@ -107,8 +118,34 @@ function assertPortableDeclarations(): void {
 }
 
 function assertRuntimeOutputs(): void {
-  const nodeSource = readRuntimeGraph(["index.node.js", "testing.js", "yoga.js"], "chunk-node-")
-  const bunSource = readRuntimeGraph(["index.bun.js", "testing.bun.js", "yoga.bun.js"], "chunk-bun-")
+  const nodeSource = readRuntimeGraph(
+    [
+      "index.node.js",
+      "testing.js",
+      "yoga.js",
+      "renderer-entry.js",
+      "renderable-entry.js",
+      "audio-entry.js",
+      "image-entry.js",
+      "markdown-tree-sitter-entry.js",
+      "console-entry.js",
+    ],
+    "chunk-node-",
+  )
+  const bunSource = readRuntimeGraph(
+    [
+      "index.bun.js",
+      "testing.bun.js",
+      "yoga.bun.js",
+      "renderer-entry.bun.js",
+      "renderable-entry.bun.js",
+      "audio-entry.bun.js",
+      "image-entry.bun.js",
+      "markdown-tree-sitter-entry.bun.js",
+      "console-entry.bun.js",
+    ],
+    "chunk-bun-",
+  )
   const workerSource = readFileSync(join(distDir, "parser.worker.js"), "utf8")
   const distPackage = JSON.parse(readFileSync(join(distDir, "package.json"), "utf8")) as {
     exports: Record<string, Record<string, string>>
@@ -143,9 +180,22 @@ function assertRuntimeOutputs(): void {
   ) {
     throw new Error("Root package export does not select separate Bun and Node runtime outputs")
   }
-  if (distPackage.exports["./node-assets"]?.import !== "./node-assets.js") {
-    throw new Error("Missing @opentui/core/node-assets package export")
-  }
+    if (distPackage.exports["./node-assets"]?.import !== "./node-assets.js") {
+      throw new Error("Missing @opentui/core/node-assets package export")
+    }
+    for (const [subpath, file] of [
+      ["./renderer", "renderer-entry"],
+      ["./renderable", "renderable-entry"],
+      ["./audio", "audio-entry"],
+      ["./image", "image-entry"],
+      ["./markdown-tree-sitter", "markdown-tree-sitter-entry"],
+      ["./console", "console-entry"],
+    ] as const) {
+      const entryExport = distPackage.exports[subpath]
+      if (entryExport?.bun !== `./${file}.bun.js` || entryExport?.import !== `./${file}.js`) {
+        throw new Error(`Missing or malformed ${packageJson.name}${subpath} package export`)
+      }
+    }
   const workerExport = distPackage.exports["./parser.worker"]
   if (
     workerExport?.bun !== "./parser.worker.js" ||
@@ -172,12 +222,89 @@ function assertRuntimeOutputs(): void {
   }
 }
 
-function readRuntimeGraph(entryPaths: string[], chunkPrefix: string): string {
-  const chunkPaths = readdirSync(distDir)
-    .filter((name) => name.startsWith(chunkPrefix) && name.endsWith(".js"))
-    .sort()
-  return [...entryPaths, ...chunkPaths].map((path) => readFileSync(join(distDir, path), "utf8")).join("\n")
-}
+  function readRuntimeGraph(entryPaths: string[], chunkPrefix: string): string {
+    const chunkPaths = readdirSync(distDir)
+      .filter((name) => name.startsWith(chunkPrefix) && name.endsWith(".js"))
+      .sort()
+    return [...entryPaths, ...chunkPaths].map((path) => readFileSync(join(distDir, path), "utf8")).join("\n")
+  }
+
+  // Follows an entry's static imports through its chunk graph so assertions
+  // cover exactly the modules a consumer of that entry loads at runtime.
+  function readEntryClosure(entryPath: string): string {
+    const seen = new Set<string>()
+    const queue = [entryPath]
+    const parts: string[] = []
+    while (queue.length > 0) {
+      const current = queue.pop() as string
+      if (seen.has(current)) continue
+      seen.add(current)
+      const source = readFileSync(join(distDir, current), "utf8")
+      parts.push(source)
+      for (const match of source.matchAll(/from\s*"(\.\/[^"]+\.js)"/g)) {
+        if (!seen.has(match[1])) queue.push(match[1])
+      }
+      for (const match of source.matchAll(/import\s*"(\.\/[^"]+\.js)"/g)) {
+        if (!seen.has(match[1])) queue.push(match[1])
+      }
+    }
+    return parts.join("\n")
+  }
+
+  function assertClosureExcludes(entryPath: string, forbidden: string[]): void {
+    const closure = readEntryClosure(entryPath)
+    for (const marker of forbidden) {
+      if (closure.includes(marker)) {
+        throw new Error(`${entryPath} runtime graph contains excluded implementation marker: ${marker}`)
+      }
+    }
+  }
+
+  function assertLeanEntryClosures(): void {
+    assertClosureExcludes("renderable-entry.js", [
+      "class AudioCaptureStream extends",
+      "class AudioRecorder extends",
+      "class AudioStream extends",
+      "class NativeImage {",
+      "class ImageRenderable extends",
+      "class MarkdownRenderable extends",
+      "createMarkdownCodeBlockRenderer",
+      "createIcyStreamDemuxer",
+      "getTreeSitterClient",
+      "treeSitterToTextChunks",
+      "WebTreeSitter",
+      "destroyTreeSitterClient",
+      "class TerminalConsole extends",
+    ])
+    assertClosureExcludes("renderable-entry.bun.js", [
+      "class AudioCaptureStream extends",
+      "class AudioRecorder extends",
+      "class AudioStream extends",
+      "class NativeImage {",
+      "class ImageRenderable extends",
+      "class MarkdownRenderable extends",
+      "createMarkdownCodeBlockRenderer",
+      "createIcyStreamDemuxer",
+      "getTreeSitterClient",
+      "treeSitterToTextChunks",
+      "WebTreeSitter",
+      "destroyTreeSitterClient",
+      "class TerminalConsole extends",
+    ])
+    // renderer-entry keeps the renderer's zwingende Basis (console overlay,
+    // tree-sitter teardown) but must not load the optional subsystems.
+    for (const entry of ["renderer-entry.js", "renderer-entry.bun.js"]) {
+      assertClosureExcludes(entry, [
+        "class AudioCaptureStream extends",
+        "class AudioRecorder extends",
+        "class AudioStream extends",
+        "createIcyStreamDemuxer",
+        "class ImageRenderable extends",
+        "class MarkdownRenderable extends",
+        "createMarkdownCodeBlockRenderer",
+      ])
+    }
+  }
 
 function packArtifact(packageDir: string, packDir: string): string {
   const result = runCommand(
@@ -238,6 +365,12 @@ const core = await import(${JSON.stringify(packageJson.name)})
 const nodeAssets = await import(${JSON.stringify(`${packageJson.name}/node-assets`)})
 const testing = await import(${JSON.stringify(`${packageJson.name}/testing`)})
 const yoga = await import(${JSON.stringify(`${packageJson.name}/yoga`)})
+const rendererEntry = await import(${JSON.stringify(`${packageJson.name}/renderer`)})
+const renderableEntry = await import(${JSON.stringify(`${packageJson.name}/renderable`)})
+const audioEntry = await import(${JSON.stringify(`${packageJson.name}/audio`)})
+const imageEntry = await import(${JSON.stringify(`${packageJson.name}/image`)})
+const markdownEntry = await import(${JSON.stringify(`${packageJson.name}/markdown-tree-sitter`)})
+const consoleEntry = await import(${JSON.stringify(`${packageJson.name}/console`)})
 const parserWorker = await import(${JSON.stringify(`${packageJson.name}/parser.worker`)})
 const nativePackage = await import(nativePackageName)
 
@@ -259,7 +392,20 @@ assert.equal(core.NativeAudioStreamFormat.Flac, 2)
 assert.equal(typeof testing.createTestRenderer, "function")
 assert.equal(core.Yoga.Node, yoga.Node)
 assert.equal(Object.getPrototypeOf(testing.MockTreeSitterClient.prototype), core.TreeSitterClient.prototype)
-assert.equal(typeof parserWorker, "object")
+  assert.equal(typeof parserWorker, "object")
+  assert.equal(typeof rendererEntry.createCliRenderer, "function")
+  assert.equal(typeof rendererEntry.CliRenderer, "function")
+  assert.equal(typeof rendererEntry.Audio, "undefined")
+  assert.equal(typeof renderableEntry.TextRenderable, "function")
+  assert.equal(typeof renderableEntry.BoxRenderable, "function")
+  assert.equal(typeof renderableEntry.ImageRenderable, "undefined")
+  assert.equal(typeof renderableEntry.Audio, "undefined")
+  assert.equal(typeof audioEntry.Audio, "function")
+  assert.equal(typeof audioEntry.createIcyStreamDemuxer, "function")
+  assert.equal(typeof imageEntry.NativeImage, "function")
+  assert.equal(typeof imageEntry.ImageRenderable, "function")
+  assert.equal(typeof markdownEntry.MarkdownRenderable, "function")
+  assert.equal(typeof consoleEntry.TerminalConsole, "function")
 assert.equal(typeof nativePackage.default, "string")
 
 const manifest = nodeAssets.getNodeAssets({
@@ -352,7 +498,13 @@ describe("${packageJson.name} dist smoke test", () => {
   test("imports portable and Bun-only entrypoints", async () => {
     const core = await import(${JSON.stringify(packageJson.name)})
     const testing = await import(${JSON.stringify(`${packageJson.name}/testing`)})
-    const yoga = await import(${JSON.stringify(`${packageJson.name}/yoga`)})
+      const yoga = await import(${JSON.stringify(`${packageJson.name}/yoga`)})
+      const rendererEntry = await import(${JSON.stringify(`${packageJson.name}/renderer`)})
+      const renderableEntry = await import(${JSON.stringify(`${packageJson.name}/renderable`)})
+      const audioEntry = await import(${JSON.stringify(`${packageJson.name}/audio`)})
+      const imageEntry = await import(${JSON.stringify(`${packageJson.name}/image`)})
+      const markdownEntry = await import(${JSON.stringify(`${packageJson.name}/markdown-tree-sitter`)})
+      const consoleEntry = await import(${JSON.stringify(`${packageJson.name}/console`)})
     const parserWorker = await import(${JSON.stringify(`${packageJson.name}/parser.worker`)})
     const runtimePlugin = await import(${JSON.stringify(`${packageJson.name}/runtime-plugin`)})
     const nativePackage = await import(${JSON.stringify(nativePackageName)})
@@ -373,7 +525,20 @@ describe("${packageJson.name} dist smoke test", () => {
     expect(typeof testing.createTestRenderer).toBe("function")
     expect(core.Yoga.Node).toBe(yoga.Node)
     expect(Object.getPrototypeOf(testing.MockTreeSitterClient.prototype)).toBe(core.TreeSitterClient.prototype)
-    expect(typeof parserWorker).toBe("object")
+      expect(typeof parserWorker).toBe("object")
+      expect(typeof rendererEntry.createCliRenderer).toBe("function")
+      expect(typeof rendererEntry.CliRenderer).toBe("function")
+      expect(typeof rendererEntry.Audio).toBe("undefined")
+      expect(typeof renderableEntry.TextRenderable).toBe("function")
+      expect(typeof renderableEntry.BoxRenderable).toBe("function")
+      expect(typeof renderableEntry.ImageRenderable).toBe("undefined")
+      expect(typeof renderableEntry.Audio).toBe("undefined")
+      expect(typeof audioEntry.Audio).toBe("function")
+      expect(typeof audioEntry.createIcyStreamDemuxer).toBe("function")
+      expect(typeof imageEntry.NativeImage).toBe("function")
+      expect(typeof imageEntry.ImageRenderable).toBe("function")
+      expect(typeof markdownEntry.MarkdownRenderable).toBe("function")
+      expect(typeof consoleEntry.TerminalConsole).toBe("function")
     expect(typeof runtimePlugin.createRuntimePlugin).toBe("function")
     expect(typeof nativePackage.default).toBe("string")
     const image = core.NativeImage.fromRgba(Uint8Array.of(1, 2, 3, 255), 1, 1)
@@ -451,6 +616,7 @@ try {
   ensureBuildArtifacts()
   assertPortableDeclarations()
   assertRuntimeOutputs()
+  assertLeanEntryClosures()
 
   tempRoot = mkdtempSync(join(tmpdir(), "opentui-core-dist-test-"))
   const packDir = join(tempRoot, "packs")

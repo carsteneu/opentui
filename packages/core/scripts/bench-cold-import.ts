@@ -7,7 +7,7 @@
 // within the configured regression budget.
 //
 // Options:
-//   --scenario=minimal|root|zig|dist (default root)
+//   --scenario=minimal|root|zig|dist|renderer-entry|renderable-entry (default root)
 //   --runtime=bun|node               (default bun; node is exactly v26.4.0)
 //   --samples=N --warmup=N           (defaults 30 / 3; gates need even N >= 10)
 //   --threshold=<percent>            (default 3)
@@ -52,7 +52,7 @@ const NODE26_REQUIRED = "v26.4.0"
 let probeSerial = 0
 
 type Runtime = "bun" | "node"
-type Scenario = "minimal" | "root" | "zig" | "dist"
+type Scenario = "minimal" | "root" | "zig" | "dist" | "renderer-entry" | "renderable-entry"
 
 interface ProbeBody extends ColdImportMeasurement {
   scenario: string
@@ -217,6 +217,8 @@ function resolveNode26(): { bin: string; version: string } {
 
 function sourceEntry(srcRoot: string, scenario: Scenario): string {
   if (scenario === "minimal") return resolve(srcRoot, "Renderable.ts")
+  if (scenario === "renderer-entry") return resolve(srcRoot, "renderer-entry.ts")
+  if (scenario === "renderable-entry") return resolve(srcRoot, "renderable-entry.ts")
   return resolve(srcRoot, scenario === "root" ? "index.ts" : "zig.ts")
 }
 
@@ -407,6 +409,9 @@ const LIMITATIONS = `## Grenzen
 
 - \`minimal\` ist ein interner, reiner Import-Messpunkt für \`Renderable.ts\`, kein
   zugesagter Package-Subpath. Der unterstützte Minimal-Entrypoint bleibt B1.
+- \`renderer-entry\` und \`renderable-entry\` messen die öffentlichen granularen
+  Subpaths \`@opentui/core/renderer\` bzw. \`@opentui/core/renderable\` (reiner
+  Import, kein Render-Teilschritt).
 - \`dist\` und Node messen in Welle 0 nur den Paketimport; TTFMF entspricht dort
   der Importgrenze. Source- und Dist-Module werden in keinem Arm vermischt.
 - \`firstOutputWrite\` wird an einem tatsächlich aufgerufenen TypeScript-/Feed-
@@ -497,7 +502,9 @@ async function main(): Promise<void> {
   const allowDirty = args["allow-dirty"] !== undefined
   const forceFailure = args["force-fail"] !== undefined
 
-  if (!["minimal", "root", "zig", "dist"].includes(scenario)) throw new Error(`unknown scenario: ${scenario}`)
+  if (!["minimal", "root", "zig", "dist", "renderer-entry", "renderable-entry"].includes(scenario)) {
+    throw new Error(`unknown scenario: ${scenario}`)
+  }
   if (!Number.isInteger(samples) || samples < 1) throw new Error("--samples must be a positive integer")
   if (!Number.isInteger(warmup) || warmup < 0) throw new Error("--warmup must be a non-negative integer")
   if (!Number.isFinite(threshold) || threshold < 0) throw new Error("--threshold must be non-negative")
