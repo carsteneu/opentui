@@ -23,6 +23,13 @@ test("lean renderer constructs and destroys without optional integrations", () =
       consoleMode: "disabled",
       consoleUnavailable: true,
       explicitOverlayRejected: true,
+      lateConsoleMaterialized: true,
+      capturedOutputClaimed: true,
+      separateConsoleOwners: true,
+      consoleOwnerDidNotResurrect: true,
+      cleanupOwnerDidNotResurrect: true,
+      consoleListenerAttached: true,
+      consoleListenerReleased: true,
       destroyed: true,
     }),
   )

@@ -8,6 +8,7 @@ import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
 import type { TextChunk } from "../text-buffer.js"
 import { treeSitterToTextChunks } from "../lib/tree-sitter-styled-text.js"
 import type { RGBA } from "../lib/RGBA.js"
+import { getHighlightCompletion } from "../lib/highlight-completion.js"
 
 export interface HighlightContext {
   content: string
@@ -405,6 +406,10 @@ export class CodeRenderable extends TextBufferRenderable {
 
   get highlightingDone(): Promise<void> {
     return this._highlightingPromise
+  }
+
+  public [getHighlightCompletion](): Promise<void> | null {
+    return this.isHighlighting ? this.highlightingDone : null
   }
 
   protected async transformChunks(chunks: TextChunk[], context: ChunkRenderContext): Promise<TextChunk[]> {

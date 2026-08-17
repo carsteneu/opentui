@@ -17,6 +17,12 @@ export interface RendererLastDestroyCleanup {
 interface RendererIntegrationState {
   console: RendererConsoleIntegration | null
   lastDestroyCleanups: Map<string, RendererLastDestroyCleanup>
+  consoleOwners?: IntegrationOwner<RendererConsoleIntegration>[]
+  lastDestroyCleanupOwners?: Map<string, IntegrationOwner<RendererLastDestroyCleanup>[]>
+}
+
+interface IntegrationOwner<T> {
+  value: T
 }
 
 const integrationState = singleton<RendererIntegrationState>("RendererOptionalIntegrations", () => ({
@@ -29,11 +35,19 @@ export function getRendererConsoleIntegration(): RendererConsoleIntegration | nu
 }
 
 export function registerRendererConsoleIntegration(integration: RendererConsoleIntegration): () => void {
-  const previous = integrationState.console
+  const owners = (integrationState.consoleOwners ??= integrationState.console
+    ? [{ value: integrationState.console }]
+    : [])
+  const owner = { value: integration }
+  owners.push(owner)
   integrationState.console = integration
 
   return () => {
-    if (integrationState.console === integration) integrationState.console = previous
+    const ownerIndex = owners.indexOf(owner)
+    if (ownerIndex === -1) return
+
+    owners.splice(ownerIndex, 1)
+    integrationState.console = owners.at(-1)?.value ?? null
   }
 }
 
@@ -42,12 +56,28 @@ export function getRendererLastDestroyCleanups(): RendererLastDestroyCleanup[] {
 }
 
 export function registerRendererLastDestroyCleanup(cleanup: RendererLastDestroyCleanup): () => void {
-  const previous = integrationState.lastDestroyCleanups.get(cleanup.id)
+  const ownersById = (integrationState.lastDestroyCleanupOwners ??= new Map())
+  let owners = ownersById.get(cleanup.id)
+  if (!owners) {
+    const current = integrationState.lastDestroyCleanups.get(cleanup.id)
+    owners = current ? [{ value: current }] : []
+    ownersById.set(cleanup.id, owners)
+  }
+
+  const owner = { value: cleanup }
+  owners.push(owner)
   integrationState.lastDestroyCleanups.set(cleanup.id, cleanup)
 
   return () => {
-    if (integrationState.lastDestroyCleanups.get(cleanup.id) !== cleanup) return
-    if (previous) integrationState.lastDestroyCleanups.set(cleanup.id, previous)
-    else integrationState.lastDestroyCleanups.delete(cleanup.id)
+    const ownerIndex = owners.indexOf(owner)
+    if (ownerIndex === -1) return
+
+    owners.splice(ownerIndex, 1)
+    const activeOwner = owners.at(-1)
+    if (activeOwner) integrationState.lastDestroyCleanups.set(cleanup.id, activeOwner.value)
+    else {
+      ownersById.delete(cleanup.id)
+      integrationState.lastDestroyCleanups.delete(cleanup.id)
+    }
   }
 }

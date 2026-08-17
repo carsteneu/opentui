@@ -36,6 +36,7 @@ import { KeyHandler, InternalKeyHandler } from "./lib/KeyHandler.js"
 import { isEditBufferRenderable, type EditBufferRenderable } from "./renderables/EditBufferRenderable.js"
 import { env, registerEnvVar } from "./lib/env.js"
 import { getRendererConsoleIntegration, getRendererLastDestroyCleanups } from "./renderer-integration.js"
+import { getHighlightCompletion, type HighlightCompletionProvider } from "./lib/highlight-completion.js"
 import {
   buildTerminalPaletteSignature,
   createTerminalPalette,
@@ -867,7 +868,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private _console: TerminalConsole | null = null
-  private readonly _claimCapturedConsoleOutput: () => string
+  private readonly _consoleOptions: ConsoleOptions & { clock: Clock }
+  private _consoleMaterializing = false
   private _resolution: PixelResolution | null = null
   private _keyHandler: InternalKeyHandler
   private stdinParser: StdinParser | null = null
@@ -968,12 +970,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private handleError: (error: Error) => void = ((error: Error) => {
     console.error(error)
 
-    if (this._openConsoleOnError) this._console?.show()
+    if (this._openConsoleOnError) this.materializeConsole()?.show()
   }).bind(this)
 
   private dumpOutputCache(optionalMessage: string = ""): void {
     const cachedLogs = this._console?.getCachedLogs() ?? ""
-    const capturedConsoleOutput = this._claimCapturedConsoleOutput()
+    const capturedConsoleOutput = getRendererConsoleIntegration()?.claimCapturedOutput() ?? ""
     const capturedExternalOutputCommits = this.externalOutputQueue.claim()
 
     let capturedExternalOutput = ""
@@ -1087,8 +1089,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         "Console overlay is not installed. Import @opentui/core or @opentui/core/console before requesting it.",
       )
     }
-    this._claimCapturedConsoleOutput = consoleIntegration?.claimCapturedOutput ?? (() => "")
-
     const lib = resolveRenderLib()
     const useMemoryBufferedOutput = config.bufferedOutput === "memory"
     this._bufferedOutputMemory = useMemoryBufferedOutput
@@ -1269,6 +1269,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.targetFps = config.targetFps || 30
     this.maxFps = config.maxFps || 60
     this.clock = config.clock ?? new SystemClock()
+    this._consoleOptions = {
+      ...(config.consoleOptions ?? {}),
+      clock: this.clock,
+    }
     this.themeModeState = new RendererThemeMode(
       {
         queryThemeColors: () => {
@@ -1352,10 +1356,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     })
 
     if (consoleIntegration) {
-      this._console = consoleIntegration.create(this, {
-        ...(config.consoleOptions ?? {}),
-        clock: this.clock,
-      })
+      this.materializeConsole()
       this.consoleMode = config.consoleMode ?? "console-overlay"
     } else {
       this._useConsole = false
@@ -1777,15 +1778,34 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this._useConsole ? "console-overlay" : "disabled"
   }
 
+  private materializeConsole(): TerminalConsole | null {
+    if (this._console) return this._console
+    if (this._isDestroyed) return null
+
+    const integration = getRendererConsoleIntegration()
+    if (!integration) return null
+    if (this._consoleMaterializing) throw new Error("Console overlay integration materialized recursively")
+
+    this._consoleMaterializing = true
+    try {
+      const terminalConsole = integration.create(this, this._consoleOptions)
+      this._console = terminalConsole
+      return terminalConsole
+    } finally {
+      this._consoleMaterializing = false
+    }
+  }
+
   public set consoleMode(mode: ConsoleMode) {
     if (mode === "console-overlay") {
-      if (!this._console) {
+      const terminalConsole = this.materializeConsole()
+      if (!terminalConsole) {
         throw new Error(
           "Console overlay is not installed. Import @opentui/core or @opentui/core/console before enabling it.",
         )
       }
       this._useConsole = true
-      this._console.activate()
+      terminalConsole.activate()
       return
     }
 
@@ -1839,12 +1859,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public get console(): TerminalConsole {
-    if (!this._console) {
+    const terminalConsole = this.materializeConsole()
+    if (!terminalConsole) {
       throw new Error(
         "Console overlay is not installed. Import @opentui/core or @opentui/core/console before accessing it.",
       )
     }
-    return this._console
+    return terminalConsole
   }
 
   public get keyInput(): KeyHandler {
@@ -2214,30 +2235,23 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
     }
 
-    interface HighlightingState {
-      readonly isHighlighting: boolean
-      readonly highlightingDone: Promise<void>
-    }
-    type HighlightingRenderable = Renderable & HighlightingState
+    const collectPendingHighlightCompletions = (node: Renderable): Promise<void>[] => {
+      const pending: Promise<void>[] = []
+      const getCompletion = (node as Partial<HighlightCompletionProvider>)[getHighlightCompletion]
 
-    const isHighlightingRenderable = (node: Renderable): node is HighlightingRenderable => {
-      const candidate = node as unknown as Partial<HighlightingState>
-      return candidate.isHighlighting === true && typeof candidate.highlightingDone?.then === "function"
-    }
-
-    const collectPendingCodeRenderables = (node: Renderable): HighlightingRenderable[] => {
-      const pending: HighlightingRenderable[] = []
-
-      if (isHighlightingRenderable(node)) pending.push(node)
+      if (typeof getCompletion === "function") {
+        const completion = getCompletion.call(node)
+        if (completion) pending.push(completion)
+      }
 
       for (const child of node.getChildren()) {
-        pending.push(...collectPendingCodeRenderables(child))
+        pending.push(...collectPendingHighlightCompletions(child))
       }
 
       return pending
     }
 
-    const waitForPendingHighlights = async (pending: HighlightingRenderable[], timeoutMs: number): Promise<void> => {
+    const waitForPendingHighlights = async (pending: Promise<void>[], timeoutMs: number): Promise<void> => {
       await new Promise<void>((resolve, reject) => {
         let settled = false
         const timeoutHandle = renderer.clock.setTimeout(() => {
@@ -2249,7 +2263,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           reject(new Error("ScrollbackSurface.settle timed out waiting for CodeRenderable highlighting"))
         }, timeoutMs)
 
-        Promise.all(pending.map((renderable) => renderable.highlightingDone)).then(
+        Promise.all(pending).then(
           () => {
             if (settled) {
               return
@@ -2346,7 +2360,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       while (true) {
         assertNotDestroyed()
 
-        const pending = collectPendingCodeRenderables(publicRoot)
+        const pending = collectPendingHighlightCompletions(publicRoot)
         if (pending.length === 0) {
           return
         }
