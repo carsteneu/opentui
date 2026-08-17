@@ -11,13 +11,18 @@
  *   3. root            : full `@opentui/core` cold root import (denominator for the gate).
  *
  * Run from packages/core:  bun scripts/measure-parser-worker.ts [samples]
+ *   bun scripts/measure-parser-worker.ts --verify-executed
  * Raw samples are appended to .yesmem/tmp/raw/measure-parser-worker-<ts>.json.
+ * `--verify-executed` runs a self-contained probe proving that a Bun `type: "file"`
+ * import resolves the target to a path string WITHOUT executing its module body
+ * (i.e. the eager parser-worker resolution never runs the worker on the main thread).
  */
 import { execFileSync, spawnSync } from "node:child_process"
-import { mkdirSync, appendFileSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync, appendFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
-const samples = Number(process.argv[2] ?? 30)
+const args = process.argv.slice(2)
+const samples = Number(args[0] ?? 30)
 const warmup = 3
 const BUN = process.env.BUN_PATH ?? join(process.env.HOME ?? "", ".bun", "bin", "bun")
 const WORKER_SNIPPET = `const t=performance.now(); await import("@opentui/core/parser.worker",{with:{type:"file"}}); console.log((performance.now()-t)*1e6);`
@@ -41,7 +46,11 @@ function runScenarion(snippet: string): number {
   // bun colors stdout even when not a TTY; strip ANSI before numeric parse.
   const plain = r.stdout.replace(/\x1b\[[0-9;]*m/g, "")
   const line = plain.trim().split("\n").filter(Boolean).pop() ?? ""
-  return Number(line)
+  const parsed = Number(line)
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`non-numeric output from snippet: ${JSON.stringify(line)}`)
+  }
+  return parsed
 }
 
 function stats(values: number[]): { median: number; p95: number; min: number; max: number } {
@@ -55,8 +64,44 @@ function stats(values: number[]): { median: number; p95: number; min: number; ma
   }
 }
 
+/**
+ * Proves a Bun `import(mod, { with: { type: "file" } })` resolves the target to a
+ * path string WITHOUT executing its module body. The marker module, if executed,
+ * would write `sentinel`; the probe asserts the sentinel was NOT created and the
+ * resolved `default` is a string path. Exit 0 = PASS, 1 = FAIL.
+ */
+function verifyExecutedProbe(): void {
+  const tmp = join(process.cwd(), ".yesmem", "tmp")
+  const sentinel = join(tmp, `probe-executed-${process.pid}.tmp`)
+  const marker = join(tmp, `probe-marker-${process.pid}.ts`)
+  mkdirSync(tmp, { recursive: true })
+  rmSync(sentinel, { force: true })
+
+  const markerBody = `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(sentinel)}, "executed"); export default "/resolved/asset/path"`
+  writeFileSync(marker, markerBody)
+
+  const snippet = `const r = await import(${JSON.stringify(marker)}, { with: { type: "file" } }); console.log(typeof r.default, r.default[0])`
+  const r = spawnSync(BUN, ["-e", snippet], { encoding: "utf8", timeout: 30_000 })
+  rmSync(marker, { force: true })
+  const executed = existsSync(sentinel)
+  const plain = (r.stdout ?? "").replace(/\x1b\[[0-9;]*m/g, "").trim()
+
+  console.log(`type:"file" child output: ${JSON.stringify(plain)}`)
+  console.log(`module body executed during resolution: ${executed}`)
+  if (executed) {
+    console.error("FAIL: marker module body ran — the eager resolve WOULD execute the worker on the main thread.")
+    process.exit(1)
+  }
+  console.log("PASS: `type:\"file\"` resolves a path string WITHOUT executing the module body.")
+}
+
 function main(): void {
-  // Warm-up (separate, not counted).
+  if (args.includes("--verify-executed")) {
+    verifyExecutedProbe()
+    return
+  }
+
+
   for (let i = 0; i < warmup; i++) {
     for (const s of SCENARIOS) {
       try {

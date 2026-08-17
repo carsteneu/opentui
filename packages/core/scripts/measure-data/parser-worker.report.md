@@ -39,6 +39,10 @@ Weit unter der 2-%-Schwelle.
 
 Rohdaten: `packages/core/scripts/measure-data/parser-worker-raw.json` (30×3 ns-Samples).
 Skript: `packages/core/scripts/measure-parser-worker.ts`.
+Probe (reproduzierbar): `bun scripts/measure-parser-worker.ts --verify-executed` → PASS.
+
+Worst-Case-Einordnung: Auch die ungünstigste Paarung (worker-p95 2.29 ms gegen den schnellsten Root-Import
+139 ms) bliebe bei ~1.6 % und damit unter der 2 %-Schwelle; der Median-Anteil (0.209 %) ist ~15–30× unter dem Gate.
 
 ## Weitere C1-Punkte
 
