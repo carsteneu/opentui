@@ -147,6 +147,10 @@ export function createRendererReady(renderer: CliRenderer): RendererReadyHandle 
         state.applicationReady = true
       }
     }
+    // applicationReady is the terminal consumer declaration; once it settles no
+    // more readiness work can happen, so drop every listener (no lingering
+    // FRAME/RENDER_ERROR/DESTROY hooks in the common full-sequence path).
+    if (application.settled) detach()
   }
 
   // A first-frame failure (early render error or destroy) settles every waiter
