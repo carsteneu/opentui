@@ -1,7 +1,7 @@
 // Reproducible cold-import / time-to-first-meaningful-frame benchmark.
 //
-// The acceptance gate compares the current worktree with the fastpatch
-// worktree. Every pair executes both complete trees in a fresh process. The
+// The acceptance gate compares the current worktree with a baseline worktree
+// (fastpatch by default). Every pair executes both complete trees in a fresh process. The
 // execution order is deterministic, seeded, and exactly balanced. PASS needs
 // the familywise bootstrap upper bound for BOTH importMs and ttfmMs to remain
 // within the configured regression budget.
@@ -14,7 +14,10 @@
 //   --confidence=<fraction>          (default 0.95, familywise across 2 metrics)
 //   --bootstrap=N                    (default 20000)
 //   --seed=N                         (default: current commit prefix)
-//   --gate                            fastpatch vs current, drives exit status
+//   --gate                            baseline vs current, drives exit status
+//   --baseline-root=<absolute path>   paired-gate baseline (default ../fastpatch)
+//   --baseline-label=<name>           report label (default worktree basename)
+//   --native-asset-root=<absolute>     pin both gate arms (default baseline node_modules)
 //   --gate-record                     telemetry disabled vs enabled, informational
 //   --allow-dirty                     allow, but fully record, dirty worktrees
 //   --force-fail                      prove the acceptance exit path
@@ -32,7 +35,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { arch, cpus, loadavg, platform, tmpdir, uptime } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { dirname, isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import {
   analyzeColdImportPairs,
@@ -40,21 +43,24 @@ import {
   type ColdImportPair,
   type ColdImportMeasurement,
 } from "./bench-cold-import-analysis.js"
+import {
+  resolveBaselineSelection,
+  scenarioTarget,
+  scenarios,
+  type Runtime,
+  type Scenario,
+} from "./bench-cold-import-config.js"
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(scriptDir, "..", "..", "..")
 const coreDir = resolve(repoRoot, "packages", "core")
 const branchSrcRoot = resolve(coreDir, "src")
-const fastpatchRoot = resolve(repoRoot, "..", "fastpatch")
-const fastpatchCore = resolve(fastpatchRoot, "packages", "core")
-const fastpatchSrcRoot = resolve(fastpatchCore, "src")
 const NODE26_REQUIRED = "v26.4.0"
 let probeSerial = 0
 
-type Runtime = "bun" | "node"
-type Scenario = "minimal" | "root" | "zig" | "dist" | "renderer-entry" | "renderable-entry"
-
-interface ProbeBody extends ColdImportMeasurement {
+interface ProbeBody {
+  importMs: number
+  ttfmMs: number | null
   scenario: string
   runtime: Runtime
   telemetry: boolean
@@ -215,27 +221,6 @@ function resolveNode26(): { bin: string; version: string } {
   return nodeCache
 }
 
-function sourceEntry(srcRoot: string, scenario: Scenario): string {
-  if (scenario === "minimal") return resolve(srcRoot, "Renderable.ts")
-  if (scenario === "renderer-entry") return resolve(srcRoot, "renderer-entry.ts")
-  if (scenario === "renderable-entry") return resolve(srcRoot, "renderable-entry.ts")
-  return resolve(srcRoot, scenario === "root" ? "index.ts" : "zig.ts")
-}
-
-function distEntry(targetCore: string, runtime: Runtime): string {
-  return resolve(targetCore, "dist", runtime === "node" ? "index.node.js" : "index.bun.js")
-}
-
-function scenarioTarget(tree: "branch" | "fastpatch", scenario: Scenario, runtime: Runtime) {
-  const src = tree === "branch" ? branchSrcRoot : fastpatchSrcRoot
-  const targetCore = tree === "branch" ? coreDir : fastpatchCore
-  return {
-    src,
-    entry: scenario === "dist" ? distEntry(targetCore, runtime) : sourceEntry(src, scenario),
-    render: runtime === "bun" && (scenario === "root" || scenario === "zig"),
-  }
-}
-
 function runProbe(options: {
   scenario: Scenario
   runtime: Runtime
@@ -288,7 +273,13 @@ function runProbe(options: {
     .at(-1)
   if (!json) throw new Error(`probe returned no JSON: ${output}`)
   const body = JSON.parse(json) as ProbeBody
-  if (!Number.isFinite(body.importMs) || !Number.isFinite(body.ttfmMs)) throw new Error(`invalid probe result: ${json}`)
+  if (!Number.isFinite(body.importMs)) throw new Error(`invalid probe result: ${json}`)
+  if (options.render && !Number.isFinite(body.ttfmMs)) {
+    throw new Error(`render probe returned no committed-frame TTFMF: ${json}`)
+  }
+  if (!options.render && body.ttfmMs !== null) {
+    throw new Error(`import-only probe reported a TTFMF without a committed frame: ${json}`)
+  }
   return body
 }
 
@@ -315,10 +306,11 @@ function stats(values: number[]): SummaryStats {
 }
 
 function summarize(samples: ProbeBody[]) {
+  const ttfmValues = samples.map((sample) => sample.ttfmMs).filter((value): value is number => value !== null)
   const destroyValues = samples.map((sample) => sample.destroyMs).filter((value): value is number => value !== null)
   return {
     importMs: stats(samples.map((sample) => sample.importMs)),
-    ttfmMs: stats(samples.map((sample) => sample.ttfmMs)),
+    ttfmMs: ttfmValues.length > 0 ? stats(ttfmValues) : null,
     destroyMs: destroyValues.length > 0 ? stats(destroyValues) : null,
   }
 }
@@ -343,6 +335,9 @@ function pairedGate(options: {
   nativeAssetRoot?: string
   forceFailure?: boolean
 }): GateRecord {
+  if (!options.baseline.render || !options.candidate.render) {
+    throw new Error("paired TTFMF gates require committed-frame workloads in both arms")
+  }
   for (let index = 0; index < options.warmup; index++) {
     const baselineFirst = index % 2 === 0
     runProbe(baselineFirst ? options.baseline : options.candidate)
@@ -370,8 +365,8 @@ function pairedGate(options: {
       pair: scheduled.pair,
       order: scheduled.order,
       gapMs: secondStarted - firstFinished,
-      baseline: { importMs: baselineProbe.importMs, ttfmMs: baselineProbe.ttfmMs },
-      candidate: { importMs: candidateProbe.importMs, ttfmMs: candidateProbe.ttfmMs },
+      baseline: committedMeasurement(baselineProbe),
+      candidate: committedMeasurement(candidateProbe),
       baselineProbe,
       candidateProbe,
     })
@@ -397,6 +392,11 @@ function pairedGate(options: {
   }
 }
 
+function committedMeasurement(probe: ProbeBody): ColdImportMeasurement {
+  if (probe.ttfmMs === null) throw new Error("committed-frame probe returned no TTFMF")
+  return { importMs: probe.importMs, ttfmMs: probe.ttfmMs }
+}
+
 function percent(value: number): string {
   return `${(value * 100).toFixed(2)}%`
 }
@@ -409,11 +409,11 @@ const LIMITATIONS = `## Grenzen
 
 - \`minimal\` ist ein interner, reiner Import-Messpunkt für \`Renderable.ts\`, kein
   zugesagter Package-Subpath. Der unterstützte Minimal-Entrypoint bleibt B1.
-- \`renderer-entry\` und \`renderable-entry\` messen die öffentlichen granularen
-  Subpaths \`@opentui/core/renderer\` bzw. \`@opentui/core/renderable\` (reiner
-  Import, kein Render-Teilschritt).
-- \`dist\` und Node messen in Welle 0 nur den Paketimport; TTFMF entspricht dort
-  der Importgrenze. Source- und Dist-Module werden in keinem Arm vermischt.
+- \`renderer-entry\` misst den öffentlichen granularen Renderer-Subpath bis zu
+  einem tatsächlich nativ committed Textframe. \`renderable-entry\` bleibt ein
+  reiner Import-Messpunkt und meldet deshalb keine TTFMF.
+- \`dist\` und Node messen in Welle 0 nur den Paketimport und melden deshalb
+  keine TTFMF. Source- und Dist-Module werden in keinem Arm vermischt.
 - \`firstOutputWrite\` wird an einem tatsächlich aufgerufenen TypeScript-/Feed-
   Sink beobachtet. Ein vollständig nativer direkter Prozess-stdout-Write ist aus
   JavaScript heraus weiterhin nicht einzeln beobachtbar.
@@ -435,7 +435,7 @@ function buildReport(rows: Array<Record<string, unknown>>, artifact: string): st
     if (row.kind !== "baseline.cold-import") continue
     const summary = row.summary as ReturnType<typeof summarize>
     const runtime = (row.runtime as { engine?: string } | undefined)?.engine ?? "?"
-    report += `| ${String(row.commit).slice(0, 7)} | ${runtime} | ${row.scenario} | ${milliseconds(summary.importMs.median)} / ${milliseconds(summary.importMs.p95)} / ${milliseconds(summary.importMs.p99)} | ${milliseconds(summary.ttfmMs.median)} / ${milliseconds(summary.ttfmMs.p95)} / ${milliseconds(summary.ttfmMs.p99)} |\n`
+    report += `| ${String(row.commit).slice(0, 7)} | ${runtime} | ${row.scenario} | ${milliseconds(summary.importMs.median)} / ${milliseconds(summary.importMs.p95)} / ${milliseconds(summary.importMs.p99)} | ${milliseconds(summary.ttfmMs?.median)} / ${milliseconds(summary.ttfmMs?.p95)} / ${milliseconds(summary.ttfmMs?.p99)} |\n`
   }
   for (const row of rows) {
     for (const gate of (row.gates as GateRecord[] | undefined) ?? []) {
@@ -454,13 +454,25 @@ function buildReport(rows: Array<Record<string, unknown>>, artifact: string): st
   const gateRow = rows.find((row) => ((row.gates as GateRecord[] | undefined) ?? []).length > 0)
   if (gateRow) {
     const source = gateRow.source as {
-      branch: { clean: boolean; contentSha256: string }
-      fastpatch: { clean: boolean; contentSha256: string }
+      candidate?: { clean: boolean; contentSha256: string }
+      baseline?: { clean: boolean; contentSha256: string }
+      branch?: { clean: boolean; contentSha256: string }
+      fastpatch?: { clean: boolean; contentSha256: string }
     }
     const native = gateRow.native as {
-      discovered: { branch: { sha256: string }; fastpatch: { sha256: string } }
-      gatePinned: { assetRoot: string; branch: { sha256: string; symbolCount: number } }
+      discovered: {
+        candidate?: { sha256: string }
+        baseline?: { sha256: string }
+        branch?: { sha256: string }
+        fastpatch?: { sha256: string }
+      }
+      gatePinned: {
+        assetRoot: string
+        candidate?: { sha256: string; symbolCount: number }
+        branch?: { sha256: string; symbolCount: number }
+      }
     }
+    const baseline = gateRow.baseline as { label?: string; root?: string } | undefined
     const host = gateRow.host as {
       cpu: string
       loadAverage: number[]
@@ -474,10 +486,19 @@ function buildReport(rows: Array<Record<string, unknown>>, artifact: string): st
       bootstrapSamples: number
     }
     const lifecycle = gateRow.lifecycle as ProbeBody | null
+    const candidateSource = source.candidate ?? source.branch
+    const baselineSource = source.baseline ?? source.fastpatch
+    const candidateNative = native.discovered.candidate ?? native.discovered.branch
+    const baselineNative = native.discovered.baseline ?? native.discovered.fastpatch
+    const pinnedCandidate = native.gatePinned.candidate ?? native.gatePinned.branch
+    if (!candidateSource || !baselineSource || !candidateNative || !baselineNative || !pinnedCandidate) {
+      throw new Error("incomplete gate provenance")
+    }
     report += "\n## Gate-Provenienz\n\n"
-    report += `- Source: candidate ${source.branch.clean ? "clean" : "dirty, explizit erlaubt"} (${source.branch.contentSha256}); fastpatch ${source.fastpatch.clean ? "clean" : "dirty"} (${source.fastpatch.contentSha256}).\n`
-    report += `- Entdeckte Native-SHAs: candidate ${native.discovered.branch.sha256}; fastpatch ${native.discovered.fastpatch.sha256}.\n`
-    report += `- Gate-Pinning: ${native.gatePinned.assetRoot}; SHA ${native.gatePinned.branch.sha256}; ${native.gatePinned.branch.symbolCount} exportierte Symbole.\n`
+    report += `- Baseline: ${baseline?.label ?? "fastpatch"}${baseline?.root ? ` (${baseline.root})` : ""}.\n`
+    report += `- Source: candidate ${candidateSource.clean ? "clean" : "dirty, explizit erlaubt"} (${candidateSource.contentSha256}); baseline ${baselineSource.clean ? "clean" : "dirty"} (${baselineSource.contentSha256}).\n`
+    report += `- Entdeckte Native-SHAs: candidate ${candidateNative.sha256}; baseline ${baselineNative.sha256}.\n`
+    report += `- Gate-Pinning: ${native.gatePinned.assetRoot}; SHA ${pinnedCandidate.sha256}; ${pinnedCandidate.symbolCount} exportierte Symbole.\n`
     report += `- Host: ${host.cpu}; Load ${host.loadAverage.join("/")}; Governor ${host.scalingGovernor ?? "unbekannt"}; Intel-Pstate ${host.intelPstate ?? "unbekannt"}.\n`
     report += `- Protokoll: Seed ${protocol.seed}; Warmup ${protocol.warmup}; ${protocol.samples} Paare; ${protocol.bootstrapSamples} Bootstrap-Samples.\n`
     if (lifecycle) {
@@ -501,8 +522,12 @@ async function main(): Promise<void> {
   const doGateRecord = args["gate-record"] !== undefined
   const allowDirty = args["allow-dirty"] !== undefined
   const forceFailure = args["force-fail"] !== undefined
+  const baselineSelection = resolveBaselineSelection(args, repoRoot)
+  const baselineRoot = baselineSelection.root
+  const baselineCore = resolve(baselineRoot, "packages", "core")
+  const baselineSrcRoot = resolve(baselineCore, "src")
 
-  if (!["minimal", "root", "zig", "dist", "renderer-entry", "renderable-entry"].includes(scenario)) {
+  if (!scenarios.includes(scenario)) {
     throw new Error(`unknown scenario: ${scenario}`)
   }
   if (!Number.isInteger(samples) || samples < 1) throw new Error("--samples must be a positive integer")
@@ -514,15 +539,15 @@ async function main(): Promise<void> {
     throw new Error("gates require an even --samples count >= 10")
   }
   if (doGate && (runtime !== "bun" || scenario !== "root")) {
-    throw new Error("--gate is the Bun source-root fastpatch comparison; use --scenario=root --runtime=bun")
+    throw new Error("--gate is the Bun source-root baseline comparison; use --scenario=root --runtime=bun")
   }
   if (doGateRecord && runtime !== "bun") throw new Error("--gate-record is Bun-only")
   if (forceFailure && !doGate) throw new Error("--force-fail requires --gate")
   if (runtime === "node" && scenario !== "dist") throw new Error("Node Welle-0 measurement requires --scenario=dist")
 
   const commit = gitRev(repoRoot)
-  const fastpatchCommit = gitRev(fastpatchRoot)
-  const mergeBase = run("git", ["merge-base", commit, fastpatchCommit], repoRoot)
+  const baselineCommit = doGate ? gitRev(baselineRoot) : null
+  const mergeBase = baselineCommit ? run("git", ["merge-base", commit, baselineCommit], repoRoot) : null
   const artifact = args.artifact ?? `cold-import-${commit.slice(0, 7)}`
   const benchRoot = process.env.OPENTUI_BENCH_DIR ?? join(repoRoot, ".yesmem", "bench")
   const artifactDir = join(benchRoot, artifact)
@@ -537,38 +562,46 @@ async function main(): Promise<void> {
     return
   }
   const seed = Number(args.seed ?? Number.parseInt(commit.slice(0, 8), 16)) >>> 0
-  const branchState = worktreeState(repoRoot)
-  const fastpatchState = worktreeState(fastpatchRoot)
-  if (!allowDirty && (!branchState.clean || !fastpatchState.clean)) {
+  const candidateState = worktreeState(repoRoot)
+  const baselineState = doGate ? worktreeState(baselineRoot) : null
+  if (!allowDirty && (!candidateState.clean || (baselineState !== null && !baselineState.clean))) {
     throw new Error(
-      `benchmark worktrees must be clean (branch=${branchState.status.join(", ") || "clean"}; fastpatch=${fastpatchState.status.join(", ") || "clean"}); commit/stash changes or pass --allow-dirty`,
+      `benchmark worktrees must be clean (candidate=${candidateState.status.join(", ") || "clean"}; baseline=${baselineState?.status.join(", ") || "clean"}); commit/stash changes or pass --allow-dirty`,
     )
   }
 
-  const branchNative = await nativeProvenance(branchSrcRoot, runtime)
-  const fastpatchNative = doGate ? await nativeProvenance(fastpatchSrcRoot, runtime) : null
+  const candidateNative = await nativeProvenance(branchSrcRoot, runtime)
+  const baselineNative = doGate ? await nativeProvenance(baselineSrcRoot, runtime) : null
   // A local build may leave different native packages in the two worktrees.
   // Pin both source arms to one asset root so the gate isolates the TypeScript
   // change, then verify both resolvers observe the identical file/symbol set.
   // The independently discovered binaries are still recorded below.
-  const gateNativeAssetRoot = doGate ? resolve(fastpatchCore, "node_modules") : null
-  const pinnedBranchNative = gateNativeAssetRoot
+  const configuredNativeAssetRoot = args["native-asset-root"]
+  if (configuredNativeAssetRoot !== undefined && !isAbsolute(configuredNativeAssetRoot)) {
+    throw new Error("--native-asset-root must be absolute")
+  }
+  const gateNativeAssetRoot = doGate
+    ? configuredNativeAssetRoot === undefined
+      ? resolve(baselineCore, "node_modules")
+      : resolve(configuredNativeAssetRoot)
+    : null
+  const pinnedCandidateNative = gateNativeAssetRoot
     ? await nativeProvenance(branchSrcRoot, runtime, gateNativeAssetRoot)
     : null
-  const pinnedFastpatchNative = gateNativeAssetRoot
-    ? await nativeProvenance(fastpatchSrcRoot, runtime, gateNativeAssetRoot)
+  const pinnedBaselineNative = gateNativeAssetRoot
+    ? await nativeProvenance(baselineSrcRoot, runtime, gateNativeAssetRoot)
     : null
   if (
-    pinnedBranchNative &&
-    pinnedFastpatchNative &&
-    (pinnedBranchNative.sha256 !== pinnedFastpatchNative.sha256 ||
-      pinnedBranchNative.symbolSetSha256 !== pinnedFastpatchNative.symbolSetSha256)
+    pinnedCandidateNative &&
+    pinnedBaselineNative &&
+    (pinnedCandidateNative.sha256 !== pinnedBaselineNative.sha256 ||
+      pinnedCandidateNative.symbolSetSha256 !== pinnedBaselineNative.symbolSetSha256)
   ) {
-    throw new Error("pinned native artifact drift between fastpatch and candidate; refusing paired source gate")
+    throw new Error("pinned native artifact drift between baseline and candidate; refusing paired source gate")
   }
 
   const node = runtime === "node" ? resolveNode26() : null
-  const target = scenarioTarget("branch", scenario, runtime)
+  const target = scenarioTarget(repoRoot, scenario, runtime)
   const probeOptions = { scenario, runtime, telemetry: false, ...target }
   const baselineSamples = measure(probeOptions, samples, warmup)
 
@@ -579,13 +612,13 @@ async function main(): Promise<void> {
 
   const gates: GateRecord[] = []
   if (doGate) {
-    const base = scenarioTarget("fastpatch", "root", "bun")
+    const base = scenarioTarget(baselineRoot, "root", "bun")
     const pinnedCandidate = { ...probeOptions, assetRoot: gateNativeAssetRoot! }
     gates.push(
       pairedGate({
-        name: "fastpatch vs branch-disabled (acceptance)",
-        baselineLabel: "fastpatch",
-        candidateLabel: "branch-disabled",
+        name: `${baselineSelection.label} vs candidate (acceptance)`,
+        baselineLabel: baselineSelection.label,
+        candidateLabel: "candidate",
         baseline: {
           scenario: "root",
           runtime: "bun",
@@ -630,20 +663,20 @@ async function main(): Promise<void> {
     generated: new Date().toISOString(),
     commit,
     mergeBase,
-    fastpatchCommit,
+    baseline: doGate ? { label: baselineSelection.label, root: baselineRoot, commit: baselineCommit, mergeBase } : null,
     scenario,
     runtime: {
       engine: runtime,
       version: runtime === "bun" ? process.versions.bun : node!.version,
       executable: runtime === "bun" ? process.execPath : node!.bin,
     },
-    source: { branch: branchState, fastpatch: fastpatchState },
+    source: { candidate: candidateState, baseline: baselineState },
     native: {
-      discovered: { branch: branchNative, fastpatch: fastpatchNative },
+      discovered: { candidate: candidateNative, baseline: baselineNative },
       gatePinned: {
         assetRoot: gateNativeAssetRoot,
-        branch: pinnedBranchNative,
-        fastpatch: pinnedFastpatchNative,
+        candidate: pinnedCandidateNative,
+        baseline: pinnedBaselineNative,
       },
     },
     host: {
@@ -663,8 +696,8 @@ async function main(): Promise<void> {
       lifecycleProbe: lifecycle !== null,
     },
     protocol: {
-      harnessVersion: 4,
-      probeVersion: 4,
+      harnessVersion: 5,
+      probeVersion: 5,
       warmup,
       samples,
       seed,

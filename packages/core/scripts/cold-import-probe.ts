@@ -15,9 +15,10 @@
 // Output fields (ms):
 //   importMs      t0 -> entry module import resolves
 //   firstCommitAt t0 -> firstNativeCommit mark (DIAGNOSTIC ONLY, telemetry on)
-//   ttfmMs        t0 -> first committed frame (renderOnce() resolves). The gate
-//                  metric uses this SAME boundary in every arm so no arm is
-//                  favored by an earlier telemetry mark.
+//   ttfmMs        t0 -> first committed frame (renderOnce() resolves), or null
+//                  for import-only scenarios. The gate metric uses this SAME
+//                  boundary in every arm so no arm is favored by an earlier
+//                  telemetry mark.
 //   marks/spans   lifecycle marks + spans snapshot (telemetry on, bun only)
 //   destroyMs     synchronous renderer destroy duration (render scenarios)
 import { writeFileSync } from "node:fs"
@@ -72,7 +73,7 @@ try {
 }
 
 let firstCommitAt: number | null = null
-let ttfmMs = importMs
+let ttfmMs: number | null = null
 let destroyMs: number | null = null
 let marks: { name: string; atMs: number }[] = []
 let spans: { name: string; startMs: number; endMs: number }[] = []
