@@ -37,9 +37,12 @@ describe("@opentui/core package entrypoints", () => {
   })
 
   test("granular subpaths resolve at runtime", () => {
-    for (const { subpath } of GRANULAR_SUBPATHS) {
+    for (const { subpath, entry } of GRANULAR_SUBPATHS) {
       const specifier = `@opentui/core${subpath.slice(1)}`
       expect(() => import.meta.resolve(specifier), `${specifier} must resolve`).not.toThrow()
+      expect(import.meta.resolve(specifier), `${specifier} must resolve to its entry file`).toContain(
+        entry.replace("./src/", "/src/"),
+      )
     }
   })
 

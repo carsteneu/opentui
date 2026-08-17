@@ -180,22 +180,22 @@ function assertRuntimeOutputs(): void {
   ) {
     throw new Error("Root package export does not select separate Bun and Node runtime outputs")
   }
-    if (distPackage.exports["./node-assets"]?.import !== "./node-assets.js") {
-      throw new Error("Missing @opentui/core/node-assets package export")
+  if (distPackage.exports["./node-assets"]?.import !== "./node-assets.js") {
+    throw new Error("Missing @opentui/core/node-assets package export")
+  }
+  for (const [subpath, file] of [
+    ["./renderer", "renderer-entry"],
+    ["./renderable", "renderable-entry"],
+    ["./audio", "audio-entry"],
+    ["./image", "image-entry"],
+    ["./markdown-tree-sitter", "markdown-tree-sitter-entry"],
+    ["./console", "console-entry"],
+  ] as const) {
+    const entryExport = distPackage.exports[subpath]
+    if (entryExport?.bun !== `./${file}.bun.js` || entryExport?.import !== `./${file}.js`) {
+      throw new Error(`Missing or malformed ${packageJson.name}${subpath} package export`)
     }
-    for (const [subpath, file] of [
-      ["./renderer", "renderer-entry"],
-      ["./renderable", "renderable-entry"],
-      ["./audio", "audio-entry"],
-      ["./image", "image-entry"],
-      ["./markdown-tree-sitter", "markdown-tree-sitter-entry"],
-      ["./console", "console-entry"],
-    ] as const) {
-      const entryExport = distPackage.exports[subpath]
-      if (entryExport?.bun !== `./${file}.bun.js` || entryExport?.import !== `./${file}.js`) {
-        throw new Error(`Missing or malformed ${packageJson.name}${subpath} package export`)
-      }
-    }
+  }
   const workerExport = distPackage.exports["./parser.worker"]
   if (
     workerExport?.bun !== "./parser.worker.js" ||
@@ -222,24 +222,24 @@ function assertRuntimeOutputs(): void {
   }
 }
 
-  function readRuntimeGraph(entryPaths: string[], chunkPrefix: string): string {
-    const chunkPaths = readdirSync(distDir)
-      .filter((name) => name.startsWith(chunkPrefix) && name.endsWith(".js"))
-      .sort()
-    return [...entryPaths, ...chunkPaths].map((path) => readFileSync(join(distDir, path), "utf8")).join("\n")
-  }
+function readRuntimeGraph(entryPaths: string[], chunkPrefix: string): string {
+  const chunkPaths = readdirSync(distDir)
+    .filter((name) => name.startsWith(chunkPrefix) && name.endsWith(".js"))
+    .sort()
+  return [...entryPaths, ...chunkPaths].map((path) => readFileSync(join(distDir, path), "utf8")).join("\n")
+}
 
-  // Follows an entry's static imports through its chunk graph so assertions
-  // cover exactly the modules a consumer of that entry loads at runtime.
-  function readEntryClosure(entryPath: string): string {
-    const seen = new Set<string>()
-    const queue = [entryPath]
-    const parts: string[] = []
-    while (queue.length > 0) {
-      const current = queue.pop() as string
-      if (seen.has(current)) continue
-      seen.add(current)
-      const source = readFileSync(join(distDir, current), "utf8")
+// Follows an entry's static imports through its chunk graph so assertions
+// cover exactly the modules a consumer of that entry loads at runtime.
+function readEntryClosure(entryPath: string): string {
+  const seen = new Set<string>()
+  const queue = [entryPath]
+  const parts: string[] = []
+  while (queue.length > 0) {
+    const current = queue.pop() as string
+    if (seen.has(current)) continue
+    seen.add(current)
+    const source = readFileSync(join(distDir, current), "utf8")
       parts.push(source)
       for (const match of source.matchAll(/from\s*"(\.\/[^"]+\.js)"/g)) {
         if (!seen.has(match[1])) queue.push(match[1])
@@ -251,60 +251,58 @@ function assertRuntimeOutputs(): void {
     return parts.join("\n")
   }
 
-  function assertClosureExcludes(entryPath: string, forbidden: string[]): void {
-    const closure = readEntryClosure(entryPath)
-    for (const marker of forbidden) {
-      if (closure.includes(marker)) {
-        throw new Error(`${entryPath} runtime graph contains excluded implementation marker: ${marker}`)
-      }
+function assertClosureExcludes(entryPath: string, forbidden: string[]): void {
+  const closure = readEntryClosure(entryPath)
+  for (const marker of forbidden) {
+    if (closure.includes(marker)) {
+      throw new Error(`${entryPath} runtime graph contains excluded implementation marker: ${marker}`)
     }
   }
+}
 
-  function assertLeanEntryClosures(): void {
-    assertClosureExcludes("renderable-entry.js", [
+function assertLeanEntryClosures(): void {
+  assertClosureExcludes("renderable-entry.js", [
+    "class AudioCaptureStream extends",
+    "class AudioRecorder extends",
+    "class AudioStream extends",
+    "class NativeImage {",
+    "class ImageRenderable extends",
+    "class MarkdownRenderable extends",
+    "createMarkdownCodeBlockRenderer",
+    "createIcyStreamDemuxer",
+    "getTreeSitterClient",
+    "treeSitterToTextChunks",
+    "destroyTreeSitterClient",
+    "class TerminalConsole extends",
+  ])
+  assertClosureExcludes("renderable-entry.bun.js", [
+    "class AudioCaptureStream extends",
+    "class AudioRecorder extends",
+    "class AudioStream extends",
+    "class NativeImage {",
+    "class ImageRenderable extends",
+    "class MarkdownRenderable extends",
+    "createMarkdownCodeBlockRenderer",
+    "createIcyStreamDemuxer",
+    "getTreeSitterClient",
+    "treeSitterToTextChunks",
+    "destroyTreeSitterClient",
+    "class TerminalConsole extends",
+  ])
+  // renderer-entry keeps the renderer's zwingende Basis (console overlay,
+  // tree-sitter teardown) but must not load the optional subsystems.
+  for (const entry of ["renderer-entry.js", "renderer-entry.bun.js"]) {
+    assertClosureExcludes(entry, [
       "class AudioCaptureStream extends",
       "class AudioRecorder extends",
       "class AudioStream extends",
-      "class NativeImage {",
+      "createIcyStreamDemuxer",
       "class ImageRenderable extends",
       "class MarkdownRenderable extends",
       "createMarkdownCodeBlockRenderer",
-      "createIcyStreamDemuxer",
-      "getTreeSitterClient",
-      "treeSitterToTextChunks",
-      "WebTreeSitter",
-      "destroyTreeSitterClient",
-      "class TerminalConsole extends",
     ])
-    assertClosureExcludes("renderable-entry.bun.js", [
-      "class AudioCaptureStream extends",
-      "class AudioRecorder extends",
-      "class AudioStream extends",
-      "class NativeImage {",
-      "class ImageRenderable extends",
-      "class MarkdownRenderable extends",
-      "createMarkdownCodeBlockRenderer",
-      "createIcyStreamDemuxer",
-      "getTreeSitterClient",
-      "treeSitterToTextChunks",
-      "WebTreeSitter",
-      "destroyTreeSitterClient",
-      "class TerminalConsole extends",
-    ])
-    // renderer-entry keeps the renderer's zwingende Basis (console overlay,
-    // tree-sitter teardown) but must not load the optional subsystems.
-    for (const entry of ["renderer-entry.js", "renderer-entry.bun.js"]) {
-      assertClosureExcludes(entry, [
-        "class AudioCaptureStream extends",
-        "class AudioRecorder extends",
-        "class AudioStream extends",
-        "createIcyStreamDemuxer",
-        "class ImageRenderable extends",
-        "class MarkdownRenderable extends",
-        "createMarkdownCodeBlockRenderer",
-      ])
-    }
   }
+}
 
 function packArtifact(packageDir: string, packDir: string): string {
   const result = runCommand(

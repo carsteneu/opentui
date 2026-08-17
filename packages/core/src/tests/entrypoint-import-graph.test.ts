@@ -63,7 +63,6 @@ describe("entrypoint import graphs", () => {
         "createIcyStreamDemuxer",
         "getTreeSitterClient",
         "treeSitterToTextChunks",
-        "WebTreeSitter",
         "destroyTreeSitterClient",
         "class TerminalConsole extends",
       ],
