@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test"
+import { spawnSync } from "node:child_process"
+import { dirname, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import {
   getRendererConsoleIntegration,
@@ -7,20 +10,22 @@ import {
 } from "../renderer-integration.js"
 import { createTestRenderer } from "../testing/test-renderer.js"
 
-test("lean renderer constructs and destroys without optional integrations", async () => {
-  const first = await createTestRenderer({ width: 20, height: 8, consoleMode: "disabled" })
+const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..")
 
-  try {
-    expect(first.renderer.consoleMode).toBe("disabled")
-    expect(() => first.renderer.console).toThrow("Console overlay is not installed")
-    await expect(createTestRenderer({ width: 20, height: 8, consoleMode: "console-overlay" })).rejects.toThrow(
-      "Console overlay is not installed",
-    )
-  } finally {
-    first.renderer.destroy()
-  }
+test("lean renderer constructs and destroys without optional integrations", () => {
+  const fixturePath = resolve(packageDir, "src/tests/fixtures/renderer-lean-lifecycle.ts")
+  const result = spawnSync(process.execPath, [fixturePath], { encoding: "utf8" })
 
-  expect(first.renderer.isDestroyed).toBe(true)
+  expect(result.status, result.stderr || result.stdout).toBe(0)
+  expect(result.stdout.trim()).toBe(
+    JSON.stringify({
+      kind: "renderer-lean-lifecycle",
+      consoleMode: "disabled",
+      consoleUnavailable: true,
+      explicitOverlayRejected: true,
+      destroyed: true,
+    }),
+  )
 })
 
 test("root import installs console ownership and runs optional cleanup only after the last renderer", async () => {
