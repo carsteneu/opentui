@@ -56,7 +56,7 @@ export interface RendererReadyHandle {
   readonly enhancedSettled: Promise<RendererReadyEnhancedOutcome>
   /** Consumer declares its entire startup sequence complete. */
   markApplicationReady(): void
-  /** Resolves once the consumer declared application ready (gated on base frame). */
+  /** Resolves once the consumer declared application ready (gated on base frame and enhanced settle). */
   readonly applicationReady: Promise<void>
   readonly state: RendererReadyState
   readonly destroyed: boolean
@@ -107,8 +107,9 @@ function deferred<T>(): Deferred<T> {
  *
  * - `firstFrameCommitted` resolves on the first real successful commit and is
  *   unaffected by enhanced/application state.
- * - `enhanced` / `application` are gated on the base frame and marked by the
- *   consumer; OpenTUI never guesses which tools an app has.
+ * - `enhanced` is gated on the base frame; `application` is additionally gated
+ *   on enhanced settling. Both are marked by the consumer, so OpenTUI never
+ *   guesses which tools an app has.
  * - Every milestone resolves at most once; waiters always settle (success,
  *   defined error, or destroy) so nothing hangs open.
  */
@@ -137,7 +138,9 @@ export function createRendererReady(renderer: CliRenderer): RendererReadyHandle 
     renderer.off(CliRenderEvents.DESTROY, onDestroy)
   }
 
-  // Enhanced/application may only settle after the base frame is committed.
+  // Enhanced may only settle after the base frame. Application is the final
+  // stage and additionally waits for enhanced to settle (success or controlled
+  // failure), preserving Core -> Frame -> Enhanced -> Application ordering.
   function releaseGated(): void {
     if (!firstFrame.settled) return
     if (markedEnhanced) {
@@ -145,7 +148,7 @@ export function createRendererReady(renderer: CliRenderer): RendererReadyHandle 
         state.enhanced = enhancedStage
       }
     }
-    if (markedApplication) {
+    if (markedApplication && enhanced.settled) {
       if (application.settle("resolve", undefined, undefined)) {
         state.applicationReady = true
       }

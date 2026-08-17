@@ -5,6 +5,7 @@ import { CliRenderEvents } from "../renderer.js"
 import { createRendererReady, RendererReadyDestroyedError, RendererReadyError } from "../renderer-ready.js"
 import { createTestRenderer } from "../testing.js"
 import type { RenderContext } from "../types.js"
+
 function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => queueMicrotask(resolve))
 }
@@ -12,7 +13,11 @@ function flushMicrotasks(): Promise<void> {
 class ThrowingRenderable extends Renderable {
   public shouldThrow = false
 
-  constructor(ctx: RenderContext, options: RenderableOptions, private readonly error: unknown = new Error("render failed")) {
+  constructor(
+    ctx: RenderContext,
+    options: RenderableOptions,
+    private readonly error: unknown = new Error("render failed"),
+  ) {
     super(ctx, options)
   }
 
@@ -169,7 +174,7 @@ test("an optional-extension error does not undo a visible base frame", async () 
   }
 })
 
-test("application ready is consumer-marked and resolves after the base frame", async () => {
+test("application ready is consumer-marked and resolves only after base frame and enhanced settle", async () => {
   const { renderer, renderOnce } = await createTestRenderer({})
   const ready = createRendererReady(renderer)
 
@@ -181,9 +186,65 @@ test("application ready is consumer-marked and resolves after the base frame", a
     expect(resolved).toBe(false)
 
     await renderOnce()
+    await ready.firstFrameCommitted
+    await flushMicrotasks()
+    expect(resolved).toBe(false)
+    expect(ready.state.applicationReady).toBe(false)
+
+    ready.markEnhancedReady()
+    await ready.enhancedSettled
     await ready.applicationReady
     expect(resolved).toBe(true)
     expect(ready.state.applicationReady).toBe(true)
+  } finally {
+    ready.destroy()
+    renderer.destroy()
+  }
+})
+
+test("destroy between first frame and enhanced settle rejects pending stages and removes listeners", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+  const before = baselineListenerCount(renderer)
+  const ready = createRendererReady(renderer)
+
+  await renderOnce()
+  await ready.firstFrameCommitted
+
+  const enhanced = ready.enhancedSettled.catch((error: unknown) => error)
+  const application = ready.applicationReady.catch((error: unknown) => error)
+  renderer.destroy()
+
+  expect(await enhanced).toBeInstanceOf(RendererReadyDestroyedError)
+  expect(await application).toBeInstanceOf(RendererReadyDestroyedError)
+  expect(ready.state.firstFrameCommitted).toBe(true)
+  expect(ready.state.enhanced).toBe("pending")
+  expect(ready.state.applicationReady).toBe(false)
+  expect(ready.state.destroyed).toBe(true)
+
+  const after = baselineListenerCount(renderer)
+  expect(after.frame).toBe(before.frame)
+  expect(after.renderError).toBe(before.renderError)
+  expect(after.destroy).toBeLessThanOrEqual(before.destroy)
+})
+
+test("application ready is terminal, monotone, and leaves no readiness listeners", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+  const before = baselineListenerCount(renderer)
+  const ready = createRendererReady(renderer)
+
+  try {
+    ready.markEnhancedFailed(new Error("optional unavailable"))
+    ready.markEnhancedReady()
+    ready.markApplicationReady()
+    ready.markApplicationReady()
+
+    await renderOnce()
+    expect(await ready.enhancedSettled).toEqual({ ok: false, error: expect.any(Error) })
+    await ready.applicationReady
+
+    expect(ready.state.enhanced).toBe("failed")
+    expect(ready.state.applicationReady).toBe(true)
+    expect(baselineListenerCount(renderer)).toEqual(before)
   } finally {
     ready.destroy()
     renderer.destroy()
@@ -228,9 +289,7 @@ test("a render error after the base frame does not undo readiness or consumer mi
     // concern, not readiness: firstFrame stays resolved and an unmarked
     // enhanced waiter is not rejected.
     const settled = { enhanced: false }
-    ready.enhancedSettled
-      .then(() => (settled.enhanced = true))
-      .catch(() => (settled.enhanced = true))
+    ready.enhancedSettled.then(() => (settled.enhanced = true)).catch(() => (settled.enhanced = true))
     // Test-owned listener keeps the render error "handled" (the helper's own
     // RENDER_ERROR hook is gone after the base frame).
     renderer.on(CliRenderEvents.RENDER_ERROR, () => {})
