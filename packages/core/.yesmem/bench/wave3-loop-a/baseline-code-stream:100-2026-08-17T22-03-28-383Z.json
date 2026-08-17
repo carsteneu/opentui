@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "scenario": "code-stream:80x24:code-stream:100",
+  "pairs": 10,
+  "pairCount": 10,
+  "nativeSha": "e7e9764462f2ee7f2c808856b60101ff659c6bda4a1df7cf235e418cf481a15c",
+  "pinnedNativeSha": "e7e9764462f2ee7f2c808856b60101ff659c6bda4a1df7cf235e418cf481a15c",
+  "provenance": {
+    "commit": "e07f4e489dca3c616aea41d707c6de0758a7c118",
+    "opentui": "@opentui/core@0.5.3",
+    "bun": "1.3.14",
+    "node": "v18.19.1",
+    "loadavg": "34.27 27.86 18.66 34/2347 2133156",
+    "governor": "powersave",
+    "sampleCount": 20
+  },
+  "byArm": {
+    "baseline": {
+      "n": 10,
+      "mean": 36.85681379999998,
+      "p50": 38.834863999999925,
+      "p95": 46.816471799999995,
+      "p99": 47.81212236000014,
+      "min": 24.78318500000023,
+      "max": 48.061035000000174
+    },
+    "candidate": {
+      "n": 10,
+      "mean": 53.85580750000004,
+      "p50": 41.033975500000224,
+      "p95": 113.71870834999983,
+      "p99": 147.75499366999986,
+      "min": 35.42677000000003,
+      "max": 156.26406499999985
+    }
+  },
+  "updateToCommit": {
+    "baseline": {
+      "n": 10,
+      "mean": 36.85681379999998,
+      "p50": 38.834863999999925,
+      "p95": 46.816471799999995,
+      "p99": 47.81212236000014,
+      "min": 24.78318500000023,
+      "max": 48.061035000000174
+    },
+    "candidate": {
+      "n": 10,
+      "mean": 53.85580750000004,
+      "p50": 41.033975500000224,
+      "p95": 113.71870834999983,
+      "p99": 147.75499366999986,
+      "min": 35.42677000000003,
+      "max": 156.26406499999985
+    }
+  },
+  "paired": {
+    "pairedChange": 0.3272191649992464,
+    "ci": {
+      "confidence": 0.95,
+      "lower": 0.05586788151814415,
+      "upper": 0.7398257919247274
+    },
+    "secondPositionEffect": 0.07009641013720702,
+    "orderCounts": {
+      "baselineFirst": 5,
+      "candidateFirst": 5
+    }
+  },
+  "markdownAttribution": {
+    "category": "prose",
+    "finalBytes": 8192,
+    "stepCount": 16,
+    "tailClassCounts": {
+      "full-parse": 1,
+      "inline-lex-1": 12,
+      "stable-prefix": 3
+    },
+    "meanParseDurationMs": 6.661648250000042,
+    "allStableRefsPreserved": true
+  }
+}
