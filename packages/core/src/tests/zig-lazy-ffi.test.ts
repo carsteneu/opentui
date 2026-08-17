@@ -48,13 +48,9 @@ describe("zig eager FFI load removal", () => {
     expect(marks).not.toContain("opentui.nativeLoaded")
   })
 
-  test("first resolve constructs the marker exactly once", () => {
+  test("first resolve constructs the marker exactly once and returns stable identity", () => {
     const r = runChild("resolve")
     expect(r.nativeLoaded).toBe(1)
-  })
-
-  test("consecutive resolves return the same object identity", () => {
-    const r = runChild("resolve")
     expect(r.same).toBe(true)
   })
 
@@ -74,6 +70,18 @@ describe("zig eager FFI load removal", () => {
       expect(first).not.toBe("")
       expect(second).toBe(first)
       expect(r.nativeLoaded).toBe(0)
+    } finally {
+      const { rmSync } = require("node:fs") as typeof import("node:fs")
+      rmSync(empty, { recursive: true, force: true })
+    }
+  })
+
+  test("singleton stays reclaimable after a failed resolve", () => {
+    const empty = tempEmptyRoot()
+    try {
+      const r = runChild("recover", { OTUI_ASSET_ROOT: empty }, REAL_LIB)
+      expect(r.firstFailed).toBe(true)
+      expect(r.recovered).toBe(true)
     } finally {
       const { rmSync } = require("node:fs") as typeof import("node:fs")
       rmSync(empty, { recursive: true, force: true })

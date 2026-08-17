@@ -70,6 +70,23 @@ async function main(): Promise<void> {
     return
   }
 
+  if (mode === "recover") {
+    // A failed resolve must not leave a poisoned singleton: after the failure
+    // the path can be set and a fresh resolve must succeed.
+    const libPath = process.argv[3]
+    const firstFailed = tryResolve(resolveRenderLib) !== ""
+    let recovered = false
+    try {
+      setRenderLibPath(libPath)
+      resolveRenderLib()
+      recovered = true
+    } catch {
+      recovered = false
+    }
+    result({ firstFailed, recovered })
+    return
+  }
+
   if (mode === "dispose-twice") {
     let firstOk = false
     let secondOk = false
