@@ -69,6 +69,7 @@ describe("entrypoint import graphs", () => {
         "getTreeSitterClient",
         "treeSitterToTextChunks",
         "destroyTreeSitterClient",
+        "class TreeSitterClient extends",
         "class TerminalConsole extends",
       ],
       false,
@@ -97,14 +98,14 @@ describe("entrypoint import graphs", () => {
         "createIcyStreamDemuxer",
         "class ImageRenderable extends",
         "class MarkdownRenderable extends",
+        "class TerminalConsole extends",
+        'singleton("ConsoleCapture"',
+        "destroyTreeSitterClient",
+        "getTreeSitterClient",
+        "class TreeSitterClient extends",
       ],
       false,
     )
-
-    // Documented zwingende Basis of CliRenderer: the console overlay and the
-    // tree-sitter client teardown are statically imported by renderer.ts.
-    // Making these lazy is Loop C territory; this pins the current contract.
-    expectMarkers(bundle, ["class TerminalConsole extends", "destroyTreeSitterClient"], true)
   })
 
   test("optional subsystem entries expose their own implementations", () => {

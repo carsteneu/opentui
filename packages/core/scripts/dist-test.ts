@@ -273,6 +273,7 @@ function assertLeanEntryClosures(): void {
     "getTreeSitterClient",
     "treeSitterToTextChunks",
     "destroyTreeSitterClient",
+    "class TreeSitterClient extends",
     "class TerminalConsole extends",
   ])
   assertClosureExcludes("renderable-entry.bun.js", [
@@ -287,10 +288,11 @@ function assertLeanEntryClosures(): void {
     "getTreeSitterClient",
     "treeSitterToTextChunks",
     "destroyTreeSitterClient",
+    "class TreeSitterClient extends",
     "class TerminalConsole extends",
   ])
-  // renderer-entry keeps the renderer's zwingende Basis (console overlay,
-  // tree-sitter teardown) but must not load the optional subsystems.
+  // The lean renderer entry must not pull optional subsystems into its static
+  // Node or Bun closure. Root consumers register those integrations separately.
   for (const entry of ["renderer-entry.js", "renderer-entry.bun.js"]) {
     assertClosureExcludes(entry, [
       "class AudioCaptureStream extends",
@@ -300,6 +302,11 @@ function assertLeanEntryClosures(): void {
       "class ImageRenderable extends",
       "class MarkdownRenderable extends",
       "createMarkdownCodeBlockRenderer",
+      "class TerminalConsole extends",
+      'singleton("ConsoleCapture"',
+      "destroyTreeSitterClient",
+      "getTreeSitterClient",
+      "class TreeSitterClient extends",
     ])
   }
 }

@@ -8,7 +8,7 @@ import {
   type LineInfo,
 } from "./zig.js"
 import type { EditBuffer } from "./edit-buffer.js"
-import { createExtmarksController } from "./lib/index.js"
+import { createExtmarksController } from "./lib/extmarks.js"
 
 export interface Viewport {
   offsetY: number

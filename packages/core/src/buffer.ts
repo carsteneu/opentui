@@ -1,4 +1,4 @@
-import { RGBA } from "./lib/index.js"
+import { RGBA } from "./lib/RGBA.js"
 import { resolveRenderLib, type OptimizedBufferHandle, type RenderLib } from "./zig.js"
 import { type Pointer, type PointerInput, toArrayBuffer, toPointer, ptr } from "./platform/ffi.js"
 import type { NativeImage } from "./image.js"
@@ -9,7 +9,7 @@ function requireInteger(value: number, name: string, min: number, max: number): 
     throw new RangeError(`${name} must be an integer from ${min} to ${max}`)
   }
 }
-import { type BorderStyle, type BorderSides, BorderCharArrays, parseBorderStyle } from "./lib/index.js"
+import { type BorderStyle, type BorderSides, BorderCharArrays, parseBorderStyle } from "./lib/border.js"
 import { TargetChannel, type WidthMethod, type CapturedSpan, type CapturedLine } from "./types.js"
 import type { TextBufferView } from "./text-buffer-view.js"
 import type { EditorView } from "./editor-view.js"

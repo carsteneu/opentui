@@ -43,6 +43,8 @@ export {
   getTelemetrySnapshot,
 } from "./telemetry.js"
 export type { TelemetryCounterName, TelemetryHistogramLabel, TelemetrySnapshot } from "./telemetry.js"
+import "./renderer-console.integration.js"
+import "./renderer-tree-sitter.integration.js"
 import { mark } from "./telemetry.js"
 
 // Marked at the end of module evaluation: all heavy deps (zig native setup,

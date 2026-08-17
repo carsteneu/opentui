@@ -2,7 +2,6 @@ import { appendFileSync, writeFileSync } from "node:fs"
 import { ANSI } from "./ansi.js"
 import { Renderable, RootRenderable } from "./Renderable.js"
 import { BoxRenderable } from "./renderables/Box.js"
-import { CodeRenderable } from "./renderables/Code.js"
 import { TextRenderable } from "./renderables/Text.js"
 import {
   DebugOverlayCorner,
@@ -26,7 +25,7 @@ import {
 } from "./zig.js"
 import { NativeSpanFeed } from "./NativeSpanFeed.js"
 import { increment, isTelemetryEnabled, mark, recordHistogramLabel, recordSpan } from "./telemetry.js"
-import { TerminalConsole, type ConsoleOptions, capture } from "./console.js"
+import type { ConsoleOptions, TerminalConsole } from "./console.js"
 import { type MouseEventType, type RawMouseEvent, type ScrollInfo } from "./lib/parse.mouse.js"
 import { Selection } from "./lib/selection.js"
 import { Clipboard, type ClipboardTarget } from "./lib/clipboard.js"
@@ -36,7 +35,7 @@ import { getObjectsInViewport } from "./lib/objects-in-viewport.js"
 import { KeyHandler, InternalKeyHandler } from "./lib/KeyHandler.js"
 import { isEditBufferRenderable, type EditBufferRenderable } from "./renderables/EditBufferRenderable.js"
 import { env, registerEnvVar } from "./lib/env.js"
-import { destroyTreeSitterClient } from "./lib/tree-sitter/index.js"
+import { getRendererConsoleIntegration, getRendererLastDestroyCleanups } from "./renderer-integration.js"
 import {
   buildTerminalPaletteSignature,
   createTerminalPalette,
@@ -867,7 +866,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     corner: DebugOverlayCorner.bottomRight,
   }
 
-  private _console: TerminalConsole
+  private _console: TerminalConsole | null = null
+  private readonly _claimCapturedConsoleOutput: () => string
   private _resolution: PixelResolution | null = null
   private _keyHandler: InternalKeyHandler
   private stdinParser: StdinParser | null = null
@@ -968,14 +968,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private handleError: (error: Error) => void = ((error: Error) => {
     console.error(error)
 
-    if (this._openConsoleOnError) {
-      this.console.show()
-    }
+    if (this._openConsoleOnError) this._console?.show()
   }).bind(this)
 
   private dumpOutputCache(optionalMessage: string = ""): void {
-    const cachedLogs = this.console.getCachedLogs()
-    const capturedConsoleOutput = capture.claimOutput()
+    const cachedLogs = this._console?.getCachedLogs() ?? ""
+    const capturedConsoleOutput = this._claimCapturedConsoleOutput()
     const capturedExternalOutputCommits = this.externalOutputQueue.claim()
 
     let capturedExternalOutput = ""
@@ -1082,6 +1080,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.stdout = stdout
     this._usesProcessStdout = stdout === process.stdout
     this.realStdoutWrite = stdout.write
+
+    const consoleIntegration = getRendererConsoleIntegration()
+    if (!consoleIntegration && (config.consoleMode === "console-overlay" || config.consoleOptions !== undefined)) {
+      throw new Error(
+        "Console overlay is not installed. Import @opentui/core or @opentui/core/console before requesting it.",
+      )
+    }
+    this._claimCapturedConsoleOutput = consoleIntegration?.claimCapturedOutput ?? (() => "")
 
     const lib = resolveRenderLib()
     const useMemoryBufferedOutput = config.bufferedOutput === "memory"
@@ -1345,11 +1351,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       clock: this.clock,
     })
 
-    this._console = new TerminalConsole(this, {
-      ...(config.consoleOptions ?? {}),
-      clock: this.clock,
-    })
-    this.consoleMode = config.consoleMode ?? "console-overlay"
+    if (consoleIntegration) {
+      this._console = consoleIntegration.create(this, {
+        ...(config.consoleOptions ?? {}),
+        clock: this.clock,
+      })
+      this.consoleMode = config.consoleMode ?? "console-overlay"
+    } else {
+      this._useConsole = false
+    }
     this.applyScreenMode(screenMode, false, false)
     rendererTracker.streamOwners.set(stdin, this)
     rendererTracker.streamOwners.set(stdout, this)
@@ -1768,12 +1778,19 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public set consoleMode(mode: ConsoleMode) {
-    this._useConsole = mode === "console-overlay"
-    if (this._useConsole) {
-      this.console.activate()
-    } else {
-      this.console.deactivate()
+    if (mode === "console-overlay") {
+      if (!this._console) {
+        throw new Error(
+          "Console overlay is not installed. Import @opentui/core or @opentui/core/console before enabling it.",
+        )
+      }
+      this._useConsole = true
+      this._console.activate()
+      return
     }
+
+    this._useConsole = false
+    this._console?.deactivate()
   }
 
   public get isRunning(): boolean {
@@ -1822,6 +1839,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public get console(): TerminalConsole {
+    if (!this._console) {
+      throw new Error(
+        "Console overlay is not installed. Import @opentui/core or @opentui/core/console before accessing it.",
+      )
+    }
     return this._console
   }
 
@@ -2192,12 +2214,21 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
     }
 
-    const collectPendingCodeRenderables = (node: Renderable): CodeRenderable[] => {
-      const pending: CodeRenderable[] = []
+    interface HighlightingState {
+      readonly isHighlighting: boolean
+      readonly highlightingDone: Promise<void>
+    }
+    type HighlightingRenderable = Renderable & HighlightingState
 
-      if (node instanceof CodeRenderable && node.isHighlighting) {
-        pending.push(node)
-      }
+    const isHighlightingRenderable = (node: Renderable): node is HighlightingRenderable => {
+      const candidate = node as unknown as Partial<HighlightingState>
+      return candidate.isHighlighting === true && typeof candidate.highlightingDone?.then === "function"
+    }
+
+    const collectPendingCodeRenderables = (node: Renderable): HighlightingRenderable[] => {
+      const pending: HighlightingRenderable[] = []
+
+      if (isHighlightingRenderable(node)) pending.push(node)
 
       for (const child of node.getChildren()) {
         pending.push(...collectPendingCodeRenderables(child))
@@ -2206,7 +2237,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return pending
     }
 
-    const waitForPendingHighlights = async (pending: CodeRenderable[], timeoutMs: number): Promise<void> => {
+    const waitForPendingHighlights = async (pending: HighlightingRenderable[], timeoutMs: number): Promise<void> => {
       await new Promise<void>((resolve, reject) => {
         let settled = false
         const timeoutHandle = renderer.clock.setTimeout(() => {
@@ -3264,7 +3295,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.nextRenderBuffer = this.lib.getNextBuffer(this.rendererPtr)
     this.currentRenderBuffer = this.lib.getCurrentBuffer(this.rendererPtr)
 
-    this._console.resize(this.width, this.height)
+    this._console?.resize(this.width, this.height)
     this.root.resize(this.width, this.height)
 
     if (terminalScreenModeChanged) {
@@ -3721,7 +3752,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._hasPointer = true
     this._lastPointerModifiers = mouseEvent.modifiers
 
-    if (this._console.visible) {
+    if (this._console?.visible) {
       const consoleBounds = this._console.bounds
       if (
         mouseEvent.x >= consoleBounds.x &&
@@ -4091,7 +4122,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this.nextRenderBuffer = this.lib.getNextBuffer(this.rendererPtr)
     this.currentRenderBuffer = this.lib.getCurrentBuffer(this.rendererPtr)
-    this._console.resize(this.width, this.height)
+    this._console?.resize(this.width, this.height)
     this.root.resize(this.width, this.height)
     this.emit(CliRenderEvents.RESIZE, this.width, this.height)
     this.requestRender()
@@ -4602,7 +4633,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.stdinParser?.destroy()
     this.stdinParser = null
     this.oscSubscribers.clear()
-    this._console.destroy()
+    this._console?.destroy()
+    this._console = null
 
     // Split-footer cleanup: flush pending output and reset offset before
     // tearing down the native renderer.
@@ -4668,9 +4700,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
     rendererTracker.renderers.delete(this)
     if (rendererTracker.renderers.size === 0) {
-      void destroyTreeSitterClient().catch((error) => {
-        console.error("Failed to destroy tree-sitter client:", error)
-      })
+      for (const cleanup of getRendererLastDestroyCleanups()) {
+        try {
+          void Promise.resolve(cleanup.run()).catch((error) => {
+            console.error(`Failed to destroy ${cleanup.description}:`, error)
+          })
+        } catch (error) {
+          console.error(`Failed to destroy ${cleanup.description}:`, error)
+        }
+      }
     }
 
     if (this._feed) {
@@ -4834,7 +4872,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         mark("opentui.firstJsRender")
       }
 
-      this._console.renderToBuffer(this.nextRenderBuffer)
+      this._console?.renderToBuffer(this.nextRenderBuffer)
 
       // If destroy() was requested during this frame, skip native work and scheduling.
       if (!this._isDestroyed) {
@@ -4978,7 +5016,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (this.partialRequests.size === 0) return false
     if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") return false
     if (this.forceFullRepaintRequested || !this.lastFrameCommitted) return false
-    if (this._console.visible || this.debugOverlay.enabled || this.postProcessFns.length > 0) return false
+    if (this._console?.visible || this.debugOverlay.enabled || this.postProcessFns.length > 0) return false
     if (!this.root.isPartialRenderStateCurrent()) return false
     if (this.ordinaryRenderGeneration !== this.committedOrdinaryRenderGeneration) return false
     // Image placement commits are whole-frame transactions, and fallback materialization is not safely repeatable.
