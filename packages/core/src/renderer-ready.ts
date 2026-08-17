@@ -128,7 +128,7 @@ export function createRendererReady(renderer: CliRenderer): RendererReadyHandle 
   let enhancedError: unknown
   let markedApplication = false
 
-  function detach(): void {
+  function detachAll(): void {
     renderer.off(CliRenderEvents.FRAME, onFrame)
     renderer.off(CliRenderEvents.RENDER_ERROR, onRenderError)
     renderer.off(CliRenderEvents.DESTROY, onDestroy)
@@ -146,17 +146,18 @@ export function createRendererReady(renderer: CliRenderer): RendererReadyHandle 
       if (application.settle("resolve", undefined, undefined)) {
         state.applicationReady = true
       }
+      // applicationReady is the terminal consumer declaration; once it settles
+      // the readiness contract is complete, so no further events are needed.
+      renderer.off(CliRenderEvents.DESTROY, onDestroy)
     }
-    // applicationReady is the terminal consumer declaration; once it settles no
-    // more readiness work can happen, so drop every listener (no lingering
-    // FRAME/RENDER_ERROR/DESTROY hooks in the common full-sequence path).
-    if (application.settled) detach()
   }
 
-  // A first-frame failure (early render error or destroy) settles every waiter
-  // that is still open; no promise is left hanging.
+  // Only a pre-first-frame (startup) failure — an early render error or a
+  // destroy before the base frame — is fatal for the whole contract. After the
+  // base frame commits, the base surface is established and enhanced/application
+  // are consumer-owned; later render errors no longer terminate readiness.
   function failStartup(reason: unknown): void {
-    detach()
+    detachAll()
     firstFrame.settle("reject", undefined, reason)
     enhanced.settle("reject", undefined, reason)
     application.settle("reject", undefined, reason)
@@ -165,15 +166,19 @@ export function createRendererReady(renderer: CliRenderer): RendererReadyHandle 
   function onFrame(): void {
     if (state.destroyed) return
     state.firstFrameCommitted = true
-    // Only the first commit is awaited; stop observing further frames.
+    // Only the first commit is awaited; from here readiness is established, so
+    // the FRAME and RENDER_ERROR hooks are no longer relevant. DESTROY stays so
+    // a destroy before enhanced/application are marked still settles them.
     renderer.off(CliRenderEvents.FRAME, onFrame)
+    renderer.off(CliRenderEvents.RENDER_ERROR, onRenderError)
     firstFrame.settle("resolve", undefined, undefined)
     releaseGated()
   }
 
   function onRenderError(event: { error: Error }): void {
-    const reason = new RendererReadyError(event.error.message, { cause: event.error })
-    failStartup(reason)
+    // Post-base-frame render errors are the application's concern, not readiness.
+    if (firstFrame.settled) return
+    failStartup(new RendererReadyError(event.error.message, { cause: event.error }))
   }
 
   function onDestroy(): void {

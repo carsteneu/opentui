@@ -5,7 +5,6 @@ import { CliRenderEvents } from "../renderer.js"
 import { createRendererReady, RendererReadyDestroyedError, RendererReadyError } from "../renderer-ready.js"
 import { createTestRenderer } from "../testing.js"
 import type { RenderContext } from "../types.js"
-
 function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => queueMicrotask(resolve))
 }
@@ -26,6 +25,7 @@ function baselineListenerCount(renderer: { listenerCount: (e: string) => number 
   return {
     frame: renderer.listenerCount(CliRenderEvents.FRAME),
     renderError: renderer.listenerCount(CliRenderEvents.RENDER_ERROR),
+    destroy: renderer.listenerCount(CliRenderEvents.DESTROY),
   }
 }
 
@@ -114,9 +114,13 @@ test("destroy before first frame ends waiters defined: rejects, no hang, no list
 
   expect(caught).toBeInstanceOf(RendererReadyDestroyedError)
   expect(ready.state.destroyed).toBe(true)
-  // All helper listeners detached — no leak.
+  // The helper's own FRAME/RENDER_ERROR hooks are gone (no churn on these).
   const after = baselineListenerCount(renderer)
-  expect(after).toEqual(before)
+  expect(after.frame).toBe(before.frame)
+  expect(after.renderError).toBe(before.renderError)
+  // DESTROY: the helper added and removed one; the test harness may also have
+  // consumed its own one-shot DESTROY listener, so only assert no extra is left.
+  expect(after.destroy).toBeLessThanOrEqual(before.destroy)
 })
 
 test("enhanced work can only begin after the base frame is committed", async () => {
@@ -205,4 +209,58 @@ test("first frame is not blocked by pending optional/capability work", async () 
     ready.destroy()
     renderer.destroy()
   }
+})
+
+test("a render error after the base frame does not undo readiness or consumer milestones", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({ openConsoleOnError: false })
+  const ready = createRendererReady(renderer)
+
+  try {
+    const target = new ThrowingRenderable(renderer, { width: 1, height: 1 }, new Error("later"))
+    target.shouldThrow = false
+    renderer.root.add(target)
+
+    await renderOnce()
+    await ready.firstFrameCommitted
+
+    // A later render error (after the base surface is committed) is the app's
+    // concern, not readiness: firstFrame stays resolved and an unmarked
+    // enhanced waiter is not rejected.
+    const settled = { enhanced: false }
+    ready.enhancedSettled
+      .then(() => (settled.enhanced = true))
+      .catch(() => (settled.enhanced = true))
+    // Test-owned listener keeps the render error "handled" (the helper's own
+    // RENDER_ERROR hook is gone after the base frame).
+    renderer.on(CliRenderEvents.RENDER_ERROR, () => {})
+    target.shouldThrow = true
+    await renderOnce()
+
+    expect(ready.state.firstFrameCommitted).toBe(true)
+    expect(ready.state.enhanced).toBe("pending")
+    await flushMicrotasks()
+    expect(settled.enhanced).toBe(false)
+
+    // The consumer can still complete enhanced afterwards.
+    ready.markEnhancedReady()
+    await ready.enhancedSettled
+    expect(ready.state.enhanced).toBe("ok")
+  } finally {
+    ready.destroy()
+    renderer.destroy()
+  }
+})
+
+test("destroy() is idempotent and safe to call more than once", async () => {
+  const { renderer } = await createTestRenderer({})
+  const ready = createRendererReady(renderer)
+
+  const rejection = ready.firstFrameCommitted.catch((e: unknown) => e)
+  ready.destroy()
+  ready.destroy()
+  ready.destroy()
+
+  expect(ready.state.destroyed).toBe(true)
+  expect(await rejection).toBeInstanceOf(RendererReadyDestroyedError)
+  renderer.destroy()
 })
