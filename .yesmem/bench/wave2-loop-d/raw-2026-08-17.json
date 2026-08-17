@@ -1,0 +1,712 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-17T14:46:38.415Z",
+  "scope": "Loop D readiness helper render-cycle characterization; not a cold-start or Wave-2 TTFMF gate",
+  "environment": {
+    "host": "benchhost",
+    "os": "linux 7.0.0-28-generic",
+    "bun": "1.3.14",
+    "sourceCommit": "6693c47ae161f476d46b94a1d761e99f9673977e",
+    "workingTreeNote": "measurement script/report are added by the following documentation commit"
+  },
+  "nativeArtifact": {
+    "path": "home/user/projects/opentui/.worktrees/wave2-ui-ready/packages/core/.yesmem/native-assets/@opentui/core-linux-x64/libopentui.so",
+    "sha256": "e7e9764462f2ee7f2c808856b60101ff659c6bda4a1df7cf235e418cf481a15c",
+    "expectedSha256": "e7e9764462f2ee7f2c808856b60101ff659c6bda4a1df7cf235e418cf481a15c",
+    "origin": "private per-worktree copy of the Wave-1 verified current native artifact; expected hash fixed by plan section 2.3",
+    "committed": false
+  },
+  "pairedRenderCycle": {
+    "order": "alternating within one warmed process; this is paired descriptive data, not a cold-process A/B",
+    "warmupPairs": 5,
+    "withoutReady": {
+      "summary": {
+        "samples": 30,
+        "p50Ms": 0.5432039999999461,
+        "p95Ms": 1.6633659999999963,
+        "minMs": 0.3773679999999331,
+        "maxMs": 3.8344280000001163,
+        "meanMs": 0.7489668333333308
+      },
+      "raw": [
+        0.6530330000000504,
+        0.5304499999999734,
+        0.4458789999998771,
+        0.6049310000000787,
+        0.5559579999999187,
+        1.5803580000001602,
+        0.6829589999999826,
+        0.43773299999998017,
+        0.637943999999834,
+        1.100304000000051,
+        0.4496559999997771,
+        3.8344280000001163,
+        0.8033390000000509,
+        0.4954329999998208,
+        0.5224840000000768,
+        0.40881800000011026,
+        0.4896120000000792,
+        0.6221940000000359,
+        1.0465719999999692,
+        0.5192680000000109,
+        0.5826389999999719,
+        0.6348390000000563,
+        0.49935100000016064,
+        0.4056519999999182,
+        0.38143600000012157,
+        0.49699600000008104,
+        1.6633659999999963,
+        0.3773679999999331,
+        0.38885999999979504,
+        0.6171449999999368
+      ]
+    },
+    "withReady": {
+      "summary": {
+        "samples": 30,
+        "p50Ms": 0.4960640000000467,
+        "p95Ms": 0.8491559999999936,
+        "minMs": 0.41705400000000736,
+        "maxMs": 1.3039919999998801,
+        "meanMs": 0.5550727666666868
+      },
+      "raw": [
+        0.656840000000102,
+        0.548183999999992,
+        0.5632619999998951,
+        0.6782009999999445,
+        0.5336050000000796,
+        0.4218220000000201,
+        0.8491559999999936,
+        0.42892700000015793,
+        0.465635999999904,
+        0.48763800000006086,
+        0.6309510000000955,
+        0.4504379999998491,
+        1.3039919999998801,
+        0.5859649999999874,
+        0.41705400000000736,
+        0.4443450000001121,
+        0.44467599999984486,
+        0.519448999999895,
+        0.4858040000001438,
+        0.511974999999893,
+        0.48905100000001767,
+        0.672219000000041,
+        0.46346200000016324,
+        0.5030770000000757,
+        0.44923500000004424,
+        0.7439060000001518,
+        0.43685100000016064,
+        0.4610970000001089,
+        0.4441859999999451,
+        0.5611790000000383
+      ]
+    }
+  },
+  "optionalScenarios": {
+    "note": "optional work starts only after firstFrameCommitted; slow time is intentionally injected",
+    "fast": {
+      "samples": 30,
+      "firstFrame": {
+        "samples": 30,
+        "p50Ms": 0.5145295000000942,
+        "p95Ms": 1.5965389999998933,
+        "minMs": 0.3247679999999491,
+        "maxMs": 2.0248549999998886,
+        "meanMs": 0.631033366666649
+      },
+      "enhancedAfterFrame": {
+        "samples": 30,
+        "p50Ms": 0.11063049999995656,
+        "p95Ms": 4.071981000000051,
+        "minMs": 0.06469300000003386,
+        "maxMs": 9.681728000000021,
+        "meanMs": 0.57393206666668
+      },
+      "applicationFromStart": {
+        "samples": 30,
+        "p50Ms": 0.6600164999999834,
+        "p95Ms": 4.593744000000015,
+        "minMs": 0.41582199999993463,
+        "maxMs": 10.2673020000002,
+        "meanMs": 1.2220824333333211
+      },
+      "raw": [
+        {
+          "firstFrameMs": 0.5230050000000119,
+          "enhancedAfterFrameMs": 9.681728000000021,
+          "applicationFromStartMs": 10.2673020000002
+        },
+        {
+          "firstFrameMs": 2.0248549999998886,
+          "enhancedAfterFrameMs": 0.19234700000015437,
+          "applicationFromStartMs": 2.2308470000000398
+        },
+        {
+          "firstFrameMs": 0.6186769999999342,
+          "enhancedAfterFrameMs": 0.20705399999997098,
+          "applicationFromStartMs": 0.8421730000000025
+        },
+        {
+          "firstFrameMs": 0.532553999999891,
+          "enhancedAfterFrameMs": 0.09850800000003801,
+          "applicationFromStartMs": 0.6434849999998278
+        },
+        {
+          "firstFrameMs": 0.6148899999998321,
+          "enhancedAfterFrameMs": 0.3123239999999896,
+          "applicationFromStartMs": 0.944376999999804
+        },
+        {
+          "firstFrameMs": 0.5024369999998726,
+          "enhancedAfterFrameMs": 0.14132900000004156,
+          "applicationFromStartMs": 0.6588039999999182
+        },
+        {
+          "firstFrameMs": 0.670755999999983,
+          "enhancedAfterFrameMs": 0.17909099999997125,
+          "applicationFromStartMs": 0.9235369999998966
+        },
+        {
+          "firstFrameMs": 0.49529199999983575,
+          "enhancedAfterFrameMs": 0.1283539999999448,
+          "applicationFromStartMs": 0.6363109999999779
+        },
+        {
+          "firstFrameMs": 0.5038790000000972,
+          "enhancedAfterFrameMs": 4.071981000000051,
+          "applicationFromStartMs": 4.593744000000015
+        },
+        {
+          "firstFrameMs": 0.47578599999997095,
+          "enhancedAfterFrameMs": 0.07877000000007683,
+          "applicationFromStartMs": 0.5670700000000579
+        },
+        {
+          "firstFrameMs": 0.4182159999998021,
+          "enhancedAfterFrameMs": 0.07784800000013092,
+          "applicationFromStartMs": 0.5024969999999485
+        },
+        {
+          "firstFrameMs": 0.5504280000000108,
+          "enhancedAfterFrameMs": 0.09683500000005552,
+          "applicationFromStartMs": 0.6612290000000485
+        },
+        {
+          "firstFrameMs": 0.3247679999999491,
+          "enhancedAfterFrameMs": 0.08252700000002733,
+          "applicationFromStartMs": 0.41582199999993463
+        },
+        {
+          "firstFrameMs": 0.5060540000001765,
+          "enhancedAfterFrameMs": 0.10422799999992094,
+          "applicationFromStartMs": 0.6199300000000676
+        },
+        {
+          "firstFrameMs": 0.45892400000002453,
+          "enhancedAfterFrameMs": 0.0778579999998783,
+          "applicationFromStartMs": 0.5442559999999048
+        },
+        {
+          "firstFrameMs": 0.49251799999979085,
+          "enhancedAfterFrameMs": 0.19998000000009597,
+          "applicationFromStartMs": 0.7029579999998532
+        },
+        {
+          "firstFrameMs": 0.4475119999999606,
+          "enhancedAfterFrameMs": 0.11167199999999866,
+          "applicationFromStartMs": 0.5701449999999113
+        },
+        {
+          "firstFrameMs": 0.9724410000001171,
+          "enhancedAfterFrameMs": 0.11222299999985808,
+          "applicationFromStartMs": 1.098750999999993
+        },
+        {
+          "firstFrameMs": 0.4492649999999685,
+          "enhancedAfterFrameMs": 0.13214099999981954,
+          "applicationFromStartMs": 0.6156020000000808
+        },
+        {
+          "firstFrameMs": 0.5436239999999088,
+          "enhancedAfterFrameMs": 0.06744900000012422,
+          "applicationFromStartMs": 0.6203900000000431
+        },
+        {
+          "firstFrameMs": 0.7114240000000791,
+          "enhancedAfterFrameMs": 0.06489400000009482,
+          "applicationFromStartMs": 0.783771999999999
+        },
+        {
+          "firstFrameMs": 0.6109530000001087,
+          "enhancedAfterFrameMs": 0.1168920000000071,
+          "applicationFromStartMs": 0.7380749999999807
+        },
+        {
+          "firstFrameMs": 0.38962100000003375,
+          "enhancedAfterFrameMs": 0.06469300000003386,
+          "applicationFromStartMs": 0.4600860000000466
+        },
+        {
+          "firstFrameMs": 1.0104429999998956,
+          "enhancedAfterFrameMs": 0.1514879999999721,
+          "applicationFromStartMs": 1.1734539999999924
+        },
+        {
+          "firstFrameMs": 0.4606260000000475,
+          "enhancedAfterFrameMs": 0.07865999999989981,
+          "applicationFromStartMs": 0.5480929999998807
+        },
+        {
+          "firstFrameMs": 0.4186770000001161,
+          "enhancedAfterFrameMs": 0.07400100000018028,
+          "applicationFromStartMs": 0.4989300000002004
+        },
+        {
+          "firstFrameMs": 0.5822880000000623,
+          "enhancedAfterFrameMs": 0.09593299999983174,
+          "applicationFromStartMs": 0.695173000000068
+        },
+        {
+          "firstFrameMs": 1.5965389999998933,
+          "enhancedAfterFrameMs": 0.08957100000020546,
+          "applicationFromStartMs": 1.7328679999998258
+        },
+        {
+          "firstFrameMs": 0.49619400000005953,
+          "enhancedAfterFrameMs": 0.10958899999991445,
+          "applicationFromStartMs": 0.6157519999999295
+        },
+        {
+          "firstFrameMs": 0.5283550000001469,
+          "enhancedAfterFrameMs": 0.21799400000008973,
+          "applicationFromStartMs": 0.7570400000001882
+        }
+      ]
+    },
+    "slow25ms": {
+      "samples": 30,
+      "firstFrame": {
+        "samples": 30,
+        "p50Ms": 0.5091594999998961,
+        "p95Ms": 2.6346040000003086,
+        "minMs": 0.33318400000007387,
+        "maxMs": 4.2386169999999765,
+        "meanMs": 0.8570903333333869
+      },
+      "enhancedAfterFrame": {
+        "samples": 30,
+        "p50Ms": 32.39213000000018,
+        "p95Ms": 40.73060600000008,
+        "minMs": 25.400227000000086,
+        "maxMs": 43.895870999999715,
+        "meanMs": 31.880645799999986
+      },
+      "applicationFromStart": {
+        "samples": 30,
+        "p50Ms": 33.09825349999994,
+        "p95Ms": 41.294470000000274,
+        "minMs": 25.759941000000254,
+        "maxMs": 44.468820999999934,
+        "meanMs": 32.83287520000001
+      },
+      "raw": [
+        {
+          "firstFrameMs": 1.280828000000156,
+          "enhancedAfterFrameMs": 32.5193670000001,
+          "applicationFromStartMs": 34.00748900000008
+        },
+        {
+          "firstFrameMs": 0.5146199999999226,
+          "enhancedAfterFrameMs": 33.113276999999925,
+          "applicationFromStartMs": 33.75236399999994
+        },
+        {
+          "firstFrameMs": 0.604319999999916,
+          "enhancedAfterFrameMs": 32.47894999999994,
+          "applicationFromStartMs": 33.179803999999876
+        },
+        {
+          "firstFrameMs": 0.4434640000001764,
+          "enhancedAfterFrameMs": 28.055870999999797,
+          "applicationFromStartMs": 28.55187500000011
+        },
+        {
+          "firstFrameMs": 0.4086979999999585,
+          "enhancedAfterFrameMs": 29.673300000000154,
+          "applicationFromStartMs": 30.158723999999893
+        },
+        {
+          "firstFrameMs": 0.5188370000000759,
+          "enhancedAfterFrameMs": 32.5,
+          "applicationFromStartMs": 33.09997099999987
+        },
+        {
+          "firstFrameMs": 0.5372529999999642,
+          "enhancedAfterFrameMs": 27.89922300000012,
+          "applicationFromStartMs": 28.4956380000001
+        },
+        {
+          "firstFrameMs": 0.4227850000002036,
+          "enhancedAfterFrameMs": 27.16438500000004,
+          "applicationFromStartMs": 27.746262000000115
+        },
+        {
+          "firstFrameMs": 0.7454789999999321,
+          "enhancedAfterFrameMs": 33.47360400000002,
+          "applicationFromStartMs": 34.29495699999984
+        },
+        {
+          "firstFrameMs": 0.4576520000000528,
+          "enhancedAfterFrameMs": 32.25977300000022,
+          "applicationFromStartMs": 32.78038400000014
+        },
+        {
+          "firstFrameMs": 0.44515799999999217,
+          "enhancedAfterFrameMs": 32.49010099999987,
+          "applicationFromStartMs": 33.065337
+        },
+        {
+          "firstFrameMs": 0.460095999999794,
+          "enhancedAfterFrameMs": 32.30395699999963,
+          "applicationFromStartMs": 32.820308999999725
+        },
+        {
+          "firstFrameMs": 0.33318400000007387,
+          "enhancedAfterFrameMs": 25.400227000000086,
+          "applicationFromStartMs": 25.759941000000254
+        },
+        {
+          "firstFrameMs": 1.6606100000003607,
+          "enhancedAfterFrameMs": 32.35744799999975,
+          "applicationFromStartMs": 34.12877000000026
+        },
+        {
+          "firstFrameMs": 0.49307900000030713,
+          "enhancedAfterFrameMs": 40.73060600000008,
+          "applicationFromStartMs": 41.294470000000274
+        },
+        {
+          "firstFrameMs": 0.49992100000008577,
+          "enhancedAfterFrameMs": 43.895870999999715,
+          "applicationFromStartMs": 44.468820999999934
+        },
+        {
+          "firstFrameMs": 0.6225249999997686,
+          "enhancedAfterFrameMs": 32.366847000000234,
+          "applicationFromStartMs": 33.096536000000015
+        },
+        {
+          "firstFrameMs": 1.821997999999894,
+          "enhancedAfterFrameMs": 32.417413000000124,
+          "applicationFromStartMs": 34.30835200000001
+        },
+        {
+          "firstFrameMs": 1.874246999999741,
+          "enhancedAfterFrameMs": 33.22109300000011,
+          "applicationFromStartMs": 35.17376899999999
+        },
+        {
+          "firstFrameMs": 0.7291780000000472,
+          "enhancedAfterFrameMs": 34.018990999999914,
+          "applicationFromStartMs": 35.1865029999999
+        },
+        {
+          "firstFrameMs": 0.41287499999998545,
+          "enhancedAfterFrameMs": 38.994962000000214,
+          "applicationFromStartMs": 39.44986800000015
+        },
+        {
+          "firstFrameMs": 4.2386169999999765,
+          "enhancedAfterFrameMs": 27.392598000000362,
+          "applicationFromStartMs": 31.81389399999989
+        },
+        {
+          "firstFrameMs": 2.6346040000003086,
+          "enhancedAfterFrameMs": 28.730605000000196,
+          "applicationFromStartMs": 31.408601999999973
+        },
+        {
+          "firstFrameMs": 0.5032980000000862,
+          "enhancedAfterFrameMs": 33.16219999999976,
+          "applicationFromStartMs": 33.70877999999993
+        },
+        {
+          "firstFrameMs": 0.4240279999999075,
+          "enhancedAfterFrameMs": 30.15132900000026,
+          "applicationFromStartMs": 30.61360999999988
+        },
+        {
+          "firstFrameMs": 0.49622400000043854,
+          "enhancedAfterFrameMs": 32.60804599999983,
+          "applicationFromStartMs": 33.18379100000038
+        },
+        {
+          "firstFrameMs": 0.5177750000002561,
+          "enhancedAfterFrameMs": 26.49469999999974,
+          "applicationFromStartMs": 27.078410000000076
+        },
+        {
+          "firstFrameMs": 0.5036989999998696,
+          "enhancedAfterFrameMs": 28.914324999999735,
+          "applicationFromStartMs": 29.48448099999996
+        },
+        {
+          "firstFrameMs": 0.6144990000002508,
+          "enhancedAfterFrameMs": 28.470769999999902,
+          "applicationFromStartMs": 29.149602999999843
+        },
+        {
+          "firstFrameMs": 0.49315900000010515,
+          "enhancedAfterFrameMs": 33.15953499999978,
+          "applicationFromStartMs": 33.724940999999944
+        }
+      ]
+    },
+    "controlledFailure": {
+      "samples": 30,
+      "firstFrame": {
+        "samples": 30,
+        "p50Ms": 0.472774999999956,
+        "p95Ms": 2.6689910000000054,
+        "minMs": 0.37159699999983786,
+        "maxMs": 4.133417999999892,
+        "meanMs": 0.7375810999999582
+      },
+      "enhancedAfterFrame": {
+        "samples": 30,
+        "p50Ms": 0.13443100000017694,
+        "p95Ms": 3.6141590000001997,
+        "minMs": 0.08271700000022975,
+        "maxMs": 7.192950999999994,
+        "meanMs": 0.7149580999999823
+      },
+      "applicationFromStart": {
+        "samples": 30,
+        "p50Ms": 0.7556829999998627,
+        "p95Ms": 7.6549300000001494,
+        "minMs": 0.4786810000000514,
+        "maxMs": 11.756596999999601,
+        "meanMs": 1.8388201999999638
+      },
+      "raw": [
+        {
+          "firstFrameMs": 0.43146100000012666,
+          "enhancedAfterFrameMs": 7.192950999999994,
+          "applicationFromStartMs": 7.6549300000001494
+        },
+        {
+          "firstFrameMs": 0.45107800000005227,
+          "enhancedAfterFrameMs": 0.11851599999999962,
+          "applicationFromStartMs": 0.5768880000000536
+        },
+        {
+          "firstFrameMs": 0.3901820000000953,
+          "enhancedAfterFrameMs": 0.08271700000022975,
+          "applicationFromStartMs": 0.4786810000000514
+        },
+        {
+          "firstFrameMs": 0.4220629999999801,
+          "enhancedAfterFrameMs": 0.09629300000005969,
+          "applicationFromStartMs": 0.5248689999998533
+        },
+        {
+          "firstFrameMs": 0.590483999999833,
+          "enhancedAfterFrameMs": 0.11468799999965995,
+          "applicationFromStartMs": 0.7124959999996463
+        },
+        {
+          "firstFrameMs": 0.5804939999998169,
+          "enhancedAfterFrameMs": 0.16414199999962875,
+          "applicationFromStartMs": 0.7586639999999534
+        },
+        {
+          "firstFrameMs": 0.6471520000000055,
+          "enhancedAfterFrameMs": 0.16840099999990343,
+          "applicationFromStartMs": 0.8270840000000135
+        },
+        {
+          "firstFrameMs": 2.6689910000000054,
+          "enhancedAfterFrameMs": 0.16609599999992497,
+          "applicationFromStartMs": 2.849865000000136
+        },
+        {
+          "firstFrameMs": 0.3852830000000722,
+          "enhancedAfterFrameMs": 0.1036380000000463,
+          "applicationFromStartMs": 0.49749700000029407
+        },
+        {
+          "firstFrameMs": 0.6775800000000345,
+          "enhancedAfterFrameMs": 0.2112120000001596,
+          "applicationFromStartMs": 0.8974080000002687
+        },
+        {
+          "firstFrameMs": 0.437101999999868,
+          "enhancedAfterFrameMs": 0.11128099999996266,
+          "applicationFromStartMs": 0.5567099999998391
+        },
+        {
+          "firstFrameMs": 0.3868360000001303,
+          "enhancedAfterFrameMs": 1.6684759999998278,
+          "applicationFromStartMs": 2.071161999999731
+        },
+        {
+          "firstFrameMs": 0.45166900000003807,
+          "enhancedAfterFrameMs": 0.11758299999974042,
+          "applicationFromStartMs": 0.5782500000000255
+        },
+        {
+          "firstFrameMs": 4.133417999999892,
+          "enhancedAfterFrameMs": 3.2454569999999876,
+          "applicationFromStartMs": 7.398391999999603
+        },
+        {
+          "firstFrameMs": 0.5509380000003148,
+          "enhancedAfterFrameMs": 0.21613099999967744,
+          "applicationFromStartMs": 0.7794730000000527
+        },
+        {
+          "firstFrameMs": 0.49792799999977433,
+          "enhancedAfterFrameMs": 0.1581610000002911,
+          "applicationFromStartMs": 0.6803650000001653
+        },
+        {
+          "firstFrameMs": 0.4570499999999811,
+          "enhancedAfterFrameMs": 0.1105609999999615,
+          "applicationFromStartMs": 0.5762070000000676
+        },
+        {
+          "firstFrameMs": 0.682709000000159,
+          "enhancedAfterFrameMs": 0.15245999999979176,
+          "applicationFromStartMs": 0.8419120000003204
+        },
+        {
+          "firstFrameMs": 0.40912799999978233,
+          "enhancedAfterFrameMs": 0.13263199999983044,
+          "applicationFromStartMs": 0.5532129999996869
+        },
+        {
+          "firstFrameMs": 1.1768299999998817,
+          "enhancedAfterFrameMs": 0.13495700000021316,
+          "applicationFromStartMs": 1.3201229999999669
+        },
+        {
+          "firstFrameMs": 0.645998999999847,
+          "enhancedAfterFrameMs": 0.09944900000027701,
+          "applicationFromStartMs": 0.7527019999997719
+        },
+        {
+          "firstFrameMs": 0.41628199999968274,
+          "enhancedAfterFrameMs": 3.6141590000001997,
+          "applicationFromStartMs": 4.061670999999933
+        },
+        {
+          "firstFrameMs": 0.38059400000020105,
+          "enhancedAfterFrameMs": 0.10679299999992509,
+          "applicationFromStartMs": 0.49379899999985355
+        },
+        {
+          "firstFrameMs": 0.4884999999999309,
+          "enhancedAfterFrameMs": 2.1702210000003106,
+          "applicationFromStartMs": 2.6739889999998923
+        },
+        {
+          "firstFrameMs": 0.40755600000011327,
+          "enhancedAfterFrameMs": 0.11647099999981947,
+          "applicationFromStartMs": 0.5315720000003239
+        },
+        {
+          "firstFrameMs": 0.37159699999983786,
+          "enhancedAfterFrameMs": 0.09028200000011566,
+          "applicationFromStartMs": 0.48709699999972145
+        },
+        {
+          "firstFrameMs": 1.320292999999765,
+          "enhancedAfterFrameMs": 0.11549999999988358,
+          "applicationFromStartMs": 1.448406999999861
+        },
+        {
+          "firstFrameMs": 0.7064150000001064,
+          "enhancedAfterFrameMs": 0.37115700000003926,
+          "applicationFromStartMs": 1.1094520000001467
+        },
+        {
+          "firstFrameMs": 0.4227349999996477,
+          "enhancedAfterFrameMs": 0.13390500000014072,
+          "applicationFromStartMs": 11.756596999999601
+        },
+        {
+          "firstFrameMs": 0.5390859999997701,
+          "enhancedAfterFrameMs": 0.16445299999986673,
+          "applicationFromStartMs": 0.7151309999999285
+        }
+      ]
+    }
+  },
+  "cleanupAudit": {
+    "listeners": [
+      {
+        "stage": "before-frame",
+        "before": {
+          "frame": 0,
+          "renderError": 0,
+          "destroy": 1
+        },
+        "after": {
+          "frame": 0,
+          "renderError": 0,
+          "destroy": 1
+        },
+        "delta": {
+          "frame": 0,
+          "renderError": 0,
+          "destroy": 0
+        }
+      },
+      {
+        "stage": "after-frame",
+        "before": {
+          "frame": 0,
+          "renderError": 0,
+          "destroy": 1
+        },
+        "after": {
+          "frame": 0,
+          "renderError": 0,
+          "destroy": 1
+        },
+        "delta": {
+          "frame": 0,
+          "renderError": 0,
+          "destroy": 0
+        }
+      },
+      {
+        "stage": "after-application",
+        "before": {
+          "frame": 0,
+          "renderError": 0,
+          "destroy": 1
+        },
+        "after": {
+          "frame": 0,
+          "renderError": 0,
+          "destroy": 1
+        },
+        "delta": {
+          "frame": 0,
+          "renderError": 0,
+          "destroy": 0
+        }
+      }
+    ],
+    "activeHandleProbeSupported": true,
+    "activeHandlesBefore": [],
+    "activeHandlesAfter": [],
+    "helperTimerCallsInSource": {
+      "setTimeout": 0,
+      "setInterval": 0
+    }
+  }
+}
