@@ -2,7 +2,8 @@
 
 Loop: C (B5 — Parser-Worker-/Asset-Auflösung)
 Branch / Worktree: `yesloop/wave2-parser-assets` / `.worktrees/wave2-parser-assets`
-Basis-Commit / Head-Commit: `bf23ea84` / `bf23ea84` (keine Runtime-Änderung; nur Messartefakte)
+Basis-Commit: `bf23ea84`
+Head-Commit: gezielter Fix-Commit dieses Reports; finale SHA steht in der Integrationsübergabe
 Status: **NO-OP-MIT-BELEG**
 
 ## Auftrag und Befund
@@ -28,38 +29,42 @@ bestätigt — nicht nur vermutet.
 `bun scripts/measure-parser-worker.ts 30`, Parent spawnet je Sample einen frischen `bun`-Subprozess,
 Szenarien pro Sample im Round-Robin (gepaart gegen Drift). Warm-up getrennt (3). Median/p95 aus 30 Samples.
 
-| Szenario | median (ms) | p95 (ms) | min (ms) | max (ms) |
-| --- | ---: | ---: | ---: | ---: |
-| worker-resolve (eager Op isoliert) | 0.668 | 2.290 | 0.410 | 4.991 |
-| runtime-assets (Modul-Eval inkl. Worker) | 64.884 | 110.746 | 24.300 | 113.823 |
-| root (`@opentui/core` Import) | 319.496 | 551.961 | 139.320 | 611.227 |
+| Szenario                                 | median (ms) | p95 (ms) | min (ms) | max (ms) |
+| ---------------------------------------- | ----------: | -------: | -------: | -------: |
+| worker-resolve (eager Op isoliert)       |       0.664 |    2.290 |    0.410 |    4.991 |
+| runtime-assets (Modul-Eval inkl. Worker) |      64.490 |  110.746 |   24.300 |  113.823 |
+| root (`@opentui/core` Import)            |     302.319 |  551.961 |  139.320 |  611.227 |
 
-**Anteil worker-resolve / root (Median): 0.209 %**; selbst im p95 nur ~0.4 % (2.29 / 551.96).
+**Anteil worker-resolve / root (Median): 0,220 %**; selbst im p95 nur ~0,4 % (2,29 / 551,96).
 Weit unter der 2-%-Schwelle.
 
 Rohdaten: `packages/core/scripts/measure-data/parser-worker-raw.json` (30×3 ns-Samples).
 Skript: `packages/core/scripts/measure-parser-worker.ts`.
-Probe (reproduzierbar): `bun scripts/measure-parser-worker.ts --verify-executed` → PASS.
+Probe (reproduzierbar): `bun scripts/measure-parser-worker.ts --verify-executed` → PASS. Ein eigener
+Regressionstest belegt außerdem, dass ein nicht startbarer Probe-Child nicht als PASS durchrutscht:
+`BUN_PATH=/bin/false bun scripts/measure-parser-worker.ts --verify-executed` → Exit 1.
 
 Worst-Case-Einordnung: Auch die ungünstigste Paarung (worker-p95 2.29 ms gegen den schnellsten Root-Import
-139 ms) bliebe bei ~1.6 % und damit unter der 2 %-Schwelle; der Median-Anteil (0.209 %) ist ~15–30× unter dem Gate.
+139 ms) bliebe bei ~1,6 % und damit unter der 2-%-Schwelle; der Median-Anteil (0,220 %) ist ungefähr neunmal
+kleiner als das Gate.
 
 ## Weitere C1-Punkte
 
-- **Runtime-assets-Eval (64.9 ms Median)**: dominiert vom statischen Importgraph-Transpile (string-width,
+- **Runtime-assets-Eval (64,5 ms Median)**: dominiert vom statischen Importgraph-Transpile (string-width,
   strip-ansi, node-asset-target, assets, runtime + Bun-Start), der von der worker-Auflösung unabhängig ist.
   Der isolierte worker-resolve-Anteil daran ist ~1 %.
 - **Node-Verhalten**: `runtime-assets.node.ts` enthält **keinen** Modulscope-`await`/Import — die
   Workerpfad-Auflösung dort ist bereits synchron und lazy (`resolveDefaultTreeSitterWorkerPath`, nur bei Bedarf).
   Node ist von der eager-Auflösung **nicht** betroffen; Bun und Node bleiben semantisch gleich.
-- **First-Frame-Einfluss**: Der worker-Pfad wird ausschließlich in `startWorker()`/`initialize()` konsumiert.
-  Der Import-/Erstcommit-Pfad ruft ihn nicht; der eager Modulscope-Import trägt nur ~0.7 ms zum Root-Import bei.
-- **Lean-Renderer-Import (Loop B)**: für den parallelen Loop nicht verfügbar; der NO-OP-Anteil ist bereits ohne
-  Lean-Fixture eindeutig (Bruchteil von 1 % des Root-Imports), daher kein weiterer Fixture nötig.
+- **First-Frame-Einfluss**: Der Workerpfad wird ausschließlich in `startWorker()`/`initialize()` konsumiert.
+  Der Worker selbst läuft nicht im Import-/Erstcommit-Pfad; die eager Pfadauflösung liegt mit rund 0,7 ms im
+  Importpfad, aber deutlich unter dem Priorisierungsgate.
+- **Lean-Renderer-Import (Loop B)**: Loop B war während C1 noch nicht integriert. Da Loop C keine Runtime-Datei
+  ändert, bleibt die kombinierte Lean-Closure-Prüfung gemäß Plan §8 ein Integrationsgate nach B+C.
 
 ## Entscheidung
 
-**0.21 % < 2 % und kein First-Frame-Einfluss → keine Runtime-Änderung. NO-OP.**
+**0,22 % < 2 % und keine Worker-Ausführung im First-Frame-Pfad → keine Runtime-Änderung. NO-OP.**
 
 C2 (lazy Auflösung) wird **nicht** implementiert: Die Auflösung ist messbar vernachlässigbar, und das Erkaufen
 einer Lazy-Änderung brächte keinen messbaren Import-/TTFMF-Gewinn, aber zusätzliche Ownership-/Parity-Risiken.
@@ -75,16 +80,42 @@ dokumentierter Robustheits-Risikopunkt, **kein** aktiver Fehlerpfad. Ein später
 
 ## Verifikation
 
+- Regressionstest:
+  `bun test scripts/measure-parser-worker.test.ts`
+  → 2 pass, 0 fail, exit 0 (False-PASS-Child und Median bei gerader Samplezahl).
+- Reale No-exec-Probe:
+  `bun scripts/measure-parser-worker.ts --verify-executed`
+  → PASS, exit 0; der Default-Export ist ein nicht leerer absoluter Pfad-String und der Modulbody lief nicht.
+- Negativprobe:
+  `BUN_PATH=/bin/false bun scripts/measure-parser-worker.ts --verify-executed`
+  → erwarteter Fehler `probe child failed`, exit 1.
 - Fokussierte Assettests (kein `OTUI_ASSET_ROOT`):
   `bun test src/platform/runtime.test.ts src/node-assets.test.ts src/lib/tree-sitter/client.test.ts`
   → 69 pass, 0 fail (479 expects), exit 0. (Vorher, ohne `build:lib`-Artefakt, schlug `node-assets.test.ts`
   fehl, weil `dist/parser.worker.js` fehlte — baseline Build-Dependency, kein Regressionsbefund.)
+- Vollständige JS-Suite:
+  `bun run test:js`
+  → 5494 pass, 23 skip, 0 fail, exit 0.
 - `bun run build:lib` → Erfolg; `dist/parser.worker.js` (172 KB) gebaut.
+- Dist-Paketprüfung mit dem vorgeschriebenen Node 26:
+  `PATH=home/user/.nvm/versions/node/v26.4.0/bin:… bun run test:dist --skip-build`
+  → Node ESM, Node CJS und Bun grün, exit 0. `--skip-build` verwendet das unmittelbar zuvor mit
+  `build:lib` erzeugte Dist; der vollständige Build benötigt die lokal fehlende Zig-Version 0.16.
+- `bun run test:js:node` mit Node 26 erreicht die Tests nicht: TypeScript meldet in
+  `src/renderables/Code.test.ts:1457/1479`, dass `"requestPartialRender"` kein `keyof CodeRenderable` sei.
+  Derselbe Fehler ist auf der unveränderten Runtime-Baseline `f33c8019` reproduziert und daher kein Loop-C-Befund.
+- Native-Artefakt für Messung und Bun-Suite:
+  `packages/core/node_modules/@opentui/core-linux-x64/libopentui.so`, SHA-256
+  `e7e9764462f2ee7f2c808856b60101ff659c6bda4a1df7cf235e418cf481a15c`, aus dem gepinnten
+  `@opentui/core-linux-x64`-Paket; `nm -D --defined-only` meldet 1890 Symbole.
 - Da keine Runtime-/Source-Datei geändert wurde, gibt es keinen Vorher/Nachher-Gewinn; der NO-OP-Befund oben
   ist der Nachweis.
 
-## Commit
+## Commits in Reihenfolge
 
-- `perf(core): isolate parser-worker asset resolution — no-op (0.2% of root import)`
-- Nur eigene Dateien: `scripts/measure-parser-worker.ts`, `scripts/measure-data/parser-worker-raw.json`,
-  diese Report-Datei.
+1. `0bc9fe3e` — `perf(core): isolate parser-worker asset resolution — no-op (0.2% of root import)`
+2. `9f744136` — `test(core): add reproducible no-exec probe to parser-worker measure script`
+3. gezielter Fix-Commit dieses Reports — Probe-Fehlerpfad, korrekte Medianberechnung, Format und Übergabe
+
+Keine Runtime-/Policydatei wurde geändert. Eigene versionierte Dateien sind das Messskript, dessen Regressionstest,
+die Rohdaten und dieser Report.

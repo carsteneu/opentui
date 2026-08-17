@@ -18,8 +18,8 @@
  * (i.e. the eager parser-worker resolution never runs the worker on the main thread).
  */
 import { execFileSync, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, rmSync, appendFileSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { isAbsolute, join } from "node:path"
 
 const args = process.argv.slice(2)
 const samples = Number(args[0] ?? 30)
@@ -38,7 +38,7 @@ const SCENARIOS = [
 
 type Row = { scenario: string; idx: number; ns: number }
 
-function runScenarion(snippet: string): number {
+function runScenario(snippet: string): number {
   const r = spawnSync(BUN, ["-e", snippet], { encoding: "utf8", timeout: 120_000 })
   if (r.status !== 0 || r.error) {
     throw new Error(`subprocess failed: ${r.status ?? r.error} :: ${r.stderr}`)
@@ -53,12 +53,19 @@ function runScenarion(snippet: string): number {
   return parsed
 }
 
-function stats(values: number[]): { median: number; p95: number; min: number; max: number } {
+export function calculateStats(values: number[]): { median: number; p95: number; min: number; max: number } {
   const sorted = [...values].sort((a, b) => a - b)
-  const mid = (x: number) => sorted[Math.min(sorted.length - 1, Math.floor(x))]!
+  if (sorted.length === 0) {
+    throw new Error("cannot calculate statistics for an empty sample")
+  }
+
+  const middle = Math.floor(sorted.length / 2)
+  const median = sorted.length % 2 === 0 ? (sorted[middle - 1]! + sorted[middle]!) / 2 : sorted[middle]!
+  const p95Index = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)
+
   return {
-    median: mid(sorted.length / 2),
-    p95: mid(0.95 * sorted.length),
+    median,
+    p95: sorted[p95Index]!,
     min: sorted[0]!,
     max: sorted[sorted.length - 1]!,
   }
@@ -77,22 +84,47 @@ function verifyExecutedProbe(): void {
   mkdirSync(tmp, { recursive: true })
   rmSync(sentinel, { force: true })
 
-  const markerBody = `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(sentinel)}, "executed"); export default "/resolved/asset/path"`
-  writeFileSync(marker, markerBody)
+  try {
+    const markerBody = `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(sentinel)}, "executed"); export default "/resolved/asset/path"`
+    writeFileSync(marker, markerBody)
 
-  const snippet = `const r = await import(${JSON.stringify(marker)}, { with: { type: "file" } }); console.log(typeof r.default, r.default[0])`
-  const r = spawnSync(BUN, ["-e", snippet], { encoding: "utf8", timeout: 30_000 })
-  rmSync(marker, { force: true })
-  const executed = existsSync(sentinel)
-  const plain = (r.stdout ?? "").replace(/\x1b\[[0-9;]*m/g, "").trim()
+    const snippet = `const r = await import(${JSON.stringify(marker)}, { with: { type: "file" } }); console.log(JSON.stringify({ default: r.default }))`
+    const result = spawnSync(BUN, ["-e", snippet], { encoding: "utf8", timeout: 30_000 })
+    const executed = existsSync(sentinel)
+    const plain = (result.stdout ?? "").replace(/\x1b\[[0-9;]*m/g, "").trim()
 
-  console.log(`type:"file" child output: ${JSON.stringify(plain)}`)
-  console.log(`module body executed during resolution: ${executed}`)
-  if (executed) {
-    console.error("FAIL: marker module body ran — the eager resolve WOULD execute the worker on the main thread.")
-    process.exit(1)
+    console.log(`type:"file" child output: ${JSON.stringify(plain)}`)
+    console.log(`module body executed during resolution: ${executed}`)
+
+    if (result.error || result.status !== 0) {
+      throw new Error(
+        `probe child failed: status=${result.status ?? "none"} signal=${result.signal ?? "none"} error=${result.error?.message ?? "none"} stderr=${JSON.stringify(result.stderr ?? "")}`,
+      )
+    }
+    if (executed) {
+      throw new Error("marker module body ran — the eager resolve WOULD execute the worker on the main thread")
+    }
+
+    let loaded: unknown
+    try {
+      loaded = JSON.parse(plain)
+    } catch (error) {
+      throw new Error(`probe child returned invalid JSON: ${JSON.stringify(plain)}`, { cause: error })
+    }
+
+    const loadedPath = (loaded as { default?: unknown }).default
+    if (typeof loadedPath !== "string" || loadedPath.length === 0) {
+      throw new Error(`type:"file" default export is not a non-empty string: ${JSON.stringify(loadedPath)}`)
+    }
+    if (!isAbsolute(loadedPath) && !loadedPath.startsWith("file:")) {
+      throw new Error(`type:"file" default export is not an absolute file path: ${JSON.stringify(loadedPath)}`)
+    }
+
+    console.log('PASS: `type:"file"` resolves a path string WITHOUT executing the module body.')
+  } finally {
+    rmSync(marker, { force: true })
+    rmSync(sentinel, { force: true })
   }
-  console.log("PASS: `type:\"file\"` resolves a path string WITHOUT executing the module body.")
 }
 
 function main(): void {
@@ -101,11 +133,14 @@ function main(): void {
     return
   }
 
+  if (!Number.isSafeInteger(samples) || samples <= 0) {
+    throw new Error(`samples must be a positive integer, received ${JSON.stringify(args[0])}`)
+  }
 
   for (let i = 0; i < warmup; i++) {
     for (const s of SCENARIOS) {
       try {
-        runScenarion(s.snippet)
+        runScenario(s.snippet)
       } catch {
         /* warm-up noise ignored */
       }
@@ -117,7 +152,7 @@ function main(): void {
 
   for (let i = 0; i < samples; i++) {
     for (const s of SCENARIOS) {
-      const ns = runScenarion(s.snippet)
+      const ns = runScenario(s.snippet)
       raw.push({ scenario: s.name, idx: i, ns })
       buckets[s.name]!.push(ns)
     }
@@ -126,16 +161,18 @@ function main(): void {
   console.log(`samples=${samples} warmup=${warmup}  (cold subprocess, Bun ${BUN})\n`)
   const table: Array<[string, number, number, number, number]> = []
   for (const s of SCENARIOS) {
-    const st = stats(buckets[s.name]!)
+    const st = calculateStats(buckets[s.name]!)
     table.push([s.name, st.median / 1e6, st.p95 / 1e6, st.min / 1e6, st.max / 1e6])
   }
   console.log("scenario        median(ms)  p95(ms)   min(ms)   max(ms)")
   for (const [name, med, p95, min, max] of table) {
-    console.log(`${name.padEnd(14)} ${med.toFixed(3).padStart(9)}  ${p95.toFixed(3).padStart(7)}  ${min.toFixed(3).padStart(7)}  ${max.toFixed(3).padStart(7)}`)
+    console.log(
+      `${name.padEnd(14)} ${med.toFixed(3).padStart(9)}  ${p95.toFixed(3).padStart(7)}  ${min.toFixed(3).padStart(7)}  ${max.toFixed(3).padStart(7)}`,
+    )
   }
 
-  const workerMed = stats(buckets["worker-resolve"]!).median
-  const rootMed = stats(buckets.root).median
+  const workerMed = calculateStats(buckets["worker-resolve"]!).median
+  const rootMed = calculateStats(buckets.root).median
   console.log(`\nworker-resolve/root (median) = ${((workerMed / rootMed) * 100).toFixed(3)} %`)
 
   const outDir = join(process.cwd(), ".yesmem", "tmp", "raw")
@@ -143,9 +180,15 @@ function main(): void {
   const path = join(outDir, `measure-parser-worker-${Date.now()}.json`)
   appendFileSync(
     path,
-    JSON.stringify({ ts: Date.now(), samples, warmup, bunVersion: execFileSync(BUN, ["--version"]).toString().trim(), raw }, null, 2),
+    JSON.stringify(
+      { ts: Date.now(), samples, warmup, bunVersion: execFileSync(BUN, ["--version"]).toString().trim(), raw },
+      null,
+      2,
+    ),
   )
   console.log(`\nraw: ${path}`)
 }
 
-main()
+if (import.meta.main) {
+  main()
+}
