@@ -41,7 +41,24 @@ export interface TelemetrySnapshot {
   histogram: Partial<Record<TelemetryHistogramLabel, number>>
   marks: TelemetryMark[]
   spans: TelemetrySpan[]
+  wave3Spans: TelemetrySpan[]
 }
+
+/**
+ * Wave-3 stage attribution span name, qualified as `<session>.<stage>`. The
+ * renderer session id keeps spans from concurrent samples disjoint.
+ */
+export type Wave3SpanName = `${string}.${Wave3StageName}`
+
+export type Wave3StageName =
+  | "worker.post"
+  | "worker.queueWait"
+  | "worker.completed"
+  | "converter"
+  | "textbuffer"
+  | "layout.render"
+  | "native.commit"
+  | "markdown.parse"
 
 /** Upper bound on recorded marks/spans so a buggy consumer cannot unboundedly grow memory. */
 const EVENT_CAP = 10_000
@@ -51,6 +68,7 @@ const counters = new Map<TelemetryCounterName, number>()
 const histogram = new Map<TelemetryHistogramLabel, number>()
 const marks: TelemetryMark[] = []
 const spans: TelemetrySpan[] = []
+const wave3Spans: TelemetrySpan[] = []
 
 export function setTelemetryEnabled(value: boolean): void {
   if (enabled === value) return
@@ -67,6 +85,7 @@ export function resetTelemetry(): void {
   histogram.clear()
   marks.length = 0
   spans.length = 0
+  wave3Spans.length = 0
 }
 
 export function increment(name: TelemetryCounterName): void {
@@ -94,12 +113,24 @@ export function recordSpan(name: string, startMs: number, endMs: number): void {
   spans.push({ name, startMs, endMs })
 }
 
+/**
+ * Record a Wave-3 stage-attribution span for a sample. Qualifies the name with
+ * the (renderer) session id so concurrent samples never double-assign a stage.
+ * Single cheap `enabled` guard in the off-state: no clock read, allocation or
+ * event emission when disabled.
+ */
+export function recordWave3Span(session: string, stage: Wave3StageName, startMs: number, endMs: number): void {
+  if (!enabled || endMs < startMs || wave3Spans.length >= EVENT_CAP) return
+  wave3Spans.push({ name: `${session}.${stage}`, startMs, endMs })
+}
+
 export function getTelemetrySnapshot(): TelemetrySnapshot {
   return {
     enabled,
     counters: Object.fromEntries(counters) as TelemetrySnapshot["counters"],
     histogram: Object.fromEntries(histogram) as TelemetrySnapshot["histogram"],
     marks: marks.slice(),
-    spans: spans.map((span) => ({ ...span })),
+      spans: spans.map((span) => ({ ...span })),
+      wave3Spans: wave3Spans.map((span) => ({ ...span })),
   }
 }
