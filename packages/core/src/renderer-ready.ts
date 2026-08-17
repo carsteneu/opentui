@@ -65,7 +65,7 @@ export interface RendererReadyHandle {
 interface Deferred<T> {
   promise: Promise<T>
   readonly settled: boolean
-  settle: (kind: "resolve" | "reject", value: T, reason: unknown) => boolean
+  settle: (kind: "resolve" | "reject", value: T | undefined, reason: unknown) => boolean
 }
 
 function deferred<T>(): Deferred<T> {
@@ -90,7 +90,7 @@ function deferred<T>(): Deferred<T> {
     settle(kind, value, reason) {
       if (settled) return false
       settled = true
-      if (kind === "resolve") resolve(value)
+      if (kind === "resolve") resolve(value as T)
       else reject(reason)
       return true
     },
