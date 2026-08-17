@@ -1454,7 +1454,7 @@ test("CodeRenderable - transparent streaming content avoids partial redraws", as
 
   currentRenderer.root.add(codeRenderable)
   await flushAsync()
-  const partialSpy = spyOn(codeRenderable, "requestPartialRender")
+  const partialSpy = spyOn(codeRenderable, "requestPartialRender" as keyof CodeRenderable)
 
   codeRenderable.content = "const a = 2;"
   await flushAsync()
@@ -1476,7 +1476,7 @@ test("CodeRenderable - retained rendering is opt-in", async () => {
 
   currentRenderer.root.add(codeRenderable)
   await flushAsync()
-  const partialSpy = spyOn(codeRenderable, "requestPartialRender")
+  const partialSpy = spyOn(codeRenderable, "requestPartialRender" as keyof CodeRenderable)
 
   codeRenderable.content = "const a = 2;"
   await flushAsync()

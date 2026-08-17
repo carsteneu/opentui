@@ -9,6 +9,7 @@ import type { TextChunk } from "../text-buffer.js"
 import { treeSitterToTextChunks } from "../lib/tree-sitter-styled-text.js"
 import type { RGBA } from "../lib/RGBA.js"
 import { getHighlightCompletion } from "../lib/highlight-completion.js"
+import { CodeHighlightSession, type HighlightOwner } from "./CodeHighlightSession.js"
 
 export interface HighlightContext {
   content: string
@@ -61,7 +62,7 @@ export class CodeRenderable extends TextBufferRenderable {
   private _isHighlighting: boolean = false
   private _treeSitterClient: TreeSitterClient
   private _highlightsDirty: boolean = false
-  private _highlightSnapshotId: number = 0
+  private _session: CodeHighlightSession
   private _highlightLoopActive: boolean = false
   private _highlightPromise?: Promise<void>
   private _highlightRerun: boolean = false
@@ -97,6 +98,9 @@ export class CodeRenderable extends TextBufferRenderable {
     this._filetype = options.filetype
     this._syntaxStyle = options.syntaxStyle
     this._treeSitterClient = options.treeSitterClient ?? getTreeSitterClient()
+    this._session = new CodeHighlightSession({
+      highlight: (content, filetype) => this._treeSitterClient.highlightOnce(content, filetype),
+    })
     this._conceal = options.conceal ?? this._contentDefaultOptions.conceal
     this._drawUnstyledText = options.drawUnstyledText ?? this._contentDefaultOptions.drawUnstyledText
     this._streaming = options.streaming ?? this._contentDefaultOptions.streaming
@@ -127,9 +131,9 @@ export class CodeRenderable extends TextBufferRenderable {
     return this._content
   }
 
-  private invalidateHighlights(): void {
+  private invalidateHighlights(owner: HighlightOwner = "fullReplace"): void {
     this._highlightsDirty = true
-    this._highlightSnapshotId++
+    this._session.revise(owner)
   }
 
   set content(value: string) {
@@ -266,7 +270,7 @@ export class CodeRenderable extends TextBufferRenderable {
   set filetype(value: string | undefined) {
     if (this._filetype !== value) {
       this._filetype = value
-      this.invalidateHighlights()
+      this.invalidateHighlights("filetypeChange")
     }
   }
 
@@ -450,7 +454,7 @@ export class CodeRenderable extends TextBufferRenderable {
   private async startHighlight(): Promise<void> {
     const content = this._content
     const filetype = this._filetype
-    const snapshotId = ++this._highlightSnapshotId
+    const snapshotId = this._session.generation
 
     if (!filetype) return
 
@@ -462,9 +466,9 @@ export class CodeRenderable extends TextBufferRenderable {
     this._isHighlighting = true
 
     try {
-      const result = await this._treeSitterClient.highlightOnce(content, filetype)
+      const result = await this._session.source.highlight(content, filetype)
 
-      if (snapshotId !== this._highlightSnapshotId) {
+      if (!this._session.isCurrent(snapshotId)) {
         this.retryLatestHighlight()
         return
       }
@@ -485,7 +489,7 @@ export class CodeRenderable extends TextBufferRenderable {
         }
       }
 
-      if (snapshotId !== this._highlightSnapshotId) {
+      if (!this._session.isCurrent(snapshotId)) {
         this.retryLatestHighlight()
         return
       }
@@ -518,7 +522,7 @@ export class CodeRenderable extends TextBufferRenderable {
 
         chunks = await this.transformChunks(chunks, context)
 
-        if (snapshotId !== this._highlightSnapshotId) {
+        if (!this._session.isCurrent(snapshotId)) {
           this.retryLatestHighlight()
           return
         }
@@ -539,7 +543,7 @@ export class CodeRenderable extends TextBufferRenderable {
       this.updateTextInfoAfterHighlight(scrollWidth, scrollHeight)
       this.coalesceRender()
     } catch (error) {
-      if (snapshotId !== this._highlightSnapshotId) {
+      if (!this._session.isCurrent(snapshotId)) {
         this.retryLatestHighlight()
         return
       }
@@ -571,7 +575,7 @@ export class CodeRenderable extends TextBufferRenderable {
   }
 
   private clearPendingHighlight(): void {
-    this._highlightSnapshotId++
+    this._session.revise("fullReplace")
     this._isHighlighting = false
     this._highlightRerun = false
     this._highlightingPromise = Promise.resolve()
@@ -769,6 +773,7 @@ export class CodeRenderable extends TextBufferRenderable {
   public override destroy(): void {
     if (this.isDestroyed) return
     this.clearPendingHighlight()
+    this._session.close()
     super.destroy()
   }
 }
