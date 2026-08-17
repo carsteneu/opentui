@@ -17,6 +17,7 @@
 //   --gate                            baseline vs current, drives exit status
 //   --baseline-root=<absolute path>   paired-gate baseline (default ../fastpatch)
 //   --baseline-label=<name>           report label (default worktree basename)
+//   --baseline-scenario=<scenario>     paired baseline workload (default root)
 //   --native-asset-root=<absolute>     pin both gate arms (default baseline node_modules)
 //   --gate-record                     telemetry disabled vs enabled, informational
 //   --allow-dirty                     allow, but fully record, dirty worktrees
@@ -45,6 +46,7 @@ import {
 } from "./bench-cold-import-analysis.js"
 import {
   resolveBaselineSelection,
+  resolveGateScenarios,
   scenarioTarget,
   scenarios,
   type Runtime,
@@ -90,6 +92,8 @@ interface GateRecord {
   name: string
   baselineLabel: string
   candidateLabel: string
+  baselineScenario: Scenario
+  candidateScenario: Scenario
   pairs: RawPair[]
   analysis: PairedAnalysis
   nativeAssetRoot: string | null
@@ -324,6 +328,8 @@ function pairedGate(options: {
   name: string
   baselineLabel: string
   candidateLabel: string
+  baselineScenario: Scenario
+  candidateScenario: Scenario
   baseline: Parameters<typeof runProbe>[0]
   candidate: Parameters<typeof runProbe>[0]
   pairs: number
@@ -384,6 +390,8 @@ function pairedGate(options: {
     name: options.name,
     baselineLabel: options.baselineLabel,
     candidateLabel: options.candidateLabel,
+    baselineScenario: options.baselineScenario,
+    candidateScenario: options.candidateScenario,
     pairs,
     analysis,
     nativeAssetRoot: options.nativeAssetRoot ?? null,
@@ -441,6 +449,7 @@ function buildReport(rows: Array<Record<string, unknown>>, artifact: string): st
     for (const gate of (row.gates as GateRecord[] | undefined) ?? []) {
       report += `\n## Gate: ${gate.name}\n\n`
       report += `${gate.baselineLabel} → ${gate.candidateLabel}; ${gate.analysis.safety.criterion}.\n\n`
+      report += `Szenarien: Baseline \`${gate.baselineScenario ?? "root"}\` → Candidate \`${gate.candidateScenario ?? "root"}\`.\n\n`
       report += "| Metrik | gepaarte Änderung | nominales CI | familienweises CI | Gate |\n"
       report += "| --- | ---: | ---: | ---: | --- |\n"
       for (const metric of ["importMs", "ttfmMs"] as const) {
@@ -530,6 +539,8 @@ async function main(): Promise<void> {
   if (!scenarios.includes(scenario)) {
     throw new Error(`unknown scenario: ${scenario}`)
   }
+  if (doGate && runtime !== "bun") throw new Error("--gate is a Bun-only source-root baseline comparison")
+  const gateScenarios = doGate ? resolveGateScenarios(args, scenario, runtime) : null
   if (!Number.isInteger(samples) || samples < 1) throw new Error("--samples must be a positive integer")
   if (!Number.isInteger(warmup) || warmup < 0) throw new Error("--warmup must be a non-negative integer")
   if (!Number.isFinite(threshold) || threshold < 0) throw new Error("--threshold must be non-negative")
@@ -537,9 +548,6 @@ async function main(): Promise<void> {
   if (!Number.isInteger(bootstrapSamples) || bootstrapSamples < 1) throw new Error("--bootstrap must be positive")
   if ((doGate || doGateRecord) && (samples < 10 || samples % 2 !== 0)) {
     throw new Error("gates require an even --samples count >= 10")
-  }
-  if (doGate && (runtime !== "bun" || scenario !== "root")) {
-    throw new Error("--gate is the Bun source-root baseline comparison; use --scenario=root --runtime=bun")
   }
   if (doGateRecord && runtime !== "bun") throw new Error("--gate-record is Bun-only")
   if (forceFailure && !doGate) throw new Error("--force-fail requires --gate")
@@ -611,16 +619,18 @@ async function main(): Promise<void> {
   }
 
   const gates: GateRecord[] = []
-  if (doGate) {
-    const base = scenarioTarget(baselineRoot, "root", "bun")
+  if (doGate && gateScenarios) {
+    const base = scenarioTarget(baselineRoot, gateScenarios.baseline, "bun")
     const pinnedCandidate = { ...probeOptions, assetRoot: gateNativeAssetRoot! }
     gates.push(
       pairedGate({
         name: `${baselineSelection.label} vs candidate (acceptance)`,
         baselineLabel: baselineSelection.label,
         candidateLabel: "candidate",
+        baselineScenario: gateScenarios.baseline,
+        candidateScenario: gateScenarios.candidate,
         baseline: {
-          scenario: "root",
+          scenario: gateScenarios.baseline,
           runtime: "bun",
           telemetry: false,
           ...base,
@@ -644,6 +654,8 @@ async function main(): Promise<void> {
         name: "telemetry disabled vs enabled (informational)",
         baselineLabel: "disabled",
         candidateLabel: "enabled",
+        baselineScenario: scenario,
+        candidateScenario: scenario,
         baseline: probeOptions,
         candidate: { ...probeOptions, telemetry: true },
         pairs: samples,
@@ -663,7 +675,15 @@ async function main(): Promise<void> {
     generated: new Date().toISOString(),
     commit,
     mergeBase,
-    baseline: doGate ? { label: baselineSelection.label, root: baselineRoot, commit: baselineCommit, mergeBase } : null,
+    baseline: doGate
+      ? {
+          label: baselineSelection.label,
+          root: baselineRoot,
+          commit: baselineCommit,
+          mergeBase,
+          scenario: gateScenarios?.baseline,
+        }
+      : null,
     scenario,
     runtime: {
       engine: runtime,
@@ -696,7 +716,7 @@ async function main(): Promise<void> {
       lifecycleProbe: lifecycle !== null,
     },
     protocol: {
-      harnessVersion: 5,
+      harnessVersion: 6,
       probeVersion: 5,
       warmup,
       samples,
@@ -729,7 +749,13 @@ async function main(): Promise<void> {
       scenario,
       runtime,
       summary: row.summary,
-      gates: gates.map((gate) => ({ name: gate.name, passed: gate.passed, safety: gate.analysis.safety })),
+      gates: gates.map((gate) => ({
+        name: gate.name,
+        baselineScenario: gate.baselineScenario,
+        candidateScenario: gate.candidateScenario,
+        passed: gate.passed,
+        safety: gate.analysis.safety,
+      })),
       failed,
       raw: rawFile,
       report: reportFile,

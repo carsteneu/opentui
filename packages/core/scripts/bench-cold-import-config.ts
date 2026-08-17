@@ -11,6 +11,11 @@ export interface BaselineSelection {
   explicit: boolean
 }
 
+export interface GateScenarioSelection {
+  baseline: Scenario
+  candidate: Scenario
+}
+
 export function resolveBaselineSelection(args: Record<string, string>, repoRoot: string): BaselineSelection {
   const configuredRoot = args["baseline-root"]
   if (configuredRoot !== undefined && !isAbsolute(configuredRoot)) {
@@ -26,6 +31,25 @@ export function resolveBaselineSelection(args: Record<string, string>, repoRoot:
 
 export function scenarioUsesCommittedFrame(scenario: Scenario, runtime: Runtime): boolean {
   return runtime === "bun" && (scenario === "root" || scenario === "zig" || scenario === "renderer-entry")
+}
+
+export function resolveGateScenarios(
+  args: Record<string, string>,
+  candidate: Scenario,
+  runtime: Runtime,
+): GateScenarioSelection {
+  const configuredBaseline = args["baseline-scenario"] ?? "root"
+  if (!scenarios.includes(configuredBaseline as Scenario)) {
+    throw new Error(`unknown baseline scenario: ${configuredBaseline}`)
+  }
+  const baseline = configuredBaseline as Scenario
+  if (!scenarioUsesCommittedFrame(baseline, runtime)) {
+    throw new Error(`baseline scenario ${baseline} has no committed-frame TTFMF`)
+  }
+  if (!scenarioUsesCommittedFrame(candidate, runtime)) {
+    throw new Error(`candidate scenario ${candidate} has no committed-frame TTFMF`)
+  }
+  return { baseline, candidate }
 }
 
 export function scenarioTarget(treeRoot: string, scenario: Scenario, runtime: Runtime) {
