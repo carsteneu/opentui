@@ -49,7 +49,9 @@
     "test:standalone": "bun scripts/standalone-test.ts",
     "test:js": "bun test --path-ignore-patterns='src/zig/zig-pkg/**'",
     "test:js:node": "bun scripts/test-node.ts",
-    "test": "bun run test:native && bun run test:js"
+    "test": "bun run test:native && bun run test:js",
+    "bench:wave3": "bun src/benchmark/wave3-harness.test.ts",
+    "bench:wave3:baseline": "bun scripts/wave3-baseline.ts"
   },
   "license": "MIT",
   "devDependencies": {

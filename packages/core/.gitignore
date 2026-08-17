@@ -6,3 +6,7 @@ ffi-fast-path-paired.json
 zig-out
 src/zig/lib
 src/zig/zig-pkg
+
+# Native staged assets (never committed) and temp probe scratch (Wave 3)
+.yesmem/native-assets/
+.yesmem/tmp/
