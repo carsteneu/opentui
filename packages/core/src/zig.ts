@@ -6263,8 +6263,3 @@ export function resolveRenderLib(): RenderLib {
   renderLibResolved = true
   return opentuiLib
 }
-
-// Try eager loading
-try {
-  opentuiLib = new FFIRenderLib(opentuiLibPath)
-} catch (error) {}
