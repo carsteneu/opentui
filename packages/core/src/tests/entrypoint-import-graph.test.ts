@@ -43,7 +43,12 @@ describe("entrypoint import graphs", () => {
 
     expectMarkers(
       bundle,
-      ["class Renderable extends", "class TextRenderable extends", "class BoxRenderable extends", "class TextNodeRenderable extends"],
+      [
+        "class Renderable extends",
+        "class TextRenderable extends",
+        "class BoxRenderable extends",
+        "class TextNodeRenderable extends",
+      ],
       true,
     )
 

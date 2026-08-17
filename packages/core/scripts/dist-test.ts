@@ -474,7 +474,18 @@ assert.throws(
   ${JSON.stringify(`Expected ${packageJson.name} CommonJS require to reject its async ESM graph`)},
 )
 
-for (const specifier of [${JSON.stringify(`${packageJson.name}/testing`)}, ${JSON.stringify(`${packageJson.name}/tree-sitter/update-assets`)}]) {
+const importOnlySpecifiers = ${JSON.stringify([
+      `${packageJson.name}/testing`,
+      `${packageJson.name}/tree-sitter/update-assets`,
+      `${packageJson.name}/renderer`,
+      `${packageJson.name}/renderable`,
+      `${packageJson.name}/audio`,
+      `${packageJson.name}/image`,
+      `${packageJson.name}/markdown-tree-sitter`,
+      `${packageJson.name}/console`,
+    ])}
+
+for (const specifier of importOnlySpecifiers) {
   assert.throws(
     () => require(specifier),
     (error) => error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED",
