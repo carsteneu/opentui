@@ -116,3 +116,23 @@ Loop C ersetzt die `CodeHighlightSource` hinter `CodeHighlightSession` (heute `h
 Buffer-Client (`INITIALIZE_PARSER`/`HANDLE_EDITS`, siehe `types.ts`). Der Konsument (CodeRenderable) und der
 Ownership-/Stale-Vertrag bleiben unverändert. Empfohlene Reihenfolge: Commit von Loop B, dann Loop-C-Einstieg in den
 Seam.
+
+## Review (Phase 5, Stage 2 – Cold Review via Subagent)
+
+Cold-Review (frischer Subagent, task id `ses_fee2d37a0ffeN9mMSMm6QXx1Cc`): **APPROVE-WITH-NOTES**. Der Review hat die
+Stale-Discard-Chronologie (kein TOCTOU), die close/destroy-Reihenfolge und die Ownership-/Scope-Grenze unabhängig
+verifiziert (keine verbotenen Dateien angefasst) und die Testaussagen als nicht-vakant bestätigt.
+
+Befunde und Disposition:
+- **[SHOULD-FIX] `CodeHighlightSession.run()` und `CodeHighlightPipeline` sind heute kein Produktionspfad** –
+  `CodeRenderable` zäunt dieselbe Invariante inline über `revise`/`isCurrent`/`source.highlight` selbst (Code.ts:471/
+  492/525/546); zwei Implementierungen derselben Invariante koexistieren. **Disposition: bewusstes Staging**, im
+  Ergebnistext und per Kommentar an `run()` dokumentiert. Der vollständige Fix (Produktion treibt `run()` mit einem
+  Pipeline-Objekt, Streaming-`onChunks`-Semantik in einen Commit-Payload überführen) ist der Loop-C-Refactor am Seam
+  und gehört dort hin – nicht in diesen kleinen, verhaltensgleichen Übergabe-Commit (würde das No-Regression-Kriterium
+  riskieren).
+- **[NIT] `snapshotId = generation` (Lesen) statt altem `++`-Bump** (Code.ts:457). Heute sicher, weil der Single-
+  Flight-Guard `_highlightLoopActive` (Code.ts:741-755) nie zwei konkurrierende Läufe erlaubt; Hinweis für Loop C, wenn
+  zukünftig parallelisiert wird, beim Lauf-Eintritt defensiv zu `revise`n.
+- **[NIT] Code.test.ts:1457/1479-Casts sind rein typtypisch; Assertion blieb schwach, aber vorbestehend** (Spy auf
+  ein nicht am Renderable liegendes `requestPartialRender`). Nicht Aufgabe dieses Commits.

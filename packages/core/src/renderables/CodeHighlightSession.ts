@@ -76,9 +76,12 @@ export class CodeHighlightSession {
   }
 
   /**
-   * Run a full convert-then-commit for the given owner/context through the
-   * source. Returns true when the result was committed, false when it was
-   * discarded as stale or the session was closed.
+   * Full convert-then-commit driver. Forward seam for Loop C: the versioned
+   * buffered client will drive the whole run through this method. The current
+   * CodeRenderable fences the same invariants inline via revise/isCurrent/
+   * source.highlight because its streaming onChunks output does not map to a
+   * single convert-payload commit; keep the two in lockstep when adopting.
+   * Returns true when committed, false when stale or closed.
    */
   async run<P>(
     owner: HighlightOwner,
