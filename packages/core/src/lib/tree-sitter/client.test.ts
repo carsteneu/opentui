@@ -1817,3 +1817,233 @@ describe("TreeSitterClient lifecycle hardening", () => {
     }
   })
 })
+
+describe("TreeSitterClient backpressure (latest-wins)", () => {
+  interface HeldHandle {
+    client: TreeSitterClient
+    posted: Array<{ type: string; bufferId: number; version: number; content: string; edits: unknown[] }>
+    fire: (data: unknown) => void
+    worker: { onexit: ((event: { code: number }) => void) | null }
+    internals: any
+  }
+
+  // Initializes a real worker and buffer, then wraps postMessage to HOLD edit
+  // jobs (not forwarded to the worker) so ACKs are delivered deterministically
+  // via `fire`. The client's real onmessage handler is retained.
+  async function seedClient(dataPath: string): Promise<HeldHandle> {
+    const client = new TreeSitterClient({ dataPath })
+    await client.initialize()
+    await client.createBuffer(1, "const a = 1\n", "javascript")
+    const internals = client as unknown as {
+      worker: {
+        postMessage: (m: any) => void
+        onmessage: ((event: any) => void) | null
+        onexit: ((event: { code: number }) => void) | null
+      }
+    }
+    const realWorker = internals.worker
+    const posted: HeldHandle["posted"] = []
+    const originalPost = realWorker.postMessage.bind(realWorker)
+    realWorker.postMessage = (message: any) => {
+      if (message.type === "HANDLE_EDITS" || message.type === "RESET_BUFFER") {
+        posted.push({
+          type: message.type,
+          bufferId: message.bufferId,
+          version: message.version,
+          content: message.content,
+          edits: message.edits,
+        })
+        return
+      }
+      originalPost(message)
+    }
+    return {
+      client,
+      posted,
+      fire: (data) => realWorker.onmessage?.({ data }),
+      worker: realWorker,
+      internals,
+    }
+  }
+
+  function simpleEdit(start: number, newContent: string): any[] {
+    return [
+      {
+        startIndex: start,
+        oldEndIndex: start,
+        newEndIndex: newContent.length,
+        startPosition: { row: 0, column: start },
+        oldEndPosition: { row: 0, column: start },
+        newEndPosition: { row: 0, column: newContent.length },
+      },
+    ]
+  }
+
+  test("latest-wins: 100 same-turn held updates post <=2 jobs, supersede >=98, pending bytes = newest only", async () => {
+    const held = await seedClient(tmpdir())
+    const client = held.client
+    try {
+      const calls: Array<Promise<{ status: string }>> = []
+      const contents: string[] = []
+      for (let i = 2; i <= 101; i++) {
+        const content = `const v = ${i}; ${"x".repeat(i)}`
+        contents.push(content)
+        calls.push(client.updateBuffer(1, simpleEdit(0, content), content, i) as Promise<{ status: string }>)
+      }
+
+      // No ACK released: only the first update should be active-posted.
+      expect(held.posted.length).toBe(1)
+      expect(held.posted[0].version).toBe(2)
+
+      // Release the active v2 -> promotes the single newest pending (v101).
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 2, highlights: [] })
+      expect(held.posted.length).toBe(2)
+      expect(held.posted[1].version).toBe(101)
+      expect(held.posted[1].content).toBe(contents[99])
+
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 101, highlights: [] })
+
+      const outcomes = await Promise.all(calls)
+      const completed = outcomes.filter((o) => o.status === "completed")
+      const superseded = outcomes.filter((o) => o.status === "superseded")
+      expect(completed.length).toBe(2)
+      expect(superseded.length).toBe(98)
+
+      const stats = client.getUpdateQueueStats()
+      expect(stats.posted).toBe(2)
+      expect(stats.superseded).toBe(98)
+      expect(held.posted.length).toBe(2)
+
+      const newestBytes = Buffer.byteLength(contents[99], "utf8")
+      const sumBytes = contents.reduce((a, c) => a + Buffer.byteLength(c, "utf8"), 0)
+      expect(stats.pendingByteHighWater).toBeGreaterThan(0)
+      expect(stats.pendingByteHighWater).toBeLessThanOrEqual(newestBytes)
+      expect(stats.pendingByteHighWater).toBeLessThan(sumBytes)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("an ACK for an older version cannot overwrite a newer version", async () => {
+    const held = await seedClient(tmpdir())
+    const client = held.client
+    try {
+      const active = client.updateBuffer(1, [], "const b = 2", 2)
+      client.updateBuffer(1, [], "const c = 3", 3)
+
+      // A mis-ordered/older ACK (v1) must be ignored: active v2 must not settle.
+      const received: unknown[] = []
+      client.on("highlights:response", (bufferId, version) => {
+        received.push(version)
+      })
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 1, highlights: [{ line: 0, highlights: [], droppedHighlights: [] }] })
+      expect(received.length).toBe(0)
+      expect(held.posted.length).toBe(1)
+
+      // The correct active ACK settles it and promotes the newest pending.
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 2, highlights: [] })
+      expect(held.posted.length).toBe(2)
+      expect(held.posted[1].version).toBe(3)
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 3, highlights: [] })
+
+      const oa = await active
+      expect(oa.status).toBe("completed")
+      expect(received.length).toBe(2)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("two buffers do not block each other via a global latest-wins policy", async () => {
+    const held = await seedClient(tmpdir())
+    const client = held.client
+    held.internals.buffers.set(2, { id: 2, content: "x", filetype: "javascript", version: 1, hasParser: true })
+    try {
+      const a = client.updateBuffer(1, [], "b1v2", 2)
+      const b = client.updateBuffer(2, [], "b2v2", 2)
+      await Promise.resolve()
+      expect(held.posted.length).toBe(2)
+
+      // Buffer 2 completes independently while buffer 1 is still held.
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 2, version: 2, highlights: [] })
+      await b
+      expect(held.posted.length).toBe(2)
+
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 2, highlights: [] })
+      const oa = await a
+      expect(oa.status).toBe("completed")
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("destroy settles active and pending jobs exactly once and leaves no works", async () => {
+    const held = await seedClient(tmpdir())
+    const client = held.client
+    try {
+      const active = client.updateBuffer(1, [], "const b = 2", 2)
+      const pending = client.updateBuffer(1, [], "const c = 3", 3)
+      await client.destroy()
+      const [oa, op] = (await Promise.all([active, pending])) as Array<{ status: string }>
+      expect(oa.status).toBe("error")
+      expect(op.status).toBe("error")
+      expect((client as unknown as { works: Map<number, unknown> }).works.size).toBe(0)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("worker exit before/during a job settles active and pending exactly once", async () => {
+    const held = await seedClient(tmpdir())
+    const client = held.client
+    try {
+      const active = client.updateBuffer(1, [], "const b = 2", 2)
+      const pending = client.updateBuffer(1, [], "const c = 3", 3)
+      held.worker.onexit?.({ code: 1 })
+      const [oa, op] = (await Promise.all([active, pending])) as Array<{ status: string }>
+      expect(oa.status).toBe("error")
+      expect(op.status).toBe("error")
+      expect((client as unknown as { works: Map<number, unknown> }).works.size).toBe(0)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("latest-wins output for a real worker matches the highlightOnce oracle", async () => {
+    const client = new TreeSitterClient({ dataPath: tmpdir() })
+    try {
+      await client.initialize()
+      const jsCode = 'const hello = "world"\n'
+      await client.createBuffer(1, jsCode, "javascript")
+
+      const final = 'const hello = "world"\nconst add = (a, b) => a + b // tail\n'
+      const appendEdit = [
+        {
+          startIndex: jsCode.length,
+          oldEndIndex: jsCode.length,
+          newEndIndex: final.length,
+          startPosition: { row: 1, column: 0 },
+          oldEndPosition: { row: 1, column: 0 },
+          newEndPosition: { row: 1, column: final.length - jsCode.length },
+        },
+      ]
+
+      const emitted: Array<{ version: number; highlights: unknown[] }> = []
+      client.on("highlights:response", (bufferId, version, highlights) => {
+        emitted.push({ version, highlights })
+      })
+
+      const outcome = await client.updateBuffer(1, appendEdit, final, 2)
+      expect(outcome.status).toBe("completed")
+      const delivered = emitted.find((e) => e.version === 2)
+      expect(delivered).toBeDefined()
+      expect((delivered?.highlights ?? []).length).toBeGreaterThan(0)
+
+      const oracle = await client.highlightOnce(final, "javascript")
+      expect(oracle.error).toBeUndefined()
+      expect((oracle.highlights ?? []).length).toBeGreaterThan(0)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+})

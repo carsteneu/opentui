@@ -124,6 +124,35 @@ export interface Edit {
   newEndPosition: { row: number; column: number }
 }
 
+/** Result of a single updateBuffer() call, settled exactly once. */
+export type UpdateOutcome =
+  | { status: "completed"; bufferId: number; version: number }
+  | { status: "superseded"; bufferId: number; version: number; supersededBy: number }
+  | { status: "error"; bufferId: number; version: number; error: string }
+  | { status: "skipped"; bufferId: number; version: number }
+
+/** Always-on backpressure/queue counters (payload sizes in UTF-8 bytes). */
+export interface UpdateQueueStats {
+  /** Number of edit/reset jobs actually posted to the worker. */
+  posted: number
+  /** Number of posted jobs scheduled (always equals posted for now). */
+  started: number
+  /** updateBuffer() calls settled as completed via a versioned worker-ACK. */
+  completed: number
+  /** updateBuffer() calls settled as superseded by a newer update. */
+  superseded: number
+  /** Cumulative UTF-8 bytes of posted job payloads (newest content only per job). */
+  postedBytes: number
+  /** Maximum concurrent active jobs (target <= 1). */
+  activeHighWater: number
+  /** Maximum pending jobs per buffer (target <= 1). */
+  pendingJobsHighWater: number
+  /** Bytes of the single newest pending payload (0 when none). */
+  pendingBytes: number
+  /** Peak bytes held by a single pending payload, never the sum of versions. */
+  pendingByteHighWater: number
+}
+
 export interface PerformanceStats {
   averageParseTime: number
   parseTimes: number[]
