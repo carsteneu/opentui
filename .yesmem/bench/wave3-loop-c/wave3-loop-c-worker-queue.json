@@ -1,0 +1,1 @@
+{"runId":"1787003877532","burstSize":100,"endToEndMs":12.361,"burstStats":{"posted":2,"completed":2,"superseded":98,"activeHighWater":1,"pendingJobsHighWater":1,"pendingByteHighWater":129,"pendingJobsGate":"PASS","postedGate":"PASS","supersededGate":"PASS"},"singleUpdate":{"reps":30,"p50Ms":0.813,"p95Ms":7.277},"host":{"bun":"1.3.14","node":"v24.3.0"}}
