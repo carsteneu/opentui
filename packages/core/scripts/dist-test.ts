@@ -240,16 +240,16 @@ function readEntryClosure(entryPath: string): string {
     if (seen.has(current)) continue
     seen.add(current)
     const source = readFileSync(join(distDir, current), "utf8")
-      parts.push(source)
-      for (const match of source.matchAll(/from\s*"(\.\/[^"]+\.js)"/g)) {
-        if (!seen.has(match[1])) queue.push(match[1])
-      }
-      for (const match of source.matchAll(/import\s*"(\.\/[^"]+\.js)"/g)) {
-        if (!seen.has(match[1])) queue.push(match[1])
-      }
+    parts.push(source)
+    for (const match of source.matchAll(/from\s*"(\.\/[^"]+\.js)"/g)) {
+      if (!seen.has(match[1])) queue.push(match[1])
     }
-    return parts.join("\n")
+    for (const match of source.matchAll(/import\s*"(\.\/[^"]+\.js)"/g)) {
+      if (!seen.has(match[1])) queue.push(match[1])
+    }
   }
+  return parts.join("\n")
+}
 
 function assertClosureExcludes(entryPath: string, forbidden: string[]): void {
   const closure = readEntryClosure(entryPath)
@@ -393,6 +393,9 @@ assert.equal(Object.getPrototypeOf(testing.MockTreeSitterClient.prototype), core
   assert.equal(typeof parserWorker, "object")
   assert.equal(typeof rendererEntry.createCliRenderer, "function")
   assert.equal(typeof rendererEntry.CliRenderer, "function")
+  assert.equal(typeof rendererEntry.createRendererReady, "function")
+  assert.equal(typeof rendererEntry.RendererReadyError, "function")
+  assert.equal(typeof rendererEntry.RendererReadyDestroyedError, "function")
   assert.equal(typeof rendererEntry.Audio, "undefined")
   assert.equal(typeof renderableEntry.TextRenderable, "function")
   assert.equal(typeof renderableEntry.BoxRenderable, "function")
@@ -526,6 +529,9 @@ describe("${packageJson.name} dist smoke test", () => {
       expect(typeof parserWorker).toBe("object")
       expect(typeof rendererEntry.createCliRenderer).toBe("function")
       expect(typeof rendererEntry.CliRenderer).toBe("function")
+      expect(typeof rendererEntry.createRendererReady).toBe("function")
+      expect(typeof rendererEntry.RendererReadyError).toBe("function")
+      expect(typeof rendererEntry.RendererReadyDestroyedError).toBe("function")
       expect(typeof rendererEntry.Audio).toBe("undefined")
       expect(typeof renderableEntry.TextRenderable).toBe("function")
       expect(typeof renderableEntry.BoxRenderable).toBe("function")

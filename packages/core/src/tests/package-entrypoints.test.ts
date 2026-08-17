@@ -46,6 +46,14 @@ describe("@opentui/core package entrypoints", () => {
     }
   })
 
+  test("renderer subpath publishes the readiness contract", async () => {
+    const rendererEntry = await import("../renderer-entry.js")
+
+    expect(typeof rendererEntry.createRendererReady).toBe("function")
+    expect(typeof rendererEntry.RendererReadyError).toBe("function")
+    expect(typeof rendererEntry.RendererReadyDestroyedError).toBe("function")
+  })
+
   test("root export surface is unchanged by the granular entries", async () => {
     const expected = JSON.parse(
       readFileSync(join(packageDir, "src/tests/__snapshots__/root-export-surface.json"), "utf8"),
