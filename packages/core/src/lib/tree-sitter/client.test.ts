@@ -1936,7 +1936,12 @@ describe("TreeSitterClient backpressure (latest-wins)", () => {
       client.on("highlights:response", (bufferId, version) => {
         received.push(version)
       })
-      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 1, highlights: [{ line: 0, highlights: [], droppedHighlights: [] }] })
+      held.fire({
+        type: "HIGHLIGHT_RESPONSE",
+        bufferId: 1,
+        version: 1,
+        highlights: [{ line: 0, highlights: [], droppedHighlights: [] }],
+      })
       expect(received.length).toBe(0)
       expect(held.posted.length).toBe(1)
 

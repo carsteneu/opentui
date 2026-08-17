@@ -43,7 +43,12 @@ async function run() {
 
   // Warmup
   for (let w = 0; w < 3; w++) {
-    await client.updateBuffer(1, appendEdit(base, `${base}const warm${w} = ${w}\n`), `${base}const warm${w} = ${w}\n`, 2 + w)
+    await client.updateBuffer(
+      1,
+      appendEdit(base, `${base}const warm${w} = ${w}\n`),
+      `${base}const warm${w} = ${w}\n`,
+      2 + w,
+    )
   }
   await client.resetBuffer(1, 100, base).catch(() => {})
 

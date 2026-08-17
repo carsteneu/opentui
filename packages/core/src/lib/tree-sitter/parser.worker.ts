@@ -981,29 +981,29 @@ if (isWorkerRuntime) {
           )
           break
 
-          case "HANDLE_EDITS": {
-            const response = await worker.handleEdits(message.bufferId, message.content, message.edits)
-            if (response.error) {
-              postWorkerError(message.bufferId, undefined, new Error(response.error))
-            } else {
-              // Always ACK the version (even with no highlight captures) so the
-              // client can settle updateBuffer on a versioned worker ACK.
+        case "HANDLE_EDITS": {
+          const response = await worker.handleEdits(message.bufferId, message.content, message.edits)
+          if (response.error) {
+            postWorkerError(message.bufferId, undefined, new Error(response.error))
+          } else {
+            // Always ACK the version (even with no highlight captures) so the
+            // client can settle updateBuffer on a versioned worker ACK.
+            postWorkerMessage({
+              type: "HIGHLIGHT_RESPONSE",
+              bufferId: message.bufferId,
+              version: message.version,
+              highlights: response.highlights ?? [],
+            } satisfies TreeSitterWorkerResponse)
+            if (response.warning) {
               postWorkerMessage({
-                type: "HIGHLIGHT_RESPONSE",
+                type: "WARNING",
                 bufferId: message.bufferId,
-                version: message.version,
-                highlights: response.highlights ?? [],
+                warning: response.warning,
               } satisfies TreeSitterWorkerResponse)
-              if (response.warning) {
-                postWorkerMessage({
-                  type: "WARNING",
-                  bufferId: message.bufferId,
-                  warning: response.warning,
-                } satisfies TreeSitterWorkerResponse)
-              }
             }
-            break
           }
+          break
+        }
 
         case "GET_PERFORMANCE":
           postWorkerMessage({
@@ -1013,27 +1013,27 @@ if (isWorkerRuntime) {
           } satisfies TreeSitterWorkerResponse)
           break
 
-          case "RESET_BUFFER": {
-            const resetResponse = await worker.handleResetBuffer(message.bufferId, message.version, message.content)
-            if (resetResponse.error) {
-              postWorkerError(message.bufferId, undefined, new Error(resetResponse.error))
-            } else {
+        case "RESET_BUFFER": {
+          const resetResponse = await worker.handleResetBuffer(message.bufferId, message.version, message.content)
+          if (resetResponse.error) {
+            postWorkerError(message.bufferId, undefined, new Error(resetResponse.error))
+          } else {
+            postWorkerMessage({
+              type: "HIGHLIGHT_RESPONSE",
+              bufferId: message.bufferId,
+              version: message.version,
+              highlights: resetResponse.highlights ?? [],
+            } satisfies TreeSitterWorkerResponse)
+            if (resetResponse.warning) {
               postWorkerMessage({
-                type: "HIGHLIGHT_RESPONSE",
+                type: "WARNING",
                 bufferId: message.bufferId,
-                version: message.version,
-                highlights: resetResponse.highlights ?? [],
+                warning: resetResponse.warning,
               } satisfies TreeSitterWorkerResponse)
-              if (resetResponse.warning) {
-                postWorkerMessage({
-                  type: "WARNING",
-                  bufferId: message.bufferId,
-                  warning: resetResponse.warning,
-                } satisfies TreeSitterWorkerResponse)
-              }
             }
-            break
           }
+          break
+        }
 
         case "DISPOSE_BUFFER":
           worker.disposeBuffer(message.bufferId)

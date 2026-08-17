@@ -249,10 +249,10 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     this.lifecycleGeneration++
     this.initialized = false
     this.initializePromise = undefined
-      this.rejectActiveInitialization(error)
-      this.rejectPendingRequests(error)
-      this.settleAllWorks(error)
-      this.buffers.clear()
+    this.rejectActiveInitialization(error)
+    this.rejectPendingRequests(error)
+    this.settleAllWorks(error)
+    this.buffers.clear()
     this.debouncer.clear()
     this.consecutiveWorkerFailures++
 
@@ -510,45 +510,45 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     }
 
     switch (message.type) {
-        case "HIGHLIGHT_RESPONSE": {
-          const buffer = this.buffers.get(message.bufferId)
-          if (!buffer || !buffer.hasParser) {
-            return
-          }
-
-          const works = this.works.get(message.bufferId)
-          if (works?.active) {
-            // Versioned worker-ACK. An older version must never overwrite a newer one.
-            if (message.version < works.active.job.version) {
-              return
-            }
-            const active = works.active
-            works.active = undefined
-            for (const waiter of active.waiters) {
-              waiter.resolve({ status: "completed", bufferId: message.bufferId, version: waiter.version })
-              this.updateMetrics.completed++
-            }
-            this.emit("highlights:response", message.bufferId, message.version, message.highlights)
-
-            if (works.pending) {
-              const pending = works.pending
-              works.pending = undefined
-              this.updateMetrics.pendingBytes = 0
-              works.active = pending
-              this.startJob(message.bufferId, pending)
-            } else {
-              this.updateMetrics.pendingBytes = 0
-              if (!works.active && !works.pending) {
-                this.works.delete(message.bufferId)
-              }
-            }
-            return
-          }
-
-          // No active job: an initial (createBuffer) highlight or orphan — emit only.
-          this.emit("highlights:response", message.bufferId, message.version, message.highlights)
+      case "HIGHLIGHT_RESPONSE": {
+        const buffer = this.buffers.get(message.bufferId)
+        if (!buffer || !buffer.hasParser) {
           return
         }
+
+        const works = this.works.get(message.bufferId)
+        if (works?.active) {
+          // Versioned worker-ACK. An older version must never overwrite a newer one.
+          if (message.version < works.active.job.version) {
+            return
+          }
+          const active = works.active
+          works.active = undefined
+          for (const waiter of active.waiters) {
+            waiter.resolve({ status: "completed", bufferId: message.bufferId, version: waiter.version })
+            this.updateMetrics.completed++
+          }
+          this.emit("highlights:response", message.bufferId, message.version, message.highlights)
+
+          if (works.pending) {
+            const pending = works.pending
+            works.pending = undefined
+            this.updateMetrics.pendingBytes = 0
+            works.active = pending
+            this.startJob(message.bufferId, pending)
+          } else {
+            this.updateMetrics.pendingBytes = 0
+            if (!works.active && !works.pending) {
+              this.works.delete(message.bufferId)
+            }
+          }
+          return
+        }
+
+        // No active job: an initial (createBuffer) highlight or orphan — emit only.
+        this.emit("highlights:response", message.bufferId, message.version, message.highlights)
+        return
+      }
 
       case "INIT_RESPONSE": {
         if (!this.initializeResolvers) {
@@ -633,25 +633,25 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
         return
       }
 
-        case "ERROR": {
-          if (message.messageId) {
-            const callback = this.messageCallbacks.get(message.messageId)
-            if (callback) {
-              this.messageCallbacks.delete(message.messageId)
-              callback.reject(new Error(message.error))
-            }
+      case "ERROR": {
+        if (message.messageId) {
+          const callback = this.messageCallbacks.get(message.messageId)
+          if (callback) {
+            this.messageCallbacks.delete(message.messageId)
+            callback.reject(new Error(message.error))
           }
-          if (message.bufferId !== undefined) {
-            this.settleWorks(message.bufferId, {
-              status: "error",
-              bufferId: message.bufferId,
-              version: 0,
-              error: message.error,
-            })
-          }
-          this.emitError(message.error, message.bufferId)
-          return
         }
+        if (message.bufferId !== undefined) {
+          this.settleWorks(message.bufferId, {
+            status: "error",
+            bufferId: message.bufferId,
+            version: 0,
+            error: message.error,
+          })
+        }
+        this.emitError(message.error, message.bufferId)
+        return
+      }
 
       case "WORKER_LOG": {
         this.emit("worker:log", message.logType, message.data.join(" "))
@@ -739,105 +739,105 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     return true
   }
 
-    public updateBuffer(id: number, edits: Edit[], newContent: string, version: number): Promise<UpdateOutcome> {
-      const buffer = this.buffers.get(id)
-      if (!this.initialized || !buffer || !buffer.hasParser) {
-        return Promise.resolve({ status: "skipped", bufferId: id, version })
-      }
+  public updateBuffer(id: number, edits: Edit[], newContent: string, version: number): Promise<UpdateOutcome> {
+    const buffer = this.buffers.get(id)
+    if (!this.initialized || !buffer || !buffer.hasParser) {
+      return Promise.resolve({ status: "skipped", bufferId: id, version })
+    }
 
-      // Update buffer state immediately so callers observe the newest content/version.
-      this.buffers.set(id, { ...buffer, content: newContent, version })
+    // Update buffer state immediately so callers observe the newest content/version.
+    this.buffers.set(id, { ...buffer, content: newContent, version })
 
-      let works = this.works.get(id)
-      if (!works) {
-        works = {}
-        this.works.set(id, works)
-      }
+    let works = this.works.get(id)
+    if (!works) {
+      works = {}
+      this.works.set(id, works)
+    }
 
-      return new Promise<UpdateOutcome>((resolve) => {
-        const waiter: EditWaiter = { version, resolve }
-        if (!works.active) {
-          const job: EditJob = { version, content: newContent, edits, isReset: false }
-          works.active = { job, waiters: [waiter] }
-          this.startJob(id, works.active)
-        } else if (!works.pending) {
-          works.pending = { job: { version, content: newContent, edits, isReset: false }, waiters: [waiter] }
-          this.trackPending(id, works.pending.job)
-        } else {
-          // Latest-wins coalescing: supersede every waiter folded into the old
-          // pending (each settles exactly once), then keep only the newest
-          // content/version while accumulating edits for an incremental reparse.
-          const pending = works.pending
-          for (const prior of pending.waiters) {
-            prior.resolve({ status: "superseded", bufferId: id, version: prior.version, supersededBy: version })
-            this.updateMetrics.superseded++
-          }
-          pending.job = {
-            version,
-            content: newContent,
-            edits: [...pending.job.edits, ...edits],
-            isReset: false,
-          }
-          pending.waiters = [waiter]
-          this.trackPending(id, pending.job)
+    return new Promise<UpdateOutcome>((resolve) => {
+      const waiter: EditWaiter = { version, resolve }
+      if (!works.active) {
+        const job: EditJob = { version, content: newContent, edits, isReset: false }
+        works.active = { job, waiters: [waiter] }
+        this.startJob(id, works.active)
+      } else if (!works.pending) {
+        works.pending = { job: { version, content: newContent, edits, isReset: false }, waiters: [waiter] }
+        this.trackPending(id, works.pending.job)
+      } else {
+        // Latest-wins coalescing: supersede every waiter folded into the old
+        // pending (each settles exactly once), then keep only the newest
+        // content/version while accumulating edits for an incremental reparse.
+        const pending = works.pending
+        for (const prior of pending.waiters) {
+          prior.resolve({ status: "superseded", bufferId: id, version: prior.version, supersededBy: version })
+          this.updateMetrics.superseded++
         }
+        pending.job = {
+          version,
+          content: newContent,
+          edits: [...pending.job.edits, ...edits],
+          isReset: false,
+        }
+        pending.waiters = [waiter]
+        this.trackPending(id, pending.job)
+      }
+    })
+  }
+
+  private startJob(bufferId: number, active: { job: EditJob; waiters: EditWaiter[] }): void {
+    this.updateMetrics.posted++
+    this.updateMetrics.started++
+    this.updateMetrics.postedBytes += bytesOf(active.job.content)
+    this.updateMetrics.activeHighWater = Math.max(this.updateMetrics.activeHighWater, 1)
+    try {
+      this.processEdit(bufferId, active.job.edits, active.job.content, active.job.version, active.job.isReset)
+    } catch (error) {
+      this.settleWorks(bufferId, {
+        status: "error",
+        bufferId,
+        version: active.job.version,
+        error: error instanceof Error ? error.message : String(error),
       })
     }
+  }
 
-    private startJob(bufferId: number, active: { job: EditJob; waiters: EditWaiter[] }): void {
-      this.updateMetrics.posted++
-      this.updateMetrics.started++
-      this.updateMetrics.postedBytes += bytesOf(active.job.content)
-      this.updateMetrics.activeHighWater = Math.max(this.updateMetrics.activeHighWater, 1)
-      try {
-        this.processEdit(bufferId, active.job.edits, active.job.content, active.job.version, active.job.isReset)
-      } catch (error) {
-        this.settleWorks(bufferId, {
-          status: "error",
-          bufferId,
-          version: active.job.version,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      }
-    }
+  private trackPending(bufferId: number, job: EditJob): void {
+    const jobBytes = bytesOf(job.content)
+    this.updateMetrics.pendingBytes = jobBytes
+    this.updateMetrics.pendingByteHighWater = Math.max(this.updateMetrics.pendingByteHighWater, jobBytes)
+    this.updateMetrics.pendingJobsHighWater = Math.max(this.updateMetrics.pendingJobsHighWater, 1)
+  }
 
-    private trackPending(bufferId: number, job: EditJob): void {
-      const jobBytes = bytesOf(job.content)
-      this.updateMetrics.pendingBytes = jobBytes
-      this.updateMetrics.pendingByteHighWater = Math.max(this.updateMetrics.pendingByteHighWater, jobBytes)
-      this.updateMetrics.pendingJobsHighWater = Math.max(this.updateMetrics.pendingJobsHighWater, 1)
+  private settleWorks(bufferId: number, outcome: UpdateOutcome): void {
+    const works = this.works.get(bufferId)
+    if (!works) return
+    if (works.active) {
+      for (const waiter of works.active.waiters) {
+        waiter.resolve({ ...outcome, version: waiter.version })
+      }
+      works.active = undefined
     }
+    if (works.pending) {
+      for (const waiter of works.pending.waiters) {
+        waiter.resolve({ ...outcome, version: waiter.version })
+      }
+      works.pending = undefined
+    }
+    if (!works.active && !works.pending) {
+      this.works.delete(bufferId)
+    }
+  }
 
-    private settleWorks(bufferId: number, outcome: UpdateOutcome): void {
-      const works = this.works.get(bufferId)
-      if (!works) return
-      if (works.active) {
-        for (const waiter of works.active.waiters) {
-          waiter.resolve({ ...outcome, version: waiter.version })
-        }
-        works.active = undefined
-      }
-      if (works.pending) {
-        for (const waiter of works.pending.waiters) {
-          waiter.resolve({ ...outcome, version: waiter.version })
-        }
-        works.pending = undefined
-      }
-      if (!works.active && !works.pending) {
-        this.works.delete(bufferId)
-      }
+  private settleAllWorks(error: Error): void {
+    const outcome: UpdateOutcome = { status: "error", bufferId: 0, version: 0, error: error.message }
+    for (const [bufferId] of this.works) {
+      this.settleWorks(bufferId, outcome)
     }
+  }
 
-    private settleAllWorks(error: Error): void {
-      const outcome: UpdateOutcome = { status: "error", bufferId: 0, version: 0, error: error.message }
-      for (const [bufferId] of this.works) {
-        this.settleWorks(bufferId, outcome)
-      }
-    }
-
-    public getUpdateQueueStats(): UpdateQueueStats {
-      return { ...this.updateMetrics }
-    }
+  public getUpdateQueueStats(): UpdateQueueStats {
+    return { ...this.updateMetrics }
+  }
 
   private async processEdit(
     bufferId: number,
@@ -860,9 +860,9 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
       return
     }
 
-      this.buffers.delete(bufferId)
+    this.buffers.delete(bufferId)
 
-      this.settleWorks(bufferId, { status: "error", bufferId, version: 0, error: "Buffer removed" })
+    this.settleWorks(bufferId, { status: "error", bufferId, version: 0, error: "Buffer removed" })
 
     if (this.worker) {
       const messageId = `dispose_${bufferId}`
@@ -928,10 +928,10 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     }
     this.destroyCallbacks.clear()
 
-      this.debouncer.clear()
+    this.debouncer.clear()
 
-      this.settleAllWorks(new Error("TreeSitter client destroyed"))
-      this.buffers.clear()
+    this.settleAllWorks(new Error("TreeSitter client destroyed"))
+    this.buffers.clear()
 
     void this.stopWorker().then(
       () => {
