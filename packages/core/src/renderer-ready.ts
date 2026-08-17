@@ -38,6 +38,8 @@ export interface RendererReadyState {
   enhanced: RendererReadyEnhancedStage
   /** Consumer declared the whole startup sequence complete. */
   applicationReady: boolean
+  /** An early render error ended readiness before the first frame. */
+  failed: boolean
   destroyed: boolean
 }
 
@@ -120,6 +122,7 @@ export function createRendererReady(renderer: CliRenderer): RendererReadyHandle 
     firstFrameCommitted: false,
     enhanced: "pending",
     applicationReady: false,
+    failed: false,
     destroyed: false,
   }
 
@@ -178,6 +181,7 @@ export function createRendererReady(renderer: CliRenderer): RendererReadyHandle 
   function onRenderError(event: { error: Error }): void {
     // Post-base-frame render errors are the application's concern, not readiness.
     if (firstFrame.settled) return
+    state.failed = true
     failStartup(new RendererReadyError(event.error.message, { cause: event.error }))
   }
 
@@ -194,13 +198,13 @@ export function createRendererReady(renderer: CliRenderer): RendererReadyHandle 
     coreReady: Promise.resolve(),
     firstFrameCommitted: firstFrame.promise,
     markEnhancedReady() {
-      if (state.destroyed || enhancedStage !== "pending") return
+      if (state.failed || state.destroyed || enhancedStage !== "pending") return
       enhancedStage = "ok"
       markedEnhanced = true
       releaseGated()
     },
     markEnhancedFailed(error?: unknown) {
-      if (state.destroyed || enhancedStage !== "pending") return
+      if (state.failed || state.destroyed || enhancedStage !== "pending") return
       enhancedStage = "failed"
       enhancedError = error
       markedEnhanced = true
@@ -208,7 +212,7 @@ export function createRendererReady(renderer: CliRenderer): RendererReadyHandle 
     },
     enhancedSettled: enhanced.promise,
     markApplicationReady() {
-      if (state.destroyed || markedApplication) return
+      if (state.failed || state.destroyed || markedApplication) return
       markedApplication = true
       releaseGated()
     },

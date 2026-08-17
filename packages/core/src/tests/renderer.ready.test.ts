@@ -96,6 +96,7 @@ test("early render error rejects waiters with a defined error; no promise hangs 
     expect(caught).toBeInstanceOf(RendererReadyError)
     expect((caught as Error).message).toBe("boom")
     expect(ready.state.firstFrameCommitted).toBe(false)
+    expect(ready.state.failed).toBe(true)
   } finally {
     ready.destroy()
     renderer.destroy()
