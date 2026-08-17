@@ -15,12 +15,12 @@ ungeeigneten TTFMF-Messpfad. Diese Punkte wurden vor dem Endlauf korrigiert.
 
 Die Performance-Messung zeigt zwei getrennt zu bewertende Resultate:
 
-- Der gepaarte Cold-Import verbessert sich von 185,186 ms auf 36,545 ms, also um 80,57 %.
-- Der gepaarte TTFMF verbessert sich von 201,441 ms auf 171,401 ms, also um 14,92 %.
-- Der eigenständige Candidate-Lauf erreicht beim TTFMF 155,245 ms p50, 193,050 ms p95 und 206,075 ms p99.
+- Der gepaarte Cold-Import verbessert sich von 165,269 ms auf 30,256 ms, also um 82,20 %.
+- Der gepaarte TTFMF verbessert sich von 179,546 ms auf 152,606 ms, also um 16,44 %.
+- Der eigenständige Candidate-Lauf erreicht beim TTFMF 148,026 ms p50, 181,982 ms p95 und 190,128 ms p99.
 - Das festgehaltene absolute Ziel von höchstens 274,84 ms ist klar erfüllt.
 - Ein neu gegen die aktuelle Wave-1-Basis berechneter relativer Gewinn von 30 % ist noch nicht erfüllt. Dafür müsste
-  der gepaarte Candidate-Median höchstens 141,009 ms erreichen.
+  der gepaarte Candidate-Median höchstens 125,682 ms erreichen.
 - Das eingebaute Regressions-Gate besteht für Import und TTFMF. Es prüft maximal 3 % Regression und ist nicht mit
   dem zusätzlichen 30-%-Verbesserungsziel gleichzusetzen.
 
@@ -69,7 +69,9 @@ Maximaloptimierung.
 - Endmessung: 30 balancierte Paare, drei Warmups und 20.000 Bootstrap-Samples.
 
 Die vollständigen Messwerte und die Provenienz stehen unter
-`.yesmem/bench/wave2-final-root-vs-renderer/report.md`; die append-only Rohdaten stehen daneben in `raw.ndjson`.
+`.yesmem/bench/wave2-final-root-vs-renderer-clean/report.md`; die append-only Rohdaten stehen daneben in `raw.ndjson`.
+Dieser Lauf erfolgte nach dem Beenden dreier verwaister, jeweils einen CPU-Kern auslastender Wave-1-Testprozesse bei
+einer Host-Load von 2,53/2,82/4,14. Der frühere Lauf bei 15,56/14,21/16,90 bleibt separat als Hochlastvergleich erhalten.
 
 ## Verifikation
 
@@ -89,7 +91,7 @@ gemessen.
 
 ## Verbleibende Arbeit
 
-- Für das relative 30-%-TTFMF-Ziel fehlen gegenüber der aktuellen gepaarten Wave-1-Basis noch rund 30,392 ms.
+- Für das relative 30-%-TTFMF-Ziel fehlen gegenüber der aktuellen gepaarten Wave-1-Basis noch rund 26,925 ms.
 - B4 (kleinere oder aufgeteilte Native Library, Symbol-/Binding-Optimierung) erst nach isolierter Nutzen-/Risiko-Messung
   wieder aufnehmen.
 - Der ungekapselte Bun-Worker-Resolve bleibt ein Robustheitsrisiko, war aber kein messbarer Wave-2-Performancehebel.
