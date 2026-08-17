@@ -24,6 +24,7 @@ async function main(): Promise<void> {
   }
 
   if (mode === "resolve") {
+    setRenderLibPath(requireLibPath())
     const first = resolveRenderLib()
     const second = resolveRenderLib()
     const marks = getTelemetrySnapshot().marks.filter((m) => m.name === MARK)
@@ -90,28 +91,69 @@ async function main(): Promise<void> {
   if (mode === "dispose-twice") {
     let firstOk = false
     let secondOk = false
+    let libraryCloseCalls = 0
+    let eventSinkDestroyCalls = 0
+    setRenderLibPath(requireLibPath())
     // RenderLib's public surface does not expose dispose(); the concrete
-    // FFIRenderLib does. Cast to match existing test usage.
-    const lib = resolveRenderLib() as RenderLib & { dispose(): void }
+    // FFIRenderLib does. Its TypeScript-private opentui field is deliberately
+    // observed here so this lifecycle regression test can count ownership
+    // transitions without adding a production-only test hook.
+    const lib = resolveRenderLib() as RenderLib & {
+      dispose(): void
+      opentui: {
+        close(): void
+        symbols: {
+          destroyEventSink(...args: unknown[]): void
+        }
+      }
+    }
+    const originalClose = lib.opentui.close
+    lib.opentui.close = () => {
+      libraryCloseCalls++
+      originalClose()
+    }
+    const originalDestroyEventSink = lib.opentui.symbols.destroyEventSink
+    lib.opentui.symbols.destroyEventSink = (...args: unknown[]) => {
+      eventSinkDestroyCalls++
+      originalDestroyEventSink(...args)
+    }
     try {
       lib.dispose()
       firstOk = true
     } catch (err) {
-      result({ firstOk, secondOk, error: err instanceof Error ? err.message : String(err) })
+      result({
+        firstOk,
+        secondOk,
+        libraryCloseCalls,
+        eventSinkDestroyCalls,
+        error: err instanceof Error ? err.message : String(err),
+      })
       return
     }
     try {
       lib.dispose()
       secondOk = true
     } catch (err) {
-      result({ firstOk, secondOk, error: err instanceof Error ? err.message : String(err) })
+      result({
+        firstOk,
+        secondOk,
+        libraryCloseCalls,
+        eventSinkDestroyCalls,
+        error: err instanceof Error ? err.message : String(err),
+      })
       return
     }
-    result({ firstOk, secondOk })
+    result({ firstOk, secondOk, libraryCloseCalls, eventSinkDestroyCalls })
     return
   }
 
   result({ error: `unknown mode ${mode}` })
+}
+
+function requireLibPath(): string {
+  const libPath = process.argv[3]
+  if (!libPath) throw new Error("native library path is required for this mode")
+  return libPath
 }
 
 function tryResolve(resolve: typeof import("../../zig.js").resolveRenderLib): string {

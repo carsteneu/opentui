@@ -1,24 +1,28 @@
 import { describe, expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
+import { getCurrentNodeAssetTarget, getNativeAssetDescriptor } from "../node-asset-target.js"
 
 // Lazy FFI-load tests (Wave 2 Loop A, checkpoint A1/B3). Each case runs in a
 // fresh child process so module-level FFIRenderLib singleton state stays
 // isolated — importing zig.ts must construct no native library, and the first
 // real resolveRenderLib() constructs exactly one.
 const PKG = join(import.meta.dir, "..", "..")
-const ASSET_ROOT = join(PKG, ".yesmem", "native-assets")
 const CHILD = join(import.meta.dir, "fixtures", "lazy-ffi-child.ts")
-const REAL_LIB = join(ASSET_ROOT, "@opentui/core-linux-x64", "libopentui.so")
+const nativeAsset = getNativeAssetDescriptor(getCurrentNodeAssetTarget())
+const nativePackage = (await import(nativeAsset.packageName)) as { default: string }
+const REAL_LIB = nativePackage.default
 
 type ChildResult = Record<string, unknown>
 
 function runChild(mode: string, env: Record<string, string> = {}, libPath?: string): ChildResult {
   const args = [CHILD, mode]
   if (libPath) args.push(libPath)
+  const childEnv = { ...process.env, ...env }
+  if (!("OTUI_ASSET_ROOT" in env)) delete childEnv.OTUI_ASSET_ROOT
   const res = spawnSync(process.execPath, args, {
     cwd: PKG,
-    env: { ...process.env, OTUI_ASSET_ROOT: ASSET_ROOT, ...env },
+    env: childEnv,
     encoding: "utf8",
     timeout: 30_000,
   })
@@ -49,7 +53,7 @@ describe("zig eager FFI load removal", () => {
   })
 
   test("first resolve constructs the marker exactly once and returns stable identity", () => {
-    const r = runChild("resolve")
+    const r = runChild("resolve", {}, REAL_LIB)
     expect(r.nativeLoaded).toBe(1)
     expect(r.same).toBe(true)
   })
@@ -88,9 +92,11 @@ describe("zig eager FFI load removal", () => {
     }
   })
 
-  test("disposal does not double-call native free / callback disposal", () => {
-    const r = runChild("dispose-twice")
+  test("disposal closes the native library and event sink exactly once", () => {
+    const r = runChild("dispose-twice", {}, REAL_LIB)
     expect(r.firstOk).toBe(true)
     expect(r.secondOk).toBe(true)
+    expect(r.libraryCloseCalls).toBe(1)
+    expect(r.eventSinkDestroyCalls).toBe(1)
   })
 })
