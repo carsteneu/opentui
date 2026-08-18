@@ -7,11 +7,15 @@ import type { OptimizedBuffer } from "../buffer.js"
 import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
 import type { TextChunk } from "../text-buffer.js"
 import { treeSitterToTextChunks } from "../lib/tree-sitter-styled-text.js"
-import { RGBA } from "../lib/RGBA.js"
+import type { RGBA } from "../lib/RGBA.js"
 import { getHighlightCompletion } from "../lib/highlight-completion.js"
 import { CodeHighlightSession, type CodeHighlightSource, type HighlightOwner } from "./CodeHighlightSession.js"
 import { CodeBufferedHighlightSource } from "./CodeBufferedHighlightSource.js"
-import { getSafeStyledAppend } from "../lib/styled-text-append.js"
+import {
+  createStyledAppendSnapshot,
+  getSafeStyledAppend,
+  type StyledAppendSnapshot,
+} from "../lib/styled-text-append.js"
 
 export interface HighlightContext {
   content: string
@@ -79,8 +83,7 @@ export class CodeRenderable extends TextBufferRenderable {
   private _deferStreamingHighlight: boolean
   private _hadInitialContent: boolean = false
   private _lastHighlights: SimpleHighlight[] = []
-  private _committedStyledSource?: string
-  private _committedStyledChunks?: TextChunk[]
+  private _committedStyledSnapshot?: StyledAppendSnapshot
   private _baseHighlight?: string
   private _onHighlight?: OnHighlightCallback
   private _onChunks?: OnChunksCallback
@@ -206,8 +209,7 @@ export class CodeRenderable extends TextBufferRenderable {
   }
 
   private clearStyledSnapshot(): void {
-    this._committedStyledSource = undefined
-    this._committedStyledChunks = undefined
+    this._committedStyledSnapshot = undefined
   }
 
   private setPlainTextContent(content: string): void {
@@ -216,22 +218,12 @@ export class CodeRenderable extends TextBufferRenderable {
   }
 
   private commitStyledSnapshot(content: string, chunks: readonly TextChunk[]): void {
-    this._committedStyledSource = content
-    if (!this._onChunks) {
-      this._committedStyledChunks = chunks.slice()
-      return
-    }
-    this._committedStyledChunks = chunks.map((chunk) => ({
-      ...chunk,
-      fg: chunk.fg ? RGBA.clone(chunk.fg) : undefined,
-      bg: chunk.bg ? RGBA.clone(chunk.bg) : undefined,
-      link: chunk.link ? { ...chunk.link } : undefined,
-    }))
+    this._committedStyledSnapshot = createStyledAppendSnapshot(content, chunks)
   }
 
   private tryAppendStyledText(content: string, chunks: readonly TextChunk[]): boolean {
-    if (!this._streaming || !this._committedStyledSource || !this._committedStyledChunks) return false
-    const tail = getSafeStyledAppend(this._committedStyledSource, content, this._committedStyledChunks, chunks)
+    if (!this._streaming || !this._committedStyledSnapshot) return false
+    const tail = getSafeStyledAppend(this._committedStyledSnapshot, content, chunks)
     if (!tail || !this.textBuffer.appendStyledText(new StyledText(tail))) return false
     this.commitStyledSnapshot(content, chunks)
     return true

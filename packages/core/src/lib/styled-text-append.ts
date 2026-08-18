@@ -1,102 +1,121 @@
 import type { RGBA } from "./RGBA.js"
 import type { TextChunk } from "../text-buffer.js"
 
-function colorsEqual(left: RGBA | undefined, right: RGBA | undefined): boolean {
-  if (left === right) return true
-  if (!left || !right) return false
-  return left.equals(right)
+export interface StyledAppendSnapshot {
+  source: string
+  renderedLength: number
+  renderedEnd: string
+  canonicalPrefix: string
 }
 
-function stylesEqual(left: TextChunk, right: TextChunk): boolean {
-  return (
-    colorsEqual(left.fg, right.fg) &&
-    colorsEqual(left.bg, right.bg) &&
-    (left.attributes ?? 0) === (right.attributes ?? 0) &&
-    left.link?.url === right.link?.url
-  )
+function colorKey(color: RGBA | undefined): string {
+  if (!color) return "-"
+  const buffer = color.buffer
+  return `${buffer[0]},${buffer[1]},${buffer[2]},${buffer[3]}`
 }
 
-function isSafeLineBoundary(previous: string, tail: string): boolean {
-  if (tail.length === 0 || previous.endsWith("\r")) return false
-  return previous.endsWith("\n") || tail.startsWith("\n")
+function styleKey(chunk: TextChunk): string {
+  return `${colorKey(chunk.fg)}|${colorKey(chunk.bg)}|${chunk.attributes ?? 0}|${JSON.stringify(chunk.link?.url ?? null)}`
 }
 
-function nextNonEmptyChunk(chunks: readonly TextChunk[], start: number): number {
-  let index = start
-  while (index < chunks.length && chunks[index]!.text.length === 0) index++
-  return index
+function canonicalizePrefix(chunks: readonly TextChunk[], limit = Number.POSITIVE_INFINITY) {
+  const parts: string[] = []
+  let currentStyle: string | undefined
+  let currentText: string[] = []
+  let currentLength = 0
+  let renderedLength = 0
+  let renderedEnd = ""
+
+  const flush = () => {
+    if (currentStyle === undefined) return
+    parts.push(`${currentStyle.length}:`, currentStyle, `${currentLength}:`, currentText.join(""))
+    currentStyle = undefined
+    currentText = []
+    currentLength = 0
+  }
+
+  for (const chunk of chunks) {
+    if (renderedLength >= limit) break
+    const remaining = limit - renderedLength
+    const text = chunk.text.length > remaining ? chunk.text.slice(0, remaining) : chunk.text
+    if (text.length === 0) continue
+
+    const key = styleKey(chunk)
+    if (currentStyle !== key) {
+      flush()
+      currentStyle = key
+    }
+    currentText.push(text)
+    currentLength += text.length
+    renderedLength += text.length
+    renderedEnd = text.at(-1)!
+  }
+  flush()
+
+  return { canonical: parts.join(""), renderedLength, renderedEnd }
+}
+
+function extractTail(chunks: readonly TextChunk[], prefixLength: number): TextChunk[] | null {
+  const tail: TextChunk[] = []
+  let remaining = prefixLength
+
+  for (const chunk of chunks) {
+    if (remaining >= chunk.text.length) {
+      remaining -= chunk.text.length
+      continue
+    }
+
+    const text = chunk.text.slice(remaining)
+    remaining = 0
+    if (text.length > 0) tail.push({ ...chunk, text })
+  }
+
+  return remaining === 0 ? tail : null
+}
+
+function isSafeLineBoundary(previousEnd: string, tail: readonly TextChunk[]): boolean {
+  const first = tail.find((chunk) => chunk.text.length > 0)?.text[0]
+  return previousEnd !== "\r" && first !== undefined && (previousEnd === "\n" || first === "\n")
 }
 
 /**
- * Return the styled tail only when both source and rendered output are conservative,
- * line-boundary appends and every already-rendered code unit keeps the same style.
+ * Capture an immutable, chunk-boundary-independent representation of committed styled output.
+ * The canonical string retains no mutable chunk or color objects.
+ */
+export function createStyledAppendSnapshot(source: string, chunks: readonly TextChunk[]): StyledAppendSnapshot {
+  const rendered = canonicalizePrefix(chunks)
+  return {
+    source,
+    renderedLength: rendered.renderedLength,
+    renderedEnd: rendered.renderedEnd,
+    canonicalPrefix: rendered.canonical,
+  }
+}
+
+/**
+ * Return the styled tail only when source, rendered text, and every prefix style
+ * are unchanged at a conservative line boundary.
  */
 export function getSafeStyledAppend(
-  previousSource: string,
+  previous: StyledAppendSnapshot,
   nextSource: string,
-  previousChunks: readonly TextChunk[],
   nextChunks: readonly TextChunk[],
 ): TextChunk[] | null {
   if (
-    previousSource.length === 0 ||
-    !nextSource.startsWith(previousSource) ||
-    nextSource.length === previousSource.length
+    previous.source.length === 0 ||
+    !nextSource.startsWith(previous.source) ||
+    nextSource.length === previous.source.length
   )
     return null
 
-  const sourceTail = nextSource.slice(previousSource.length)
-  if (!isSafeLineBoundary(previousSource, sourceTail)) return null
+  const sourceTail = nextSource.slice(previous.source.length)
+  if (previous.source.endsWith("\r") || (!previous.source.endsWith("\n") && !sourceTail.startsWith("\n"))) return null
 
-  const previousRendered = previousChunks.map((chunk) => chunk.text).join("")
-  const nextRendered = nextChunks.map((chunk) => chunk.text).join("")
-  if (
-    previousRendered.length === 0 ||
-    !nextRendered.startsWith(previousRendered) ||
-    nextRendered.length === previousRendered.length
-  )
+  const nextPrefix = canonicalizePrefix(nextChunks, previous.renderedLength)
+  if (nextPrefix.renderedLength !== previous.renderedLength || nextPrefix.canonical !== previous.canonicalPrefix)
     return null
 
-  const renderedTail = nextRendered.slice(previousRendered.length)
-  if (!isSafeLineBoundary(previousRendered, renderedTail)) return null
-
-  let previousIndex = nextNonEmptyChunk(previousChunks, 0)
-  let nextIndex = nextNonEmptyChunk(nextChunks, 0)
-  let previousOffset = 0
-  let nextOffset = 0
-
-  while (previousIndex < previousChunks.length) {
-    if (nextIndex >= nextChunks.length) return null
-    const previous = previousChunks[previousIndex]!
-    const next = nextChunks[nextIndex]!
-    if (!stylesEqual(previous, next)) return null
-
-    const count = Math.min(previous.text.length - previousOffset, next.text.length - nextOffset)
-    if (previous.text.slice(previousOffset, previousOffset + count) !== next.text.slice(nextOffset, nextOffset + count))
-      return null
-
-    previousOffset += count
-    nextOffset += count
-    if (previousOffset === previous.text.length) {
-      previousIndex = nextNonEmptyChunk(previousChunks, previousIndex + 1)
-      previousOffset = 0
-    }
-    if (nextOffset === next.text.length) {
-      nextIndex = nextNonEmptyChunk(nextChunks, nextIndex + 1)
-      nextOffset = 0
-    }
-  }
-
-  const tail: TextChunk[] = []
-  if (nextIndex < nextChunks.length && nextOffset > 0) {
-    const chunk = nextChunks[nextIndex]!
-    const text = chunk.text.slice(nextOffset)
-    if (text.length > 0) tail.push({ ...chunk, text })
-    nextIndex++
-  }
-  for (; nextIndex < nextChunks.length; nextIndex++) {
-    const chunk = nextChunks[nextIndex]!
-    if (chunk.text.length > 0) tail.push(chunk)
-  }
-
-  return tail.map((chunk) => ({ ...chunk }))
+  const tail = extractTail(nextChunks, previous.renderedLength)
+  if (!tail || tail.length === 0 || !isSafeLineBoundary(previous.renderedEnd, tail)) return null
+  return tail
 }

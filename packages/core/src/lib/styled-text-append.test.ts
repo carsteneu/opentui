@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { RGBA } from "./RGBA.js"
-import { getSafeStyledAppend } from "./styled-text-append.js"
+import { createStyledAppendSnapshot, getSafeStyledAppend } from "./styled-text-append.js"
 import type { TextChunk } from "../text-buffer.js"
 
 const red = RGBA.fromValues(255, 0, 0, 255)
@@ -10,12 +10,21 @@ function chunk(text: string, options: Omit<TextChunk, "__isChunk" | "text"> = {}
   return { __isChunk: true, text, ...options }
 }
 
+function safeAppend(
+  previousSource: string,
+  nextSource: string,
+  previousChunks: readonly TextChunk[],
+  nextChunks: readonly TextChunk[],
+) {
+  return getSafeStyledAppend(createStyledAppendSnapshot(previousSource, previousChunks), nextSource, nextChunks)
+}
+
 describe("getSafeStyledAppend", () => {
   test("extracts a line tail even when the final style run was coalesced", () => {
     const previous = [chunk("const a = 1", { fg: red })]
     const next = [chunk("const a = 1\nconst b = 2", { fg: red })]
 
-    expect(getSafeStyledAppend("const a = 1", "const a = 1\nconst b = 2", previous, next)).toEqual([
+    expect(safeAppend("const a = 1", "const a = 1\nconst b = 2", previous, next)).toEqual([
       chunk("\nconst b = 2", { fg: red }),
     ])
   })
@@ -29,7 +38,7 @@ describe("getSafeStyledAppend", () => {
       chunk("\nnext", { link: { url: "https://example.test" } }),
     ]
 
-    expect(getSafeStyledAppend("const a = 1", "const a = 1\nnext", previous, next)).toEqual([
+    expect(safeAppend("const a = 1", "const a = 1\nnext", previous, next)).toEqual([
       chunk("\nnext", { link: { url: "https://example.test" } }),
     ])
   })
@@ -38,13 +47,22 @@ describe("getSafeStyledAppend", () => {
     const previous = [chunk("const a = 1", { fg: red })]
     const next = [chunk("const a = 1", { fg: green }), chunk("\nnext", { fg: red })]
 
-    expect(getSafeStyledAppend("const a = 1", "const a = 1\nnext", previous, next)).toBeNull()
+    expect(safeAppend("const a = 1", "const a = 1\nnext", previous, next)).toBeNull()
   })
 
   test("rejects replacement edits and unsafe grapheme or CRLF boundaries", () => {
     const previous = [chunk("value")]
-    expect(getSafeStyledAppend("value", "other\nvalue", previous, [chunk("other\nvalue")])).toBeNull()
-    expect(getSafeStyledAppend("value", "valué", previous, [chunk("valué")])).toBeNull()
-    expect(getSafeStyledAppend("value\r", "value\r\nnext", [chunk("value\r")], [chunk("value\r\nnext")])).toBeNull()
+    expect(safeAppend("value", "other\nvalue", previous, [chunk("other\nvalue")])).toBeNull()
+    expect(safeAppend("value", "valué", previous, [chunk("valué")])).toBeNull()
+    expect(safeAppend("value\r", "value\r\nnext", [chunk("value\r")], [chunk("value\r\nnext")])).toBeNull()
+  })
+
+  test("keeps an immutable style fingerprint without retaining mutable colors", () => {
+    const mutable = RGBA.fromValues(1, 0, 0, 1)
+    const snapshot = createStyledAppendSnapshot("value", [chunk("value", { fg: mutable })])
+    mutable.r = 0
+    mutable.g = 1
+
+    expect(getSafeStyledAppend(snapshot, "value\nnext", [chunk("value\nnext", { fg: mutable })])).toBeNull()
   })
 })
