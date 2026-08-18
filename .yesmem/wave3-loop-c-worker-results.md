@@ -6,11 +6,29 @@ Stand: 2026-08-18
 
 - Branch: `yesloop/wave3-worker-backpressure`
 - Worktree: `home/user/projects/opentui/.worktrees/wave3-worker-backpressure`
-- Basis-Commit (vor Änderung): `fccae2158d5c98949fc050913b918621af918111` (bestätigt)
-- Finaler HEAD: `48f2fa19` (Loop-C-Runtime-Commit) — Mess-Doc-Kommit folgt
+- **Produkt-/Fork-Basis: `fastpatch` (`2cd44364`, tracks `fork/fastpatch`)** — NICHT main/master. `fastpatch` ist ein **Vorfahre** des Final-HEAD (`git merge-base HEAD fastpatch` = `fastpatch` selbst, `git merge-base --is-ancestor fastpatch HEAD` = YES). Mein Branch = `fastpatch` + Wave1/Wave2-Lineage + Loop-C; nichts aus dem Fork geht verloren.
+- Loop-Erzeugungs-Checkpoint (Vorfahre auf derselben Lineage): `fccae215` — dient nur als isoliertes Diff-Fenster für die Loop-C-Delta (vorherige Wave-Arbeit an `client.ts`, z. B. `bef4e659` single-owner dispose / `133350c1` worker-exit, wird per Vorfahrenschaft geerbt).
+- Finaler HEAD: `b9244c01` (inkl. Review-Fix) — Diff-Basis: `fastpatch..HEAD` bzw. isoliert `fccae215..HEAD` (= exakt die 4 Loop-C-Commits).
+- Einordnung `main`: `main (75f07211)` ist NICHT Basis und NICHT Ziel; Produkt läuft über den Fork. Loop-C-Änderungen betreffen nur fork-lineage-Dateien und sind als Ancestor-Superset konsistent auf `fastpatch`.
 - Status: sauber außer untracked `packages/core/.yesmem/` (bereitgestellte Native-Assets, nie committed)
 - OpenTUI: `@opentui/core@0.5.3`; Bun `1.3.14`; Node-Parität `v26.4.0` (via nvm, `requireNode26`-Seam geprüft)
 - Native-SHA: `e7e9764462…` (nicht geändert; keine Native-/Zig-Änderung)
+
+## 1a. fastpatch-Basis-Nachweis (verifizierte Git-Fakten)
+
+```text
+$ git merge-base HEAD fastpatch                    → 2cd443645… (fastpatch selbst)
+$ git merge-base --is-ancestor fastpatch HEAD       → YES   (fastpatch < HEAD)
+$ git merge-base --is-ancestor fccae215 HEAD        → YES   (fccae215 < HEAD)
+$ git merge-base --is-ancestor fccae215 fastpatch   → NO    (fccae215 liegt auf derselben Lineage NACH fastpatch)
+$ git log fastpatch..HEAD -- client.ts              → wave1/wave2 + Loop-C (geerbt, kein Divergenzverlust)
+```
+
+Folgerung: Das Produkt läuft über den Fork `fastpatch`. Die Gates werden gegen den
+Fork-HEAD (`b9244c01`, ein `fastpatch`-Descendant) ausgeführt → sie sind damit
+**gegen die fastpatch-Lineage gültig**. Die isolierte Loop-C-Delta ist exakt
+`fccae215..HEAD` (= 4 Commits); `fastpatch..HEAD` addiert zusätzlich die ererbte
+Wave-Lineage, ändert aber nichts an Loop-Cs eigenen Dateien gegenüber dieser.
 
 ## 2. Commitfolge
 
