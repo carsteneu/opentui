@@ -57,6 +57,7 @@ export class MockTreeSitterClient extends TreeSitterClient {
     filetype: string,
     _version: number = 1,
     _autoInitialize: boolean = true,
+    _simpleHighlightsOnly: boolean = false,
   ): Promise<CreateBufferHighlightResult> {
     this._bufferFiletypes.set(id, filetype)
     const result = await this.highlightOnce(content, filetype)

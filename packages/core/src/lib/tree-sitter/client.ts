@@ -719,6 +719,7 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     filetype: string,
     version: number = 1,
     autoInitialize: boolean = true,
+    simpleHighlightsOnly: boolean = false,
   ): Promise<CreateBufferHighlightResult> {
     if (!this.initialized) {
       if (!autoInitialize) {
@@ -756,6 +757,7 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
           content,
           filetype,
           messageId,
+          simpleHighlightsOnly,
         })
       } catch (error) {
         this.messageCallbacks.delete(messageId)

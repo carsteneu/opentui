@@ -33,6 +33,7 @@ type ParserState = {
   filetype: string
   content: string
   injectionMapping?: InjectionMapping
+  simpleHighlightsOnly: boolean
 }
 
 interface FiletypeParser {
@@ -329,6 +330,7 @@ class ParserWorker {
     content: string,
     filetype: string,
     messageId: string,
+    simpleHighlightsOnly: boolean = false,
   ) {
     const filetypeParser = await this.resolveFiletypeParser(filetype)
 
@@ -364,6 +366,7 @@ class ParserWorker {
       filetype,
       content,
       injectionMapping: filetypeParser.injectionMapping,
+      simpleHighlightsOnly,
     }
     this.bufferParsers.set(bufferId, parserState)
 
@@ -395,7 +398,9 @@ class ParserWorker {
     }
 
     return {
-      ...this.getHighlights(parserState, matches, injectionRanges),
+      highlights: parserState.simpleHighlightsOnly
+        ? []
+        : this.getHighlights(parserState, matches, injectionRanges).highlights,
       simpleHighlights: this.getSimpleHighlights(matches, injectionRanges),
     }
   }
@@ -587,13 +592,13 @@ class ParserWorker {
       return { error: "Failed to parse buffer" }
     }
 
-    const changedRanges = parserState.tree.getChangedRanges(newTree)
+    const changedRanges = parserState.simpleHighlightsOnly ? [] : parserState.tree.getChangedRanges(newTree)
     parserState.tree = newTree
 
     const startQuery = performance.now()
     const matches: QueryCapture[] = []
 
-    if (changedRanges.length === 0) {
+    if (!parserState.simpleHighlightsOnly && changedRanges.length === 0) {
       edits.forEach((edit) => {
         const range = this.editToRange(edit)
         changedRanges.push(range)
@@ -647,7 +652,7 @@ class ParserWorker {
       const injectionResult = await this.processInjections(parserState)
       // Only add injection matches that are in the changed ranges
       // This is a simplification - ideally we'd only process injections in changed ranges
-      matches.push(...injectionResult.captures)
+      if (!parserState.simpleHighlightsOnly) matches.push(...injectionResult.captures)
       completeMatches.push(...injectionResult.captures)
       injectionRanges = injectionResult.injectionRanges
     }
@@ -662,7 +667,9 @@ class ParserWorker {
       this.performance.queryTimes.reduce((acc, time) => acc + time, 0) / this.performance.queryTimes.length
 
     return {
-      ...this.getHighlights(parserState, matches, injectionRanges),
+      highlights: parserState.simpleHighlightsOnly
+        ? []
+        : this.getHighlights(parserState, matches, injectionRanges).highlights,
       simpleHighlights: this.getSimpleHighlights(completeMatches, injectionRanges),
     }
   }
@@ -825,7 +832,9 @@ class ParserWorker {
     }
 
     return {
-      ...this.getHighlights(parserState, matches, injectionRanges),
+      highlights: parserState.simpleHighlightsOnly
+        ? []
+        : this.getHighlights(parserState, matches, injectionRanges).highlights,
       simpleHighlights: this.getSimpleHighlights(matches, injectionRanges),
     }
   }
@@ -883,6 +892,7 @@ class ParserWorker {
           filetype,
           content,
           injectionMapping: reusableState.filetypeParser.injectionMapping,
+          simpleHighlightsOnly: false,
         }
         const injectionResult = await this.processInjections(parserState)
 
@@ -1003,6 +1013,7 @@ if (isWorkerRuntime) {
             message.content,
             message.filetype,
             message.messageId,
+            message.simpleHighlightsOnly,
           )
           break
 

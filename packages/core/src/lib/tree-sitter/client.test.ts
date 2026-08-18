@@ -2131,4 +2131,43 @@ describe("TreeSitterClient backpressure (latest-wins)", () => {
       await client.destroy().catch(() => {})
     }
   })
+
+  test("full-highlight-only buffers preserve the oracle without building legacy line deltas", async () => {
+    const client = new TreeSitterClient({ dataPath: backpressureDataPath })
+    try {
+      await client.initialize()
+      const initial = 'const hello = "world"\n'
+      const created = await client.createBufferWithHighlights(1, initial, "javascript", 1, true, true)
+      expect(created.highlights).toEqual((await client.highlightOnce(initial, "javascript")).highlights)
+
+      const emitted: Array<{ version: number; highlights: unknown[] }> = []
+      client.on("highlights:response", (bufferId, version, highlights) => {
+        if (bufferId === 1) emitted.push({ version, highlights })
+      })
+
+      const final = `${initial}const tail = true\n`
+      const outcome = await client.updateBuffer(
+        1,
+        [
+          {
+            startIndex: initial.length,
+            oldEndIndex: initial.length,
+            newEndIndex: final.length,
+            startPosition: { row: 1, column: 0 },
+            oldEndPosition: { row: 1, column: 0 },
+            newEndPosition: { row: 2, column: 0 },
+          },
+        ],
+        final,
+        2,
+      )
+
+      expect(outcome.status === "completed" ? outcome.highlights : undefined).toEqual(
+        (await client.highlightOnce(final, "javascript")).highlights,
+      )
+      expect(emitted.find((event) => event.version === 2)?.highlights).toEqual([])
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
 })

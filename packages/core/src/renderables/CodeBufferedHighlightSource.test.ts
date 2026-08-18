@@ -7,7 +7,13 @@ import {
 } from "./CodeBufferedHighlightSource.js"
 
 class RecordingClient implements BufferedHighlightClient {
-  readonly creates: Array<{ id: number; content: string; filetype: string; version: number }> = []
+  readonly creates: Array<{
+    id: number
+    content: string
+    filetype: string
+    version: number
+    simpleHighlightsOnly?: boolean
+  }> = []
   readonly updates: Array<{ id: number; edits: Edit[]; content: string; version: number }> = []
   readonly removes: number[] = []
   createResult: CreateBufferHighlightResult = { hasParser: true, highlights: [] }
@@ -23,8 +29,10 @@ class RecordingClient implements BufferedHighlightClient {
     content: string,
     filetype: string,
     version: number,
+    _autoInitialize?: boolean,
+    simpleHighlightsOnly?: boolean,
   ): Promise<CreateBufferHighlightResult> {
-    this.creates.push({ id, content, filetype, version })
+    this.creates.push({ id, content, filetype, version, simpleHighlightsOnly })
     return this.createResult
   }
 
@@ -55,6 +63,7 @@ describe("CodeBufferedHighlightSource", () => {
     await expect(source.highlight(after, "typescript")).resolves.toEqual({ highlights: updateHighlights })
 
     expect(client.creates).toHaveLength(1)
+    expect(client.creates[0].simpleHighlightsOnly).toBe(true)
     expect(client.updates).toHaveLength(1)
     expect(client.updates[0]).toEqual({
       id: client.creates[0].id,
@@ -104,8 +113,15 @@ describe("CodeBufferedHighlightSource", () => {
   test("close during create disposes the late buffer exactly once and forbids later work", async () => {
     const client = new RecordingClient()
     const { promise, resolve } = Promise.withResolvers<CreateBufferHighlightResult>()
-    client.createBufferWithHighlights = async (id, content, filetype, version) => {
-      client.creates.push({ id, content, filetype, version })
+    client.createBufferWithHighlights = async (
+      id,
+      content,
+      filetype,
+      version,
+      _autoInitialize,
+      simpleHighlightsOnly,
+    ) => {
+      client.creates.push({ id, content, filetype, version, simpleHighlightsOnly })
       return promise
     }
     const source = new CodeBufferedHighlightSource(client)
@@ -126,8 +142,15 @@ describe("CodeBufferedHighlightSource", () => {
   test("release invalidates an in-flight create and keeps the source reusable", async () => {
     const client = new RecordingClient()
     const { promise, resolve } = Promise.withResolvers<CreateBufferHighlightResult>()
-    client.createBufferWithHighlights = async (id, content, filetype, version) => {
-      client.creates.push({ id, content, filetype, version })
+    client.createBufferWithHighlights = async (
+      id,
+      content,
+      filetype,
+      version,
+      _autoInitialize,
+      simpleHighlightsOnly,
+    ) => {
+      client.creates.push({ id, content, filetype, version, simpleHighlightsOnly })
       return client.creates.length === 1 ? promise : { hasParser: true, highlights: [] }
     }
     const source = new CodeBufferedHighlightSource(client)
@@ -144,8 +167,15 @@ describe("CodeBufferedHighlightSource", () => {
 
   test("a failed create still releases its reserved buffer id", async () => {
     const client = new RecordingClient()
-    client.createBufferWithHighlights = async (id, content, filetype, version) => {
-      client.creates.push({ id, content, filetype, version })
+    client.createBufferWithHighlights = async (
+      id,
+      content,
+      filetype,
+      version,
+      _autoInitialize,
+      simpleHighlightsOnly,
+    ) => {
+      client.creates.push({ id, content, filetype, version, simpleHighlightsOnly })
       throw new Error("worker failed after reserving the buffer")
     }
     const source = new CodeBufferedHighlightSource(client)

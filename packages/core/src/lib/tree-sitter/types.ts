@@ -63,6 +63,7 @@ export type TreeSitterWorkerRequest =
       content: string
       filetype: string
       messageId: string
+      simpleHighlightsOnly?: boolean
     }
   | { type: "HANDLE_EDITS"; bufferId: number; version: number; content: string; edits: Edit[] }
   | { type: "GET_PERFORMANCE"; messageId: string }

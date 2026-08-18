@@ -16,6 +16,7 @@ export interface BufferedHighlightClient {
     filetype: string,
     version?: number,
     autoInitialize?: boolean,
+    simpleHighlightsOnly?: boolean,
   ): Promise<CreateBufferHighlightResult>
   updateBuffer(id: number, edits: Edit[], newContent: string, version: number): Promise<UpdateOutcome>
   removeBuffer(id: number): Promise<void>
@@ -159,7 +160,7 @@ export class CodeBufferedHighlightSource implements CodeHighlightSource {
     let result: CreateBufferHighlightResult
 
     try {
-      result = await this.client.createBufferWithHighlights(id, bufferContent, filetype, version)
+      result = await this.client.createBufferWithHighlights(id, bufferContent, filetype, version, true, true)
     } catch (error) {
       this.dispose(id)
       // Preserve highlightOnce's rejection semantics. CodeRenderable uses a
