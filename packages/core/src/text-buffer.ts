@@ -92,6 +92,16 @@ export class TextBuffer {
     this._lineInfo = undefined
   }
 
+  public appendStyledText(text: StyledText): boolean {
+    this.guard()
+    if (!this.lib.textBufferAppendStyledText(this.bufferPtr, text.chunks)) return false
+
+    this._length = this.lib.textBufferGetLength(this.bufferPtr)
+    this._byteSize = this.lib.textBufferGetByteSize(this.bufferPtr)
+    this._lineInfo = undefined
+    return true
+  }
+
   public setDefaultFg(fg: RGBA | null): void {
     this.guard()
     this.lib.textBufferSetDefaultFg(this.bufferPtr, fg)

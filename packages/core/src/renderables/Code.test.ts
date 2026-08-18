@@ -2117,6 +2117,80 @@ test("CodeRenderable - streaming mode works with large content updates", async (
   expect(codeRenderable.plainText).toContain("const var9 = 9;")
 })
 
+test("CodeRenderable - appends an unchanged styled prefix at a safe line boundary", async () => {
+  const red = RGBA.fromValues(1, 0, 0, 1)
+  const syntaxStyle = SyntaxStyle.fromStyles({ default: { fg: red } })
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+  const initial = "const initial = 1"
+  const updated = `${initial}\nconst tail = "👩🏽‍💻"`
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-styled-append",
+    content: initial,
+    filetype: "javascript",
+    syntaxStyle,
+    treeSitterClient: mockClient,
+    streaming: true,
+    drawUnstyledText: false,
+    conceal: false,
+    onChunks: (_chunks, context) => [{ __isChunk: true, text: context.content, fg: red }],
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await resolveMockHighlights(codeRenderable, mockClient)
+
+  const textBuffer = (codeRenderable as any).textBuffer
+  const appendStyledText = spyOn(textBuffer, "appendStyledText")
+  const setStyledText = spyOn(textBuffer, "setStyledText")
+
+  codeRenderable.content = updated
+  await resolveMockHighlights(codeRenderable, mockClient)
+
+  expect(appendStyledText).toHaveBeenCalledTimes(1)
+  expect(setStyledText).not.toHaveBeenCalled()
+  expect(codeRenderable.plainText).toBe(updated)
+  expect(findSpanContaining(captureSpans(), "const tail")?.fg?.equals(red)).toBe(true)
+})
+
+test("CodeRenderable - falls back to full styled replacement when the prefix style changes", async () => {
+  const red = RGBA.fromValues(1, 0, 0, 1)
+  const green = RGBA.fromValues(0, 1, 0, 1)
+  const syntaxStyle = SyntaxStyle.fromStyles({ default: { fg: red } })
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+  const initial = "const initial = 1"
+  const updated = `${initial}\nconst tail = 2`
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-styled-full-fallback",
+    content: initial,
+    filetype: "javascript",
+    syntaxStyle,
+    treeSitterClient: mockClient,
+    streaming: true,
+    drawUnstyledText: false,
+    conceal: false,
+    onChunks: (_chunks, context) => [
+      { __isChunk: true, text: initial, fg: context.content === initial ? red : green },
+      { __isChunk: true, text: context.content.slice(initial.length), fg: red },
+    ],
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await resolveMockHighlights(codeRenderable, mockClient)
+
+  const textBuffer = (codeRenderable as any).textBuffer
+  const appendStyledText = spyOn(textBuffer, "appendStyledText")
+  const setStyledText = spyOn(textBuffer, "setStyledText")
+
+  codeRenderable.content = updated
+  await resolveMockHighlights(codeRenderable, mockClient)
+
+  expect(appendStyledText).not.toHaveBeenCalled()
+  expect(setStyledText).toHaveBeenCalledTimes(1)
+  expect(codeRenderable.plainText).toBe(updated)
+  expect(findSpanContaining(captureSpans(), "const initial")?.fg?.equals(green)).toBe(true)
+})
+
 test("CodeRenderable - disabling streaming clears cached highlights", async () => {
   const syntaxStyle = SyntaxStyle.fromStyles({
     default: { fg: RGBA.fromValues(1, 1, 1, 1) },

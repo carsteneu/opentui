@@ -892,6 +892,10 @@ function getOpenTUILib(libPath?: string) {
       args: ["u32", "ptr", "u32"],
       returns: "void",
     },
+    textBufferAppendStyledText: {
+      args: ["u32", "ptr", "u32"],
+      returns: "bool",
+    },
     textBufferGetLineCount: {
       args: ["u32"],
       returns: "u32",
@@ -2613,6 +2617,10 @@ export interface RenderLib extends AudioEngineLib {
     buffer: TextBufferHandle,
     chunks: Array<{ text: string; fg?: RGBA | null; bg?: RGBA | null; attributes?: number; link?: { url: string } }>,
   ) => void
+  textBufferAppendStyledText: (
+    buffer: TextBufferHandle,
+    chunks: Array<{ text: string; fg?: RGBA | null; bg?: RGBA | null; attributes?: number; link?: { url: string } }>,
+  ) => boolean
   textBufferSetDefaultFg: (buffer: TextBufferHandle, fg: RGBA | null) => void
   textBufferSetDefaultBg: (buffer: TextBufferHandle, bg: RGBA | null) => void
   textBufferSetDefaultAttributes: (buffer: TextBufferHandle, attributes: number | null) => void
@@ -4573,6 +4581,16 @@ class FFIRenderLib implements RenderLib {
 
     const chunksBuffer = StyledChunkStruct.packList(chunks)
     this.opentui.symbols.textBufferSetStyledText(buffer, chunksBuffer, chunks.length)
+  }
+
+  public textBufferAppendStyledText(
+    buffer: Pointer,
+    chunks: Array<{ text: string; fg?: RGBA | null; bg?: RGBA | null; attributes?: number; link?: { url: string } }>,
+  ): boolean {
+    if (chunks.length === 0) return true
+
+    const chunksBuffer = StyledChunkStruct.packList(chunks)
+    return this.opentui.symbols.textBufferAppendStyledText(buffer, chunksBuffer, chunks.length)
   }
 
   public textBufferGetLineCount(buffer: Pointer): number {

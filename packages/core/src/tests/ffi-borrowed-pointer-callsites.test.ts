@@ -643,6 +643,18 @@ describe("borrowed pointer call sites", () => {
     })
   })
 
+  test("textBufferAppendStyledText synchronously borrows the packed chunk owner", () => {
+    withStubbedSymbols({ textBufferAppendStyledText: () => true }, (calls) => {
+      const chunks = [{ text: "\nconst tail = 1", fg: RGBA.fromValues(1, 0, 0, 1) }]
+
+      expect(lib.textBufferAppendStyledText(0 as any, chunks)).toBe(true)
+      expect(calls.textBufferAppendStyledText).toHaveLength(1)
+      expect(calls.textBufferAppendStyledText![0]![1]).toBeInstanceOf(ArrayBuffer)
+      expect((calls.textBufferAppendStyledText![0]![1] as ArrayBuffer).byteLength).toBe(StyledChunkStruct.size)
+      expect(calls.textBufferAppendStyledText![0]![2]).toBe(1)
+    })
+  })
+
   test("editorViewSetPlaceholderStyledText passes the packed chunk buffer as an object value", () => {
     withStubbedSymbol("editorViewSetPlaceholderStyledText", (calls) => {
       lib.editorViewSetPlaceholderStyledText(0 as any, [{ text: "placeholder", fg: RGBA.fromValues(0, 1, 0, 1) }])

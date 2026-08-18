@@ -7,10 +7,11 @@ import type { OptimizedBuffer } from "../buffer.js"
 import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
 import type { TextChunk } from "../text-buffer.js"
 import { treeSitterToTextChunks } from "../lib/tree-sitter-styled-text.js"
-import type { RGBA } from "../lib/RGBA.js"
+import { RGBA } from "../lib/RGBA.js"
 import { getHighlightCompletion } from "../lib/highlight-completion.js"
 import { CodeHighlightSession, type CodeHighlightSource, type HighlightOwner } from "./CodeHighlightSession.js"
 import { CodeBufferedHighlightSource } from "./CodeBufferedHighlightSource.js"
+import { getSafeStyledAppend } from "../lib/styled-text-append.js"
 
 export interface HighlightContext {
   content: string
@@ -78,6 +79,8 @@ export class CodeRenderable extends TextBufferRenderable {
   private _deferStreamingHighlight: boolean
   private _hadInitialContent: boolean = false
   private _lastHighlights: SimpleHighlight[] = []
+  private _committedStyledSource?: string
+  private _committedStyledChunks?: TextChunk[]
   private _baseHighlight?: string
   private _onHighlight?: OnHighlightCallback
   private _onChunks?: OnChunksCallback
@@ -118,7 +121,7 @@ export class CodeRenderable extends TextBufferRenderable {
       if (this._initialStyledText && this._initialStyledTextContent === this._content && this._drawUnstyledText) {
         this.setInitialStyledTextContent(this._initialStyledText, this._content)
       } else {
-        this.textBuffer.setText(this._content)
+        this.setPlainTextContent(this._content)
       }
       this.updateTextInfo()
       this._shouldRenderTextBuffer = this._drawUnstyledText || !this._filetype
@@ -172,7 +175,7 @@ export class CodeRenderable extends TextBufferRenderable {
       if (this._initialStyledText && this._initialStyledTextContent === value && this._drawUnstyledText) {
         this.setInitialStyledTextContent(this._initialStyledText, value)
       } else {
-        this.textBuffer.setText(value)
+        this.setPlainTextContent(value)
       }
       this.setRenderedLineSources(undefined)
       this.updateTextInfoAfterBufferChange(scrollWidth, scrollHeight)
@@ -192,13 +195,42 @@ export class CodeRenderable extends TextBufferRenderable {
   }
 
   private setInitialStyledTextContent(styledText: StyledText, content: string): void {
-    // Native append boundaries do not reflow word wrapping or re-segment all
-    // grapheme clusters, so streaming updates must remain full replacements.
+    // Default-styled content uses the ordinary text path until the first
+    // highlighted snapshot establishes a safe incremental styled prefix.
     if (this.isDefaultStyledContent(styledText, content)) {
-      this.textBuffer.setText(content)
+      this.setPlainTextContent(content)
       return
     }
     this.textBuffer.setStyledText(styledText)
+    this.commitStyledSnapshot(content, styledText.chunks)
+  }
+
+  private clearStyledSnapshot(): void {
+    this._committedStyledSource = undefined
+    this._committedStyledChunks = undefined
+  }
+
+  private setPlainTextContent(content: string): void {
+    this.textBuffer.setText(content)
+    this.clearStyledSnapshot()
+  }
+
+  private commitStyledSnapshot(content: string, chunks: readonly TextChunk[]): void {
+    this._committedStyledSource = content
+    this._committedStyledChunks = chunks.map((chunk) => ({
+      ...chunk,
+      fg: chunk.fg ? RGBA.clone(chunk.fg) : undefined,
+      bg: chunk.bg ? RGBA.clone(chunk.bg) : undefined,
+      link: chunk.link ? { ...chunk.link } : undefined,
+    }))
+  }
+
+  private tryAppendStyledText(content: string, chunks: readonly TextChunk[]): boolean {
+    if (!this._streaming || !this._committedStyledSource || !this._committedStyledChunks) return false
+    const tail = getSafeStyledAppend(this._committedStyledSource, content, this._committedStyledChunks, chunks)
+    if (!tail || !this.textBuffer.appendStyledText(new StyledText(tail))) return false
+    this.commitStyledSnapshot(content, chunks)
+    return true
   }
 
   private applyDeferredInitialStyledText(): void {
@@ -378,6 +410,7 @@ export class CodeRenderable extends TextBufferRenderable {
       this.updatePartialEligibility()
       this._hadInitialContent = false
       this._lastHighlights = []
+      this.clearStyledSnapshot()
       this.invalidateHighlights()
       this.applyDeferredInitialStyledText()
     }
@@ -466,7 +499,7 @@ export class CodeRenderable extends TextBufferRenderable {
       if (this._initialStyledText && this._initialStyledTextContent === content) {
         this.setInitialStyledTextContent(this._initialStyledText, content)
       } else {
-        this.textBuffer.setText(content)
+        this.setPlainTextContent(content)
       }
       this.setRenderedLineSources(undefined)
       this._shouldRenderTextBuffer = true
@@ -555,10 +588,13 @@ export class CodeRenderable extends TextBufferRenderable {
         if (this.isDestroyed) return
 
         const styledText = new StyledText(chunks)
-        this.textBuffer.setStyledText(styledText)
+        if (!this.tryAppendStyledText(content, chunks)) {
+          this.textBuffer.setStyledText(styledText)
+          this.commitStyledSnapshot(content, chunks)
+        }
         this.setRenderedLineSources(renderedLineSources)
       } else {
-        this.textBuffer.setText(content)
+        this.setPlainTextContent(content)
         this.setRenderedLineSources(undefined)
       }
 
@@ -577,7 +613,7 @@ export class CodeRenderable extends TextBufferRenderable {
       if (this.isDestroyed) return
       const scrollWidth = this.scrollWidth
       const scrollHeight = this.scrollHeight
-      this.textBuffer.setText(content)
+      this.setPlainTextContent(content)
       this.setRenderedLineSources(undefined)
       this._shouldRenderTextBuffer = true
       this._isHighlighting = false
@@ -746,7 +782,7 @@ export class CodeRenderable extends TextBufferRenderable {
         this.clearPendingHighlight()
 
         if (hasContent) {
-          this.textBuffer.setText(this._content)
+          this.setPlainTextContent(this._content)
           this.setRenderedLineSources(undefined)
           this.updateTextInfo()
         }
