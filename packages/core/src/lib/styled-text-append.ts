@@ -3,9 +3,10 @@ import type { TextChunk } from "../text-buffer.js"
 
 export interface StyledAppendSnapshot {
   source: string
-  renderedLength: number
-  renderedEnd: string
-  canonicalPrefix: string
+  renderedText: string
+  runEnds: Uint32Array
+  runStyles: Uint32Array
+  styleKeys: readonly string[]
 }
 
 function colorKey(color: RGBA | undefined): string {
@@ -16,43 +17,6 @@ function colorKey(color: RGBA | undefined): string {
 
 function styleKey(chunk: TextChunk): string {
   return `${colorKey(chunk.fg)}|${colorKey(chunk.bg)}|${chunk.attributes ?? 0}|${JSON.stringify(chunk.link?.url ?? null)}`
-}
-
-function canonicalizePrefix(chunks: readonly TextChunk[], limit = Number.POSITIVE_INFINITY) {
-  const parts: string[] = []
-  let currentStyle: string | undefined
-  let currentText: string[] = []
-  let currentLength = 0
-  let renderedLength = 0
-  let renderedEnd = ""
-
-  const flush = () => {
-    if (currentStyle === undefined) return
-    parts.push(`${currentStyle.length}:`, currentStyle, `${currentLength}:`, currentText.join(""))
-    currentStyle = undefined
-    currentText = []
-    currentLength = 0
-  }
-
-  for (const chunk of chunks) {
-    if (renderedLength >= limit) break
-    const remaining = limit - renderedLength
-    const text = chunk.text.length > remaining ? chunk.text.slice(0, remaining) : chunk.text
-    if (text.length === 0) continue
-
-    const key = styleKey(chunk)
-    if (currentStyle !== key) {
-      flush()
-      currentStyle = key
-    }
-    currentText.push(text)
-    currentLength += text.length
-    renderedLength += text.length
-    renderedEnd = text.at(-1)!
-  }
-  flush()
-
-  return { canonical: parts.join(""), renderedLength, renderedEnd }
 }
 
 function extractTail(chunks: readonly TextChunk[], prefixLength: number): TextChunk[] | null {
@@ -73,22 +37,62 @@ function extractTail(chunks: readonly TextChunk[], prefixLength: number): TextCh
   return remaining === 0 ? tail : null
 }
 
-function isSafeLineBoundary(previousEnd: string, tail: readonly TextChunk[]): boolean {
-  const first = tail.find((chunk) => chunk.text.length > 0)?.text[0]
-  return previousEnd !== "\r" && first !== undefined && (previousEnd === "\n" || first === "\n")
+function prefixStylesEqual(previous: StyledAppendSnapshot, next: StyledAppendSnapshot): boolean {
+  const prefixLength = previous.renderedText.length
+  let previousRun = 0
+  let nextRun = 0
+  let offset = 0
+
+  while (offset < prefixLength) {
+    const previousEnd = previous.runEnds[previousRun]
+    const nextEnd = next.runEnds[nextRun]
+    if (previousEnd === undefined || nextEnd === undefined) return false
+    if (previous.styleKeys[previous.runStyles[previousRun]!] !== next.styleKeys[next.runStyles[nextRun]!]) return false
+
+    offset = Math.min(previousEnd, nextEnd, prefixLength)
+    if (previousEnd === offset) previousRun++
+    if (nextEnd === offset) nextRun++
+  }
+
+  return true
 }
 
-/**
- * Capture an immutable, chunk-boundary-independent representation of committed styled output.
- * The canonical string retains no mutable chunk or color objects.
- */
+/** Capture immutable styled output without retaining mutable chunk or color objects. */
 export function createStyledAppendSnapshot(source: string, chunks: readonly TextChunk[]): StyledAppendSnapshot {
-  const rendered = canonicalizePrefix(chunks)
+  const textParts: string[] = []
+  const runEnds: number[] = []
+  const runStyles: number[] = []
+  const styleKeys: string[] = []
+  const styleIds = new Map<string, number>()
+  let renderedLength = 0
+
+  for (const chunk of chunks) {
+    if (chunk.text.length === 0) continue
+    const key = styleKey(chunk)
+    let styleId = styleIds.get(key)
+    if (styleId === undefined) {
+      styleId = styleKeys.length
+      styleIds.set(key, styleId)
+      styleKeys.push(key)
+    }
+
+    textParts.push(chunk.text)
+    renderedLength += chunk.text.length
+    const lastRun = runStyles.length - 1
+    if (lastRun >= 0 && runStyles[lastRun] === styleId) {
+      runEnds[lastRun] = renderedLength
+    } else {
+      runStyles.push(styleId)
+      runEnds.push(renderedLength)
+    }
+  }
+
   return {
     source,
-    renderedLength: rendered.renderedLength,
-    renderedEnd: rendered.renderedEnd,
-    canonicalPrefix: rendered.canonical,
+    renderedText: textParts.join(""),
+    runEnds: Uint32Array.from(runEnds),
+    runStyles: Uint32Array.from(runStyles),
+    styleKeys,
   }
 }
 
@@ -98,24 +102,30 @@ export function createStyledAppendSnapshot(source: string, chunks: readonly Text
  */
 export function getSafeStyledAppend(
   previous: StyledAppendSnapshot,
-  nextSource: string,
+  next: StyledAppendSnapshot,
   nextChunks: readonly TextChunk[],
 ): TextChunk[] | null {
   if (
     previous.source.length === 0 ||
-    !nextSource.startsWith(previous.source) ||
-    nextSource.length === previous.source.length
+    !next.source.startsWith(previous.source) ||
+    next.source.length === previous.source.length
   )
     return null
 
-  const sourceTail = nextSource.slice(previous.source.length)
+  const sourceTail = next.source.slice(previous.source.length)
   if (previous.source.endsWith("\r") || (!previous.source.endsWith("\n") && !sourceTail.startsWith("\n"))) return null
-
-  const nextPrefix = canonicalizePrefix(nextChunks, previous.renderedLength)
-  if (nextPrefix.renderedLength !== previous.renderedLength || nextPrefix.canonical !== previous.canonicalPrefix)
+  if (
+    previous.renderedText.length === 0 ||
+    !next.renderedText.startsWith(previous.renderedText) ||
+    next.renderedText.length === previous.renderedText.length ||
+    !prefixStylesEqual(previous, next)
+  )
     return null
 
-  const tail = extractTail(nextChunks, previous.renderedLength)
-  if (!tail || tail.length === 0 || !isSafeLineBoundary(previous.renderedEnd, tail)) return null
+  const tail = extractTail(nextChunks, previous.renderedText.length)
+  if (!tail || tail.length === 0) return null
+  const renderedTail = next.renderedText.slice(previous.renderedText.length)
+  if (previous.renderedText.endsWith("\r") || (!previous.renderedText.endsWith("\n") && !renderedTail.startsWith("\n")))
+    return null
   return tail
 }

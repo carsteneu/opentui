@@ -16,7 +16,11 @@ function safeAppend(
   previousChunks: readonly TextChunk[],
   nextChunks: readonly TextChunk[],
 ) {
-  return getSafeStyledAppend(createStyledAppendSnapshot(previousSource, previousChunks), nextSource, nextChunks)
+  return getSafeStyledAppend(
+    createStyledAppendSnapshot(previousSource, previousChunks),
+    createStyledAppendSnapshot(nextSource, nextChunks),
+    nextChunks,
+  )
 }
 
 describe("getSafeStyledAppend", () => {
@@ -63,6 +67,7 @@ describe("getSafeStyledAppend", () => {
     mutable.r = 0
     mutable.g = 1
 
-    expect(getSafeStyledAppend(snapshot, "value\nnext", [chunk("value\nnext", { fg: mutable })])).toBeNull()
+    const next = [chunk("value\nnext", { fg: mutable })]
+    expect(getSafeStyledAppend(snapshot, createStyledAppendSnapshot("value\nnext", next), next)).toBeNull()
   })
 })

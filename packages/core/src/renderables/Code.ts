@@ -221,11 +221,11 @@ export class CodeRenderable extends TextBufferRenderable {
     this._committedStyledSnapshot = createStyledAppendSnapshot(content, chunks)
   }
 
-  private tryAppendStyledText(content: string, chunks: readonly TextChunk[]): boolean {
+  private tryAppendStyledText(next: StyledAppendSnapshot, chunks: readonly TextChunk[]): boolean {
     if (!this._streaming || !this._committedStyledSnapshot) return false
-    const tail = getSafeStyledAppend(this._committedStyledSnapshot, content, chunks)
+    const tail = getSafeStyledAppend(this._committedStyledSnapshot, next, chunks)
     if (!tail || !this.textBuffer.appendStyledText(new StyledText(tail))) return false
-    this.commitStyledSnapshot(content, chunks)
+    this._committedStyledSnapshot = next
     return true
   }
 
@@ -584,9 +584,10 @@ export class CodeRenderable extends TextBufferRenderable {
         if (this.isDestroyed) return
 
         const styledText = new StyledText(chunks)
-        if (!this.tryAppendStyledText(content, chunks)) {
+        const styledSnapshot = createStyledAppendSnapshot(content, chunks)
+        if (!this.tryAppendStyledText(styledSnapshot, chunks)) {
           this.textBuffer.setStyledText(styledText)
-          this.commitStyledSnapshot(content, chunks)
+          this._committedStyledSnapshot = styledSnapshot
         }
         this.setRenderedLineSources(renderedLineSources)
       } else {
