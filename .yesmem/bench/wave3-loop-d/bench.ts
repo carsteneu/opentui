@@ -1,5 +1,5 @@
 // Wave 3 Loop D — focused converter benchmark: optimized treeSitterToTextChunks
-// vs fccae215 baseline, paired in-process on identical inputs. Captures p50/p95/p99,
+// vs fastpatch baseline (2cd44364), paired in-process on identical inputs. Captures p50/p95/p99,
 // the §8.4 performance gates, and differential output parity at 5k lines.
 import { treeSitterToTextChunks as opt } from "../../../packages/core/src/lib/tree-sitter-styled-text.js"
 import { treeSitterToTextChunks as base } from "./baseline.js"
@@ -139,7 +139,7 @@ const workloads: Workload[] = [
 const now = new Date().toISOString()
 const raw: any[] = []
 const report: string[] = []
-report.push("# Wave 3 Loop D — converter benchmark (optimized vs fccae215 baseline)")
+report.push("# Wave 3 Loop D — converter benchmark (optimized vs fastpatch baseline (2cd44364))")
 report.push("")
 report.push(`- date: ${now}`)
 report.push(`- platform: ${process.platform} ${process.arch}`)
@@ -160,7 +160,7 @@ for (const [wi, w] of workloads.entries()) {
   raw.push({ workload: w.name, samples: w.content.length, highlights: w.hl.length, base: bs, opt: os })
   report.push(`## ${w.name} (samples=${w.content.length}, highlights=${w.hl.length})`)
   report.push("")
-  report.push(`| metric | baseline (fccae215) | optimized | ratio (opt/base) |`)
+  report.push(`| metric | baseline (fastpatch 2cd44364) | optimized | ratio (opt/base) |`)
   report.push(`|---|---|---|---|`)
   report.push(`| p50 | ${b.p50.toFixed(3)} ms | ${o.p50.toFixed(3)} ms | ${(o.p50 / b.p50).toFixed(3)} |`)
   report.push(`| p95 | ${b.p95.toFixed(3)} ms | ${o.p95.toFixed(3)} ms | ${(o.p95 / b.p95).toFixed(3)} |`)
@@ -184,7 +184,7 @@ for (const w of [mixed(5000, 3, 13), injectHeavy(5000, 600)]) {
 
 // ---- perf gates (§8.4/§8.5) -------------------------------------------------
 // gate1: 1k-line conversion p95 < 8ms (workload[2])
-// gate2: 5k-line conversion ≥50% below fccae215, on the adversarial-injection workload
+// gate2: 5k-line conversion ≥50% below fastpatch (2cd44364), on the adversarial-injection workload
 //        the optimization targets (§8.1 "Injection-some()-Quadratik", §8.3 adversarial density)
 // gate3: small/sparse ≤3% worse (workload[0] realistic small)
 const g1 = rows[2].o.p95
@@ -202,7 +202,7 @@ report.push(`| gate | criterion | measured | pass |`)
 report.push(`|---|---|---|---|`)
 report.push(`| 1k p95 < 8ms | p95(1k density=2) < 8ms | ${g1.toFixed(3)} ms | ${gate1 ? "YES" : "NO"} |`)
 report.push(
-  `| 5k ≥50% below fccae215 (inject-5k) | opt p50 ≤ 0.5×base p50 | ${g2o.toFixed(3)} vs ${g2b.toFixed(3)} ms (ratio ${(g2o / g2b).toFixed(3)}) | ${gate2 ? "YES" : "NO"} |`,
+  `| 5k ≥50% below fastpatch 2cd44364 (inject-5k) | opt p50 ≤ 0.5×base p50 | ${g2o.toFixed(3)} vs ${g2b.toFixed(3)} ms (ratio ${(g2o / g2b).toFixed(3)}) | ${gate2 ? "YES" : "NO"} |`,
 )
 report.push(
   `| small/sparse ≤3% worse | opt p50(small) ≤ 1.03×base p50 | ${g3o.toFixed(3)} vs ${g3b.toFixed(3)} ms (ratio ${(g3o / g3b).toFixed(3)}) | ${gate3 ? "YES" : "NO"} |`,

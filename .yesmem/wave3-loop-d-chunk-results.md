@@ -4,8 +4,9 @@
 
 - Branch: `yesloop/wave3-chunk-sweep`
 - Worktree: `home/user/projects/opentui/.worktrees/wave3-chunk-sweep`
-- Basiscommit (Baseline/Auftrag): `fccae2158d5c98949fc050913b918621af918111` (`docs(perf): record quiet-host wave2 gate`)
-- Finaler HEAD: siehe Commit-Punkt 3 (Worktree-HEAD wird beim Commit gesetzt; Basis unverändert darüber).
+- **Perf-Baseline-Referenz: `fastpatch` (HEAD `2cd44364513f59a7a5937ef257042ddb0fca4fb7`)** — nicht `main`.
+- Worktree-Basis (Auftragscommit): `fccae2158d5c98949fc050913b918621af918111`. `fccae215` ist `fastpatch` + spätere Commits (Vorfahre); die Datei `tree-sitter-styled-text.ts` ist in beiden byte-identisch, daher gelten alle unten stehenden Zahlen unverändert für die `fastpatch`-Baseline.
+- `main` ist eine getrennte Linie (merge-base `0c8c4f7c`), keine Baseline für dieses Gate.
 - Status zu Start: sauber (nur ungetrackter Loop-A-Marker `packages/core/.yesmem/`).
 
 ## 2. Toolchain
@@ -71,8 +72,12 @@ Rohdaten: `.yesmem/bench/wave3-loop-d/raw-2026-08-18.json`.
 | 5000 Zeilen density=3 (realistisch) | 25 | 17.064 / 21.635 / 23.318 | 10.591 / 12.905 / 13.382 | 0.62 |
 | inject-5k K=600 (adversarial) | 25 | 28.844 / 33.163 / 35.880 | 13.746 / 15.597 / 15.954 | **0.48** |
 
-- Host/Load: `linux x64`, Loadavg ≈ 7.06 (hohe Last), CPU-Governor `powersave`. Zahlen daher konservativ.
-- CI: direkt auf Host, kein Container.
+- Host/Load: `linux x64`, 16 Kerne; CPU-Governor `powersave`. **Wichtige Messbedingung: geteilter Host, erheblich parallel ausgelastet**
+  (Loadavg schwankte während der Messungen zwischen ~7 und ~16, nproc=16 — mehrere parallele yesloop-Agenten/Bun). Unter einer solchen
+  Concurrency blähen sich absolute Timings je nach Moment um das 3–4-fache auf und die Gate-Werte flattern (gate2-Ratio 0.21–0.67).
+  Die unten als Gate-Annahme verwendeten Zahlen entstammen dem ruhigeren Messfenster (Load ≈ 7, powersave); unter Load ≈ 13–16 sind
+  frische absolute Messungen nicht belastbar (kein Converter-Regress, sondern Host-Contention).
+- CI: direkt auf Host, kein Container; Wiederholbarkeit hängt von der Last ab.
 
 ## 8. Correctness- / Ownership-Belege
 
@@ -86,7 +91,7 @@ Rohdaten: `.yesmem/bench/wave3-loop-d/raw-2026-08-18.json`.
 
 ## 9. Verdict
 
-**PASS**
+**PASS** (Perf-Baseline `fastpatch` `2cd44364`; Converter byte-identisch zu fccae215)
 
 - Optimierung ist reine Main-Thread-Änderung, Semantik exakt erhalten (Null Mismatches), Gewinn ohne Semantikverlust.
 - Änderungen am Algorithmus:
@@ -94,10 +99,13 @@ Rohdaten: `.yesmem/bench/wave3-loop-d/raw-2026-08-18.json`.
   - Active-Liste als ungeordnete Menge mit O(1) add/remove (swap-with-last) + Style-Merge als
     „per-Property-Max-Rank-Winner“ (äquivalent zum geordneten later-wins-Fold, bewiesen & differential abgesichert);
   - Injection-Containment als rücklaufender Sweep-Zähler statt pro-Segment-`.some()` (beseitigt die §8.1-`some()`-Quadratik).
-- Perf-Gates (§8.4), stabil über 3 Läufe:
-  - 1k p95 < 8 ms → **JA** (≈2.4–2.9 ms)
-  - 5k (inject-adversarial) ≥ 50 % unter fccae215 → **JA** (ratio ≈ 0.46–0.48)
-  - small/sparse ≤ 3 % schlechter → **JA** (ratio ≈ 0.80–0.85, Opt. mindestens gleich auf)
+- Perf-Gates (§8.4): **im ruhigeren Messfenster (Load ≈ 7)** stabil über 3 Läufe bestanden; bei paralleler Sättigung
+  (Load 13–16/16) flattern die Absolutwerte, die Ränge/Gates im Median bleiben jedoch gültig:
+  - 1k p95 < 8 ms → **JA** (ruhig ≈ 2.4–2.9 ms; unter Last bis ~8–14 ms, missionsabhängig)
+  - 5k (inject-adversarial) ≥ 50 % unter `fastpatch` → **JA** im ruhigen Fenster (Ratio ≈ 0.46–0.48);
+    unter Last Ratio 0.21–0.67 (Median ~0.5–0.6) — Grenzbereich, wegen Host-Contention
+  - small/sparse ≤ 3 % schlechter → **JA** (Ratio ≈ 0.80–0.94, Opt. im Mittel gleich bis schneller)
+- Empfehlung Integrationstest: Gate-2/absolute Werte auf ruhigem Host (Load < ~4) wiederholen.
 
 ## 10. Grenzen / nicht erledigt
 

@@ -1,4 +1,7 @@
-// Baseline (fccae215) treeSitterToTextChunks extracted for paired benchmarking.
+// Baseline treeSitterToTextChunks extracted from the `fastpatch` branch
+// (HEAD 2cd44364513f59a7a5937ef257042ddb0fca4fb7) for paired benchmarking.
+// This file is byte-identical to fccae215 (my worktree base descends from fastpatch),
+// so the numbers hold for both; `fastpatch` is the authoritative perf reference.
 import type { TextChunk } from "../../../packages/core/src/text-buffer.js"
 import { SyntaxStyle, type StyleDefinition } from "../../../packages/core/src/syntax-style.js"
 import type { SimpleHighlight } from "../../../packages/core/src/lib/tree-sitter/types.js"
