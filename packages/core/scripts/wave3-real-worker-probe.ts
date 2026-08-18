@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
+import { makeCodeContent, makeWarmAppendWorkload } from "./wave3-real-worker-workload.js"
 
 interface ProbeResult {
   schemaVersion: 1
@@ -54,17 +55,6 @@ function sourceUrl(root: string, relativePath: string): string {
   return pathToFileURL(join(root, "packages/core/src", relativePath)).href
 }
 
-function makeContent(lines: number, marker: string, appendedLines = 0): string {
-  const content = [`let ${marker}: number = ${appendedLines}`]
-  for (let index = 1; index < lines; index++) {
-    content.push(`const VALUE_${index}: number = ${index}`)
-  }
-  for (let index = 0; index < appendedLines; index++) {
-    content.push(`const APPENDED_${index}: number = ${lines + index}`)
-  }
-  return content.join("\n")
-}
-
 function normalizeForDigest(value: unknown): string {
   return JSON.stringify(value, (_key, nested) => {
     if (nested && typeof nested === "object" && "r" in nested && "g" in nested && "b" in nested && "a" in nested) {
@@ -99,6 +89,11 @@ async function main(): Promise<void> {
   const scenario = requiredArg("scenario")
   const nativePath = requiredArg("native-path")
   const expectedNativeSha = requiredArg("native-sha")
+  const diagnostics = process.argv.includes("--diagnostics")
+  let highlightAcceptedAt = 0
+  let chunksReadyAt = 0
+  let styledTextMs = 0
+  let styledTextCalls = 0
 
   const [
     { createTestRenderer },
@@ -137,7 +132,33 @@ async function main(): Promise<void> {
     width: "100%",
     height: "100%",
     fg: RGBA.fromValues(255, 255, 255, 255),
+    onHighlight: diagnostics
+      ? (highlights: any[]) => {
+          highlightAcceptedAt = performance.now()
+          return highlights
+        }
+      : undefined,
+    onChunks: diagnostics
+      ? (chunks: any[]) => {
+          chunksReadyAt = performance.now()
+          return chunks
+        }
+      : undefined,
   })
+
+  if (diagnostics) {
+    const textBuffer = (code as any).textBuffer
+    const setStyledText = textBuffer.setStyledText.bind(textBuffer)
+    textBuffer.setStyledText = (...args: unknown[]) => {
+      const start = performance.now()
+      try {
+        return setStyledText(...args)
+      } finally {
+        styledTextMs += performance.now() - start
+        styledTextCalls++
+      }
+    }
+  }
 
   try {
     setup.renderer.root.add(code)
@@ -147,25 +168,26 @@ async function main(): Promise<void> {
     let marker: string
     if (scenario === "cold-1000") {
       marker = "COLD_FINAL"
-      updates = [makeContent(1000, marker)]
+      updates = [makeCodeContent(1000, marker)]
     } else if (scenario === "warm-1000-append100") {
-      code.content = makeContent(1000, "WARM_INITIAL")
+      const workload = makeWarmAppendWorkload(1000, 100)
+      code.content = workload.initial
       await setup.renderOnce()
       await withTimeout(code.highlightingDone, 30_000, "warmup highlight")
       await setup.flush({ maxPasses: 200 })
 
-      updates = []
-      for (let index = 0; index < 100; index++) {
-        marker = `WARM_FINAL_${index}`
-        updates.push(makeContent(1000, marker, index + 1))
-      }
-      marker = "WARM_FINAL_99"
+      updates = workload.updates
+      marker = workload.finalMarker
     } else {
       throw new Error(`unsupported scenario: ${scenario}`)
     }
 
     const nativeBefore = setup.getNativeStats()
     const cpuBefore = process.cpuUsage()
+    highlightAcceptedAt = 0
+    chunksReadyAt = 0
+    styledTextMs = 0
+    styledTextCalls = 0
     const updateStart = performance.now()
     for (const content of updates) code.content = content
     const setterEnd = performance.now()
@@ -174,16 +196,18 @@ async function main(): Promise<void> {
     const renderKickEnd = performance.now()
     await withTimeout(code.highlightingDone, 30_000, "measured highlight")
     const pipelineEnd = performance.now()
+    if (scenario === "warm-1000-append100") code.scrollY = code.maxScrollY
     await setup.flush({ maxPasses: 200 })
     const commitEnd = performance.now()
     const cpu = process.cpuUsage(cpuBefore)
     const nativeAfter = setup.getNativeStats()
+    const workerPerformance = await withTimeout(client.getPerformance(), 30_000, "worker performance")
 
     const frame = setup.captureCharFrame()
     const spans = setup.captureSpans()
     const expectedRed = RGBA.fromValues(255, 0, 0, 255)
     const styledVerified = spans.lines.some((line: any) =>
-      line.spans.some((span: any) => span.text.includes("let") && span.fg?.equals(expectedRed)),
+      line.spans.some((span: any) => span.text.includes("const") && span.fg?.equals(expectedRed)),
     )
     const finalMarkerVisible = frame.includes(marker!)
     if (!styledVerified || !finalMarkerVisible || nativeAfter.nativeFrameCount <= nativeBefore.nativeFrameCount) {
@@ -236,6 +260,18 @@ async function main(): Promise<void> {
       },
     }
 
+    if (diagnostics) {
+      process.stdout.write(
+        `WAVE3_STAGE_DIAGNOSTIC ${JSON.stringify({
+          workerResponseWallMs: highlightAcceptedAt - renderKickEnd,
+          converterWallMs: chunksReadyAt - highlightAcceptedAt,
+          styledTextMs,
+          styledTextCalls,
+          postChunksWallMs: pipelineEnd - chunksReadyAt,
+        })}\n`,
+      )
+    }
+    process.stdout.write(`WAVE3_WORKER_PERFORMANCE ${JSON.stringify(workerPerformance)}\n`)
     process.stdout.write(`${RESULT_PREFIX}${JSON.stringify(result)}\n`)
   } finally {
     code.destroy()

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { parseProbeOutput, summarize, WAVE3_CLEAN_GATE_SCHEMA_VERSION } from "./wave3-clean-gate.js"
+import { makeWarmAppendWorkload } from "./wave3-real-worker-workload.js"
 
 const expected = {
   role: "baseline" as const,
@@ -36,6 +37,18 @@ function validResult() {
 }
 
 describe("wave3 clean gate evidence parser", () => {
+  test("warm streaming workload consists exclusively of monotonic appends", () => {
+    const workload = makeWarmAppendWorkload(1000, 100)
+    let previous = workload.initial
+    for (const update of workload.updates) {
+      expect(update.startsWith(previous)).toBe(true)
+      expect(update.length).toBeGreaterThan(previous.length)
+      previous = update
+    }
+    expect(workload.updates).toHaveLength(100)
+    expect(workload.updates.at(-1)).toContain(workload.finalMarker)
+  })
+
   test("accepts exactly matching, styled, native-committed evidence", () => {
     const output = `diagnostic\nWAVE3_RESULT ${JSON.stringify(validResult())}\n`
     expect(parseProbeOutput(output, expected).timings.updateToStyledCommitMs).toBe(10)
