@@ -27,7 +27,8 @@ Worktree: `home/user/projects/opentui/.worktrees/wave3-stream-gate`
 |---|---|
 | `962a2099` | `perf(core): add wave3 opt-in stage-span telemetry` |
 | `e07f4e48` | `perf(core): add wave3 streaming e2e + markdown attribution harness` |
-| (dritter, Rohdaten) | `perf(core): record wave3 loop-a frozen baseline + attribution data` |
+| `d1429cec` | `perf(core): record wave3 loop-a frozen baseline + attribution data` |
+| `1d57922b` | `perf(core): wave3 loop-a verify matrix (test:js/test:dist) + toolchain note` |
 
 ## 4. Geänderte Dateien und Ownership-Begründung
 

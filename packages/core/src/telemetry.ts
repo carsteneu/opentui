@@ -130,7 +130,7 @@ export function getTelemetrySnapshot(): TelemetrySnapshot {
     counters: Object.fromEntries(counters) as TelemetrySnapshot["counters"],
     histogram: Object.fromEntries(histogram) as TelemetrySnapshot["histogram"],
     marks: marks.slice(),
-      spans: spans.map((span) => ({ ...span })),
-      wave3Spans: wave3Spans.map((span) => ({ ...span })),
+    spans: spans.map((span) => ({ ...span })),
+    wave3Spans: wave3Spans.map((span) => ({ ...span })),
   }
 }
