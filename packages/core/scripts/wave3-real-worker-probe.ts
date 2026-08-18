@@ -94,6 +94,8 @@ async function main(): Promise<void> {
   let chunksReadyAt = 0
   let styledTextMs = 0
   let styledTextCalls = 0
+  let appendedStyledTextMs = 0
+  let appendedStyledTextCalls = 0
 
   const [
     { createTestRenderer },
@@ -149,6 +151,7 @@ async function main(): Promise<void> {
   if (diagnostics) {
     const textBuffer = (code as any).textBuffer
     const setStyledText = textBuffer.setStyledText.bind(textBuffer)
+    const appendStyledText = textBuffer.appendStyledText?.bind(textBuffer)
     textBuffer.setStyledText = (...args: unknown[]) => {
       const start = performance.now()
       try {
@@ -156,6 +159,17 @@ async function main(): Promise<void> {
       } finally {
         styledTextMs += performance.now() - start
         styledTextCalls++
+      }
+    }
+    if (appendStyledText) {
+      textBuffer.appendStyledText = (...args: unknown[]) => {
+        const start = performance.now()
+        try {
+          return appendStyledText(...args)
+        } finally {
+          appendedStyledTextMs += performance.now() - start
+          appendedStyledTextCalls++
+        }
       }
     }
   }
@@ -188,6 +202,8 @@ async function main(): Promise<void> {
     chunksReadyAt = 0
     styledTextMs = 0
     styledTextCalls = 0
+    appendedStyledTextMs = 0
+    appendedStyledTextCalls = 0
     const updateStart = performance.now()
     for (const content of updates) code.content = content
     const setterEnd = performance.now()
@@ -267,6 +283,8 @@ async function main(): Promise<void> {
           converterWallMs: chunksReadyAt - highlightAcceptedAt,
           styledTextMs,
           styledTextCalls,
+          appendedStyledTextMs,
+          appendedStyledTextCalls,
           postChunksWallMs: pipelineEnd - chunksReadyAt,
         })}\n`,
       )
