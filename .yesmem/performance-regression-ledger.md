@@ -1,10 +1,10 @@
 # OpenTUI Performance-Wins und Regression Ledger
 
 Stand: 2026-08-18  
-Kanonische Integrationslinie: `yesloop/wave3-streaming-integration` mit C9-Runtime aus
-`yesloop/wave3-textbuffer-tail@11b1fdec1d56282237bd068f798fa139a66deb19`
+Kanonische Runtime-Integration:
+`yesloop/wave3-streaming-integration@b4e6d8b18e68f769abfedbdc7b070a761bdfdc15`
 OpenTUI-Paketversion: `@opentui/core@0.5.3`  
-Git-Describe des verifizierten C9-Prüfstands: `v0.5.3-98-g11b1fdec`
+Git-Describe der Runtime-Integration: `v0.5.3-100-gb4e6d8b1`
 
 ## 1. Zweck und Statusregeln
 
@@ -50,6 +50,7 @@ Ersatzbaselines.
 | Wave 3 stabil      | `6ec90b97` | Runtime integriert, geprüft und als Zwischenbasis dokumentiert | Consumer      |
 | Consumer-Bridge    | `fcf1cb70` | Versionierter Buffer-/ACK-Pfad im echten Renderpfad            | C9 Native     |
 | C9 Candidate       | `11b1fdec` | Sicherer inkrementeller Styled-TextBuffer-Tail                 | Integration   |
+| C9 Integration     | `b4e6d8b1` | Consumer-Bridge und C9 auf der gemeinsamen Wave-3-Linie        | nächste Welle |
 
 Hinweise:
 
@@ -455,7 +456,7 @@ Noch `OPEN` für ein pauschales Wave-3-Gesamt-PASS:
 
 Evidenz: `.yesmem/bench/wave3-c9-native-final-runs-2026-08-18/{raw.ndjson,report.md,summary.json}`.
 
-### W3-06 — Inkrementeller nativer Styled-TextBuffer (`PASS` auf C9-Branch)
+### W3-06 — Inkrementeller nativer Styled-TextBuffer (`PASS`, integriert)
 
 Der frühere Full-Replacement-Pfad verbrauchte in einer attribuierten Warmprobe rund 512,6 ms
 von 545,9 ms Worker+Pipeline-Zeit und überschritt die 10-%-Go-Schwelle deutlich. C9 ergänzt
@@ -476,6 +477,8 @@ deshalb einen konservativen nativen Append-Pfad:
 Eine einzelne attribuierte Candidate-Probe lag für den nativen Append bei 5,76 ms. Dieser
 Stagewert ist Diagnose, nicht der finale Claim; maßgeblich ist das gepaarte E2E-Gate W3-05.
 Die C9-Commits beginnen bei `32ff2072` und enden auf `11b1fdec`.
+Der integrierte Runtimebaum auf `b4e6d8b1` ist für `packages/core/src` bytegleich mit
+`11b1fdec`.
 
 Der echte Fresh-process-/Real-Worker-Runner wurde dafür getrennt auf
 `yesloop/wave3-clean-gate@b2ac235d` angelegt. Er misst `fccae215` gegen exakt `6ec90b97`, pinnt
@@ -497,7 +500,7 @@ verwendet werden.
 | R-07 | `OPEN`  | globale ConsoleCapture/TerminalConsoleCache-Policy ist bei zwei aktiven Root-Overlay-Renderern nicht refcounted  |
 | R-08 | `OPEN`  | `hasSafePartialComposition` bleibt potenziell O(K·N); erst Scaling-Gate, dann Umbau                              |
 | R-09 | `OPEN`  | Streaming-Layout kann stabile Geschwister global traversieren; Wave 3 misst, optimiert diesen Bereich noch nicht |
-| R-10 | `PASS`  | C9 TextBuffer-Tail auf `11b1fdec`; Integration erst nach Erhalt aller W3-05-/W3-06-Gates                         |
+| R-10 | `PASS`  | C9 TextBuffer-Tail auf `b4e6d8b1` integriert; W3-05-/W3-06-Gates und Runtime-Gleichheit belegt                   |
 
 ## 10. Ausführbare Prüfbefehle
 

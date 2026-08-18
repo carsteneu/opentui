@@ -14,16 +14,17 @@ Stand: 2026-08-18 (coordinator review + integration)
 
 ## 2. Einzelresultat der vier Loops
 
-| Loop | Inhalt | Branch-HEAD (cherry-gepickt) | Verdict |
-|---|---|---|---|
-| A | D3–D5 Streaming-E2E-/Attributions-Harness + opt-in Telemetrie | `0f63c522` (5 Commits) | PASS (Harness) |
-| C | C2/C6 Worker-ACK, Latest-wins, Queue-/Bytegrenzen | `9034ff74` (5 Commits) | PASS (deterministisch) |
-| B | C1/C4 CodeBuffer-Consumer + Stale-Supersede | `ee2a1c1e` (2 Commits) | PASS (Consumervertrag) |
-| D | C3 algorithmischer Chunk-Sweep (Sweep-Line) | `2c4ae562` (2 Commits) | PASS (Differential) |
+| Loop | Inhalt                                                        | Branch-HEAD (cherry-gepickt) | Verdict                |
+| ---- | ------------------------------------------------------------- | ---------------------------- | ---------------------- |
+| A    | D3–D5 Streaming-E2E-/Attributions-Harness + opt-in Telemetrie | `0f63c522` (5 Commits)       | PASS (Harness)         |
+| C    | C2/C6 Worker-ACK, Latest-wins, Queue-/Bytegrenzen             | `9034ff74` (5 Commits)       | PASS (deterministisch) |
+| B    | C1/C4 CodeBuffer-Consumer + Stale-Supersede                   | `ee2a1c1e` (2 Commits)       | PASS (Consumervertrag) |
+| D    | C3 algorithmischer Chunk-Sweep (Sweep-Line)                   | `2c4ae562` (2 Commits)       | PASS (Differential)    |
 
 ## 3. Was gilt nach Integration (verifiziert durch echte Läufe)
 
 ### 3.1 Deterministische Teilgates — PASS
+
 - **Queue/Backpressure (§13.2):** ≤1 active + 1 pending/Buffer; 100 same-turn Updates → 2 Jobs, ≥98 superseded; pendingBytes = neueste Version (129 B, nicht Summe). Versioned-ACK, once-Settle, no-overwrite. (Loop-C-Tests 66/66 in Integration)
 - **Converter 1k (§13.2):** p95 5.5 ms < 8 ms. **Converter 5k:** inject-adversarial p50-Ratio 0.21–0.48 (≥50 % Ziel). (Loop-D — AX-Anker: `tree-sitter-styled-text.ts` in fastpatch/fccae215 byte-identisch, SHA verifiziert)
 - **Stale correctness (§13.2):** Version-Check vor Convert UND vor Commit; genau eine finale sichtbare Generation. (Loop-B-Session/Consumer-Tests)
@@ -31,6 +32,7 @@ Stand: 2026-08-18 (coordinator review + integration)
 - **Format/Lint:** `fmt:check` grün, `lint` 0/0, `git diff --check` grün.
 
 ### 3.2 Funktionstests in Integration
+
 - Kombinierte A+B+C+D-Fokustests: **233 pass / 0 fail** (8 Dateien)
 - Vollsuite `test:js`: **5592 pass / 23 skip / 0 fail** (203 Dateien) — keine durch die Integration eingeführte Regression
 - `build:lib` (Typecheck+Deklarationen): **EXIT 0**
