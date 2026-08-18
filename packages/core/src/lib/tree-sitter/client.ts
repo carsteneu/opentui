@@ -517,35 +517,41 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
         }
 
         const works = this.works.get(message.bufferId)
-        if (works?.active) {
-          // Versioned worker-ACK. An older version must never overwrite a newer one.
-          if (message.version < works.active.job.version) {
-            return
-          }
-          const active = works.active
-          works.active = undefined
-          for (const waiter of active.waiters) {
+        const active = works?.active
+        // Settle the active job only on an exact version match. The worker may
+        // ACK jobs out of order (it processes messages concurrently), so a
+        // mismatched version must never settle an in-flight updateBuffer waiter.
+        if (active && message.version === active.job.version) {
+          const settled = active
+          works!.active = undefined
+          for (const waiter of settled.waiters) {
             waiter.resolve({ status: "completed", bufferId: message.bufferId, version: waiter.version })
             this.updateMetrics.completed++
           }
           this.emit("highlights:response", message.bufferId, message.version, message.highlights)
 
-          if (works.pending) {
-            const pending = works.pending
-            works.pending = undefined
+          if (works!.pending) {
+            const pending = works!.pending
+            works!.pending = undefined
             this.updateMetrics.pendingBytes = 0
-            works.active = pending
+            works!.active = pending
             this.startJob(message.bufferId, pending)
           } else {
             this.updateMetrics.pendingBytes = 0
-            if (!works.active && !works.pending) {
+            if (!works!.active && !works!.pending) {
               this.works.delete(message.bufferId)
             }
           }
           return
         }
 
-        // No active job: an initial (createBuffer) highlight or orphan — emit only.
+        // A stale older ACK (should never happen: versions only increase) is dropped.
+        if (active && message.version < active.job.version) {
+          return
+        }
+
+        // No active match: creation/reset highlights delivered outside updateBuffer,
+        // or an out-of-order ACK from a concurrent (e.g. reset) job — emit only.
         this.emit("highlights:response", message.bufferId, message.version, message.highlights)
         return
       }
@@ -825,6 +831,7 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     }
     if (!works.active && !works.pending) {
       this.works.delete(bufferId)
+      this.updateMetrics.pendingBytes = 0
     }
   }
 

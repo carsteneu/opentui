@@ -1959,6 +1959,36 @@ describe("TreeSitterClient backpressure (latest-wins)", () => {
     }
   })
 
+  test("an out-of-order newer ACK (e.g. a reset) never settles or promotes an in-flight active edit", async () => {
+    const held = await seedClient(tmpdir())
+    const client = held.client
+    try {
+      const active = client.updateBuffer(1, [], "const b = 2", 2)
+      const pending = client.updateBuffer(1, [], "const c = 3", 3)
+      expect(held.posted.length).toBe(1)
+
+      // A newer version (v3) ACKs first — simulating a concurrent reset or a
+      // pending job completing before the active one. It must NOT settle the
+      // active v2 nor promote/pend anything (no second post).
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 3, highlights: [] })
+      expect(held.posted.length).toBe(1)
+
+      // The true active ACK (v2) settles v2 and promotes the newest pending v3.
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 2, highlights: [] })
+      expect(held.posted.length).toBe(2)
+      expect(held.posted[1].version).toBe(3)
+
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 3, highlights: [] })
+      const oa = await active
+      const op = await pending
+      expect(oa.status).toBe("completed")
+      expect(op.status).toBe("completed")
+      expect(held.posted.length).toBe(2)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
   test("two buffers do not block each other via a global latest-wins policy", async () => {
     const held = await seedClient(tmpdir())
     const client = held.client

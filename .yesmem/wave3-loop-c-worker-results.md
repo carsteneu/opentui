@@ -22,7 +22,7 @@ Stand: 2026-08-18
 - `packages/core/src/lib/tree-sitter/client.ts` — Latest-wins-Controller (active+pending), ACK-Settlement, immer-on Metriken, Settle auf Failure/Destroy/Remove
 - `packages/core/src/lib/tree-sitter/parser.worker.ts` — HIGHLIGHT_RESPONSE (versioned ACK) immer, auch ohne Captures (HANDLE_EDITS/RESET_BUFFER)
 - `packages/core/src/lib/tree-sitter/types.ts` — `UpdateOutcome`, `UpdateQueueStats`
-- `packages/core/src/lib/tree-sitter/client.test.ts` — 6 neue deterministische Held-Worker-Tests + Oracle-Test (RED/GREEN), Reset-/Lifecycle-Tests bleiben grün
+- `packages/core/src/lib/tree-sitter/client.test.ts` — deterministische Held-Worker- + Oracle-Tests (7 neue, davon 1 Review-Regressionstest), Reset-/Lifecycle-Tests bleiben grün
 - `packages/core/src/benchmark/wave3-worker-queue-benchmark.ts` — neue Worker-/Queue-Burst-Benchmark
 - Rohdaten `.yesmem/bench/wave3-loop-c/`; Report `.yesmem/wave3-loop-c-worker-results.md`
   Nicht angefasst (Ownership Dritter): `Code.ts`/`Code.test.ts`, `tree-sitter-styled-text.ts`, Loop-A-Telemetrie, TextBuffer/Native/Zig.
@@ -33,7 +33,7 @@ Neue Tests gegen unveränderten Code: `bun test -t backpressure` → **6 fail** 
 
 ## 5. GREEN-Tests (echte Counts/Exitcodes)
 
-- `bun test src/lib/tree-sitter/client.test.ts` → **65 pass, 0 fail** (59 Bestand + 6 neue; 436 expect)
+- `bun test src/lib/tree-sitter/client.test.ts` → **66 pass, 0 fail** (59 Bestand + 7 neue; 443 expect)
 - `bun run test:js` (gesamte JS-Suite) → **5544 pass, 23 skip, 0 fail** (198 Dateien)
 - `bun run build:lib` → **OK**, Typdeklarationen generiert, `parser.worker.js` gebündelt, dist erzeugt
 - `bun run test:js:node` → Typcheck: **nur 2 vorbestehende Fehler** in `src/renderables/Code.test.ts` (`requestPartialRender` nicht in `keyof CodeRenderable`). Diese Fehler sind **im fccae215-Baseline vorhanden** (Baseline-Worktree `wave3-baseline` enthält dieselbe Nutzung, Zeilen 1429/1457/1479) und liegen im Loop-B-Ownership (`Code.ts`/`Code.test.ts`), das Loop C nicht anfassen darf. Loop-C-Änderungen typechecken sauber (ein eigener Test-Typfehler wurde gefixt; verbleibend nur die Loop-B-Fehler).
@@ -76,6 +76,13 @@ Latest-Version-Latenz-Burst `12.36 ms` (100 Updates, 2 Workerjobs). Der **≥30-
 - C5 (kompakte Spans/Transferables) **bewusst NICHT** in diesem Commit (§7.5): erst nach D-Reintegration-Profil; Transferlisten nur über portablen Seam — `PlatformWorkerHandle.postMessage(value)` hat keine Transferliste, kein Bun-only-Transfer.
 - `test:js:node`/`test:dist` sind durch den vorbestehenden Loop-B-Typfehler (Code.test.ts `requestPartialRender`) blockiert; wird nach Loop-B-Umbau/Integration grün.
 - Absolute p95-Single-Update und Latenz-Claim sind Datenpunkte, kein A/B-Gate (Integration durch Loop A).
+
+## 9a. Review-Befund & Fix (Cold Review, danach verifiziert)
+
+- **Befund (kalt, HIGH):** Der Worker verarbeitet Nachrichten NICHT serialisiert (`setMessageHandler` ruft `void handler(...)` ohne Queue, platform/worker.ts:349/390) → konkurrierende Jobs für einen Buffer (aktives `HANDLE_EDITS` + dehounced `RESET_BUFFER`) können out-of-order ACKen. Der ursprüngliche `>=`-Guard konnte dadurch einen aktiven Edit fälschlich als completed settlen (Reset-ACK mit neuerer Version).
+- **Fix:** Settlement nur bei EXAKTER Version (`message.version === active.job.version`); ältere ACKs werden verworfen, nicht-zugehörige (Reset/Newer) emitted-only. Kein falsches Settle/Promote. Zusätzlich `pendingBytes`-Reset in `settleWorks`.
+- **Regressionstest:** „an out-of-order newer ACK never settles or promotes an in-flight active edit" (7. neuer Test) — grün. Held-Worker-Tests, gesamt client.test = 66 pass; build:lib, lint, fmt:check grün; test:js:node-Typecheck Loop-C-sauber.
+- **Akzeptiert / pre-existing Billigkeit:** kein Job-Timeout (vergleichbar mit vorherigem System, kein Neuintro); HWM-Zähler als boolesche 1-Indikatoren; live `pendingBytes` global (nicht per-Buffer) — Gate-Metrik `pendingByteHighWater` bleibt korrekt (einzeln, nicht Summe).
 
 ## 10. Kein zurückgebliebener Bun-Prozess
 
