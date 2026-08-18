@@ -386,7 +386,7 @@ async function main(): Promise<void> {
   report += `| --- | --- | ---: | ---: | ---: | ---: | ---: |\n`
   for (const result of analyses) {
     report += `| ${result.scenario} | update→styled native commit | ${formatMs(result.wall.baseline.p50)} / ${formatMs(result.wall.baseline.p95)} / ${formatMs(result.wall.baseline.p99)} | ${formatMs(result.wall.candidate.p50)} / ${formatMs(result.wall.candidate.p95)} / ${formatMs(result.wall.candidate.p99)} | ${formatPercent(result.wall.nominal.pairedChange)} [${formatPercent(result.wall.nominal.ci.lower)}, ${formatPercent(result.wall.nominal.ci.upper)}] | ${formatPercent(result.wall.familywise.ci.upper)} | ${formatPercent(result.wall.p95Change)} |\n`
-    report += `| ${result.scenario} | converter | ${formatMs(result.converter.baseline.p50)} / ${formatMs(result.converter.baseline.p95)} / ${formatMs(result.converter.baseline.p99)} | ${formatMs(result.converter.candidate.p50)} / ${formatMs(result.converter.candidate.p95)} / ${formatMs(result.converter.candidate.p99)} | ${formatPercent(result.converter.nominal.pairedChange)} [${formatPercent(result.converter.nominal.ci.lower)}, ${formatPercent(result.converter.nominal.ci.upper)}] | n/a | ${formatPercent(result.converter.p95Change)} |\n`
+    report += `| ${result.scenario} | post-run converter diagnostic | ${formatMs(result.converter.baseline.p50)} / ${formatMs(result.converter.baseline.p95)} / ${formatMs(result.converter.baseline.p99)} | ${formatMs(result.converter.candidate.p50)} / ${formatMs(result.converter.candidate.p95)} / ${formatMs(result.converter.candidate.p99)} | ${formatPercent(result.converter.nominal.pairedChange)} [${formatPercent(result.converter.nominal.ci.lower)}, ${formatPercent(result.converter.nominal.ci.upper)}] | n/a | ${formatPercent(result.converter.p95Change)} |\n`
   }
 
   const wallPrimaryPass = analyses.every(
@@ -397,6 +397,7 @@ async function main(): Promise<void> {
   report += `- styled/output/chunk parity: **PASS** (all paired digests identical)\n`
   report += `- update→styled-commit regression budget (familywise upper <= +3%): **${wallRegressionSafe ? "PASS" : "FAIL"}**\n`
   report += `- update→styled-commit -30% primary wall target: **${wallPrimaryPass ? "PASS" : "FAIL"}**\n`
+  report += `- converter rows: **DIAGNOSTIC** — sampled after the stateful render pipeline; the isolated C3 converter gate remains authoritative.\n`
   report += `- pure main-thread CPU -30%: **UNCLEAR** — the current production path records no stage spans; total process CPU includes worker CPU and is diagnostic only.\n`
   report += `- overall §13.1: **${wallPrimaryPass ? "UNCLEAR" : "FAIL/UNCLEAR"}** until both wall and pure main-thread criteria are measurable.\n\n`
   report += `Raw data: \`raw.ndjson\`.\n`
