@@ -217,6 +217,10 @@ export class CodeRenderable extends TextBufferRenderable {
 
   private commitStyledSnapshot(content: string, chunks: readonly TextChunk[]): void {
     this._committedStyledSource = content
+    if (!this._onChunks) {
+      this._committedStyledChunks = chunks.slice()
+      return
+    }
     this._committedStyledChunks = chunks.map((chunk) => ({
       ...chunk,
       fg: chunk.fg ? RGBA.clone(chunk.fg) : undefined,
