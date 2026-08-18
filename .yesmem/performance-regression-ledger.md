@@ -1,9 +1,9 @@
 # OpenTUI Performance-Wins und Regression Ledger
 
 Stand: 2026-08-18  
-Kanonischer Prüfstand: `yesloop/wave3-streaming-integration@917ef5f775e3e86c9b9990f02056d7f6f0adfd24`  
+Kanonische Runtime-Referenz: `yesloop/wave3-streaming-integration@6ec90b97d72606fc98761417304c8039048bbc06`
 OpenTUI-Paketversion: `@opentui/core@0.5.3`  
-Git-Describe am Prüfstand: `v0.5.3-90-g917ef5f7`
+Git-Describe der Runtime-Referenz: `v0.5.3-91-g6ec90b97`
 
 ## 1. Zweck und Statusregeln
 
@@ -38,14 +38,14 @@ Alle Stände liegen auf derselben Fork-Lineage. `fastpatch` ist der Produktvorfa
 `origin/main`, einzelne Agentenbranches oder ein älterer Wave-Worktree sind keine zulässigen
 Ersatzbaselines.
 
-| Stufe              | Commit     | Bedeutung                                                     | Vergleich für |
-| ------------------ | ---------- | ------------------------------------------------------------- | ------------- |
-| Patched.98         | `568db413` | Retained-/Partial- und Streaming-Sicherheitsfixes             | Git-Herkunft  |
-| Fastpatch 0.5.3    | `2cd44364` | Patched.98 mit Upstream-0.5.3-Linie                           | FP-Gates      |
-| Wave 0             | `f3ef5a19` | Observability und gehärtetes A/B-Harness                      | Wave 1        |
-| Wave 1 Runtime     | `f33c8019` | Lifecycle-/Hang-Schutz plus Hotpath-Nacharbeit                | Wave 2        |
-| Wave 2 Integration | `fccae215` | Lazy FFI, lean Entrypoints, Ready-Stufen, ruhiges Startupgate | Wave 3        |
-| Wave 3 aktuell     | `917ef5f7` | Streaming-Harness, Backpressure, Consumer-Seam, Chunk-Sweep   | nächste Welle |
+| Stufe              | Commit     | Bedeutung                                                      | Vergleich für |
+| ------------------ | ---------- | -------------------------------------------------------------- | ------------- |
+| Patched.98         | `568db413` | Retained-/Partial- und Streaming-Sicherheitsfixes              | Git-Herkunft  |
+| Fastpatch 0.5.3    | `2cd44364` | Patched.98 mit Upstream-0.5.3-Linie                            | FP-Gates      |
+| Wave 0             | `f3ef5a19` | Observability und gehärtetes A/B-Harness                       | Wave 1        |
+| Wave 1 Runtime     | `f33c8019` | Lifecycle-/Hang-Schutz plus Hotpath-Nacharbeit                 | Wave 2        |
+| Wave 2 Integration | `fccae215` | Lazy FFI, lean Entrypoints, Ready-Stufen, ruhiges Startupgate  | Wave 3        |
+| Wave 3 stabil      | `6ec90b97` | A→C→B→D integriert, geprüft und als Zwischenbasis dokumentiert | nächste Welle |
 
 Hinweise:
 
@@ -324,7 +324,8 @@ grüne Build-, Packed-Node-/Bun-, Format- und Lint-Gates.
 
 ## 8. Wave 3: integrierte Streaming-Wins und noch offene Gesamtmessung
 
-Aktueller integrierter Head: `917ef5f7`. Die integrierte Core-JS-Suite lief mit 5.592 Passes,
+Stabile integrierte Referenz: `6ec90b97` (Runtimeintegration `917ef5f7` plus versionierter
+Integrationsbericht). Die integrierte Core-JS-Suite lief mit 5.592 Passes,
 23 Skips und 0 Fails über 203 Dateien. Die folgenden Loop-Gates sind vorhanden; ein finales
 30-Paar-E2E-Gesamtgate gegen `fccae215` ist noch `OPEN`.
 
@@ -426,6 +427,13 @@ Final gegen detached `fccae215`, Real Worker, identische Native-SHA, mindestens 
 
 Bis dieser Lauf existiert, dürfen W3-02 und W3-04 nicht zu einem pauschalen „Wave 3 ist X %
 schneller“ addiert werden.
+
+Der echte Fresh-process-/Real-Worker-Runner wurde dafür getrennt auf
+`yesloop/wave3-clean-gate@b2ac235d` angelegt. Er misst `fccae215` gegen exakt `6ec90b97`, pinnt
+die Native-SHA, prüft Frame-/Span-/Chunk-Digests und verweigert den Start bei fremden
+Bun-Prozessen oder Load >4. Reine Mainthread-CPU bleibt `UNCLEAR`, solange der Produktionspfad
+keine disjunkten Stage-Spans aufzeichnet; Gesamtprozess-CPU darf dafür nicht ersatzweise
+verwendet werden.
 
 ## 9. Noch offene Risiken und bewusst nicht erreichte Ziele
 
