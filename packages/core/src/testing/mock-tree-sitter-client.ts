@@ -1,6 +1,6 @@
 import { TreeSitterClient } from "../lib/tree-sitter/index.js"
 import { SystemClock, type Clock, type TimerHandle } from "../lib/clock.js"
-import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
+import type { CreateBufferHighlightResult, Edit, SimpleHighlight, UpdateOutcome } from "../lib/tree-sitter/types.js"
 
 export class MockTreeSitterClient extends TreeSitterClient {
   private _highlightPromises: Array<{
@@ -11,6 +11,7 @@ export class MockTreeSitterClient extends TreeSitterClient {
   private _mockResult: { highlights?: SimpleHighlight[]; warning?: string; error?: string } = { highlights: [] }
   private _autoResolveTimeout?: number
   private readonly _clock: Clock
+  private readonly _bufferFiletypes = new Map<number, string>()
 
   constructor(options?: { autoResolveTimeout?: number; clock?: Clock }) {
     super({ dataPath: "/tmp/mock" }, { autoStartWorker: false })
@@ -48,6 +49,28 @@ export class MockTreeSitterClient extends TreeSitterClient {
     this._highlightPromises.push({ promise, resolve, timeout })
 
     return promise
+  }
+
+  override async createBufferWithHighlights(
+    id: number,
+    content: string,
+    filetype: string,
+    _version: number = 1,
+    _autoInitialize: boolean = true,
+  ): Promise<CreateBufferHighlightResult> {
+    this._bufferFiletypes.set(id, filetype)
+    const result = await this.highlightOnce(content, filetype)
+    return { hasParser: true, ...result }
+  }
+
+  override async updateBuffer(id: number, _edits: Edit[], content: string, version: number): Promise<UpdateOutcome> {
+    const result = await this.highlightOnce(content, this._bufferFiletypes.get(id) ?? "plaintext")
+    if (result.error) return { status: "error", bufferId: id, version, error: result.error }
+    return { status: "completed", bufferId: id, version, highlights: result.highlights ?? [] }
+  }
+
+  override async removeBuffer(id: number): Promise<void> {
+    this._bufferFiletypes.delete(id)
   }
 
   setMockResult(result: { highlights?: SimpleHighlight[]; warning?: string; error?: string }) {

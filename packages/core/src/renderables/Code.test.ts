@@ -338,6 +338,9 @@ test("CodeRenderable - removing filetype shows the latest unstyled streaming con
 
   mockClient.resolveHighlightOnce()
   await flushAsync()
+  // The buffered source first correlates the create response, then lets the
+  // existing highlight loop replay the latest generation.
+  await new Promise<void>((resolve) => setImmediate(resolve))
   await renderOnce()
 
   expect(codeRenderable.plainText).toBe("latest")

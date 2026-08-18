@@ -79,10 +79,17 @@ export type TreeSitterWorkerResponse =
       bufferId: number
       messageId: string
       hasParser: boolean
+      simpleHighlights?: SimpleHighlight[]
       warning?: string
       error?: string
     }
-  | { type: "HIGHLIGHT_RESPONSE"; bufferId: number; version: number; highlights: HighlightResponse[] }
+  | {
+      type: "HIGHLIGHT_RESPONSE"
+      bufferId: number
+      version: number
+      highlights: HighlightResponse[]
+      simpleHighlights?: SimpleHighlight[]
+    }
   | { type: "PRELOAD_PARSER_RESPONSE"; messageId: string; hasParser: boolean }
   | { type: "BUFFER_DISPOSED"; bufferId: number }
   | { type: "PERFORMANCE_RESPONSE"; performance: PerformanceStats; messageId: string }
@@ -124,9 +131,17 @@ export interface Edit {
   newEndPosition: { row: number; column: number }
 }
 
+/** Full initial highlight result for a newly owned versioned buffer. */
+export interface CreateBufferHighlightResult {
+  hasParser: boolean
+  highlights?: SimpleHighlight[]
+  warning?: string
+  error?: string
+}
+
 /** Result of a single updateBuffer() call, settled exactly once. */
 export type UpdateOutcome =
-  | { status: "completed"; bufferId: number; version: number }
+  | { status: "completed"; bufferId: number; version: number; highlights?: SimpleHighlight[] }
   | { status: "superseded"; bufferId: number; version: number; supersededBy: number }
   | { status: "error"; bufferId: number; version: number; error: string }
   | { status: "skipped"; bufferId: number; version: number }

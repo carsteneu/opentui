@@ -724,6 +724,47 @@ Some text here.`
     }
   }, 10000)
 
+  test("versioned buffers preserve complete injection and conceal metadata exactly", async () => {
+    const client = new TreeSitterClient({ dataPath })
+
+    try {
+      await client.initialize()
+      const initial = `# Code Example
+
+\`\`\`typescript
+const hello: string = "world";
+\`\`\`
+`
+      const created = await client.createBufferWithHighlights(71, initial, "markdown")
+      const initialOracle = await client.highlightOnce(initial, "markdown")
+      expect(created.highlights).toEqual(initialOracle.highlights)
+      expect(created.highlights?.some((highlight) => highlight[3]?.isInjection)).toBe(true)
+
+      const content = `${initial}\nInline \`const answer = 42\`.\n`
+      const start = Buffer.byteLength(initial)
+      const outcome = await client.updateBuffer(
+        71,
+        [
+          {
+            startIndex: start,
+            oldEndIndex: start,
+            newEndIndex: Buffer.byteLength(content),
+            startPosition: { row: 5, column: 0 },
+            oldEndPosition: { row: 5, column: 0 },
+            newEndPosition: { row: 7, column: 0 },
+          },
+        ],
+        content,
+        2,
+      )
+      const oracle = await client.highlightOnce(content, "markdown")
+      expect(outcome.status).toBe("completed")
+      expect(outcome.status === "completed" ? outcome.highlights : undefined).toEqual(oracle.highlights)
+    } finally {
+      await client.destroy()
+    }
+  }, 10000)
+
   test("should highlight tsx code blocks in markdown using language-specific injection", async () => {
     const client = new TreeSitterClient({ dataPath })
 
@@ -1819,6 +1860,12 @@ describe("TreeSitterClient lifecycle hardening", () => {
 })
 
 describe("TreeSitterClient backpressure (latest-wins)", () => {
+  const backpressureDataPath = join(tmpdir(), "tree-sitter-backpressure-test-data")
+
+  beforeAll(async () => {
+    await mkdir(backpressureDataPath, { recursive: true })
+  })
+
   interface HeldHandle {
     client: TreeSitterClient
     posted: Array<{ type: string; bufferId: number; version: number; content: string; edits: unknown[] }>
@@ -1880,7 +1927,7 @@ describe("TreeSitterClient backpressure (latest-wins)", () => {
   }
 
   test("latest-wins: 100 same-turn held updates post <=2 jobs, supersede >=98, pending bytes = newest only", async () => {
-    const held = await seedClient(tmpdir())
+    const held = await seedClient(backpressureDataPath)
     const client = held.client
     try {
       const calls: Array<Promise<{ status: string }>> = []
@@ -1925,7 +1972,7 @@ describe("TreeSitterClient backpressure (latest-wins)", () => {
   })
 
   test("an ACK for an older version cannot overwrite a newer version", async () => {
-    const held = await seedClient(tmpdir())
+    const held = await seedClient(backpressureDataPath)
     const client = held.client
     try {
       const active = client.updateBuffer(1, [], "const b = 2", 2)
@@ -1960,7 +2007,7 @@ describe("TreeSitterClient backpressure (latest-wins)", () => {
   })
 
   test("an out-of-order newer ACK (e.g. a reset) never settles or promotes an in-flight active edit", async () => {
-    const held = await seedClient(tmpdir())
+    const held = await seedClient(backpressureDataPath)
     const client = held.client
     try {
       const active = client.updateBuffer(1, [], "const b = 2", 2)
@@ -1990,7 +2037,7 @@ describe("TreeSitterClient backpressure (latest-wins)", () => {
   })
 
   test("two buffers do not block each other via a global latest-wins policy", async () => {
-    const held = await seedClient(tmpdir())
+    const held = await seedClient(backpressureDataPath)
     const client = held.client
     held.internals.buffers.set(2, { id: 2, content: "x", filetype: "javascript", version: 1, hasParser: true })
     try {
@@ -2013,7 +2060,7 @@ describe("TreeSitterClient backpressure (latest-wins)", () => {
   })
 
   test("destroy settles active and pending jobs exactly once and leaves no works", async () => {
-    const held = await seedClient(tmpdir())
+    const held = await seedClient(backpressureDataPath)
     const client = held.client
     try {
       const active = client.updateBuffer(1, [], "const b = 2", 2)
@@ -2029,7 +2076,7 @@ describe("TreeSitterClient backpressure (latest-wins)", () => {
   })
 
   test("worker exit before/during a job settles active and pending exactly once", async () => {
-    const held = await seedClient(tmpdir())
+    const held = await seedClient(backpressureDataPath)
     const client = held.client
     try {
       const active = client.updateBuffer(1, [], "const b = 2", 2)
@@ -2045,11 +2092,14 @@ describe("TreeSitterClient backpressure (latest-wins)", () => {
   })
 
   test("latest-wins output for a real worker matches the highlightOnce oracle", async () => {
-    const client = new TreeSitterClient({ dataPath: tmpdir() })
+    const client = new TreeSitterClient({ dataPath: backpressureDataPath })
     try {
       await client.initialize()
       const jsCode = 'const hello = "world"\n'
-      await client.createBuffer(1, jsCode, "javascript")
+      const initial = await client.createBufferWithHighlights(1, jsCode, "javascript")
+      const initialOracle = await client.highlightOnce(jsCode, "javascript")
+      expect(initial.hasParser).toBe(true)
+      expect(initial.highlights).toEqual(initialOracle.highlights)
 
       const final = 'const hello = "world"\nconst add = (a, b) => a + b // tail\n'
       const appendEdit = [
@@ -2076,7 +2126,7 @@ describe("TreeSitterClient backpressure (latest-wins)", () => {
 
       const oracle = await client.highlightOnce(final, "javascript")
       expect(oracle.error).toBeUndefined()
-      expect((oracle.highlights ?? []).length).toBeGreaterThan(0)
+      expect(outcome.status === "completed" ? outcome.highlights : undefined).toEqual(oracle.highlights)
     } finally {
       await client.destroy().catch(() => {})
     }

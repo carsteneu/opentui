@@ -9,7 +9,8 @@ import type { TextChunk } from "../text-buffer.js"
 import { treeSitterToTextChunks } from "../lib/tree-sitter-styled-text.js"
 import type { RGBA } from "../lib/RGBA.js"
 import { getHighlightCompletion } from "../lib/highlight-completion.js"
-import { CodeHighlightSession, type HighlightOwner } from "./CodeHighlightSession.js"
+import { CodeHighlightSession, type CodeHighlightSource, type HighlightOwner } from "./CodeHighlightSession.js"
+import { CodeBufferedHighlightSource } from "./CodeBufferedHighlightSource.js"
 
 export interface HighlightContext {
   content: string
@@ -63,6 +64,7 @@ export class CodeRenderable extends TextBufferRenderable {
   private _treeSitterClient: TreeSitterClient
   private _highlightsDirty: boolean = false
   private _session: CodeHighlightSession
+  private _bufferedHighlightSource?: CodeBufferedHighlightSource
   private _highlightLoopActive: boolean = false
   private _highlightPromise?: Promise<void>
   private _highlightRerun: boolean = false
@@ -98,12 +100,10 @@ export class CodeRenderable extends TextBufferRenderable {
     this._filetype = options.filetype
     this._syntaxStyle = options.syntaxStyle
     this._treeSitterClient = options.treeSitterClient ?? getTreeSitterClient()
-    this._session = new CodeHighlightSession({
-      highlight: (content, filetype) => this._treeSitterClient.highlightOnce(content, filetype),
-    })
+    this._streaming = options.streaming ?? this._contentDefaultOptions.streaming
+    this._session = this.createHighlightSession()
     this._conceal = options.conceal ?? this._contentDefaultOptions.conceal
     this._drawUnstyledText = options.drawUnstyledText ?? this._contentDefaultOptions.drawUnstyledText
-    this._streaming = options.streaming ?? this._contentDefaultOptions.streaming
     this._retainedRendering = options.retainedRendering ?? false
     this._initialStyledText = options.initialStyledText
     this._initialStyledTextContent = this._initialStyledText ? this._content : undefined
@@ -136,12 +136,33 @@ export class CodeRenderable extends TextBufferRenderable {
     this._session.revise(owner)
   }
 
+  private createHighlightSession(): CodeHighlightSession {
+    let source: CodeHighlightSource
+    if (this._streaming) {
+      this._bufferedHighlightSource = new CodeBufferedHighlightSource(this._treeSitterClient)
+      source = this._bufferedHighlightSource
+    } else {
+      this._bufferedHighlightSource = undefined
+      source = {
+        highlight: (content, filetype) => this._treeSitterClient.highlightOnce(content, filetype),
+      }
+    }
+    return new CodeHighlightSession(source)
+  }
+
+  private replaceHighlightSession(): void {
+    this._session.close()
+    this._bufferedHighlightSource?.close()
+    this._session = this.createHighlightSession()
+  }
+
   set content(value: string) {
     if (this._content !== value) {
       const scrollWidth = this.scrollWidth
       const scrollHeight = this.scrollHeight
       this._content = value
       this.invalidateHighlights()
+      if (value.length === 0) this._bufferedHighlightSource?.release()
 
       if (this._streaming && this._filetype && !this._drawUnstyledText) {
         this.coalesceRender()
@@ -270,6 +291,7 @@ export class CodeRenderable extends TextBufferRenderable {
   set filetype(value: string | undefined) {
     if (this._filetype !== value) {
       this._filetype = value
+      this._bufferedHighlightSource?.release()
       this.invalidateHighlights("filetypeChange")
     }
   }
@@ -352,6 +374,7 @@ export class CodeRenderable extends TextBufferRenderable {
   set streaming(value: boolean) {
     if (this._streaming !== value) {
       this._streaming = value
+      this.replaceHighlightSession()
       this.updatePartialEligibility()
       this._hadInitialContent = false
       this._lastHighlights = []
@@ -367,6 +390,7 @@ export class CodeRenderable extends TextBufferRenderable {
   set treeSitterClient(value: TreeSitterClient) {
     if (this._treeSitterClient !== value) {
       this._treeSitterClient = value
+      this.replaceHighlightSession()
       this.invalidateHighlights()
     }
   }
@@ -454,7 +478,8 @@ export class CodeRenderable extends TextBufferRenderable {
   private async startHighlight(): Promise<void> {
     const content = this._content
     const filetype = this._filetype
-    const snapshotId = this._session.generation
+    const session = this._session
+    const snapshotId = session.generation
 
     if (!filetype) return
 
@@ -466,9 +491,9 @@ export class CodeRenderable extends TextBufferRenderable {
     this._isHighlighting = true
 
     try {
-      const result = await this._session.source.highlight(content, filetype)
+      const result = await session.source.highlight(content, filetype)
 
-      if (!this._session.isCurrent(snapshotId)) {
+      if (!session.isCurrent(snapshotId)) {
         this.retryLatestHighlight()
         return
       }
@@ -489,7 +514,7 @@ export class CodeRenderable extends TextBufferRenderable {
         }
       }
 
-      if (!this._session.isCurrent(snapshotId)) {
+      if (!session.isCurrent(snapshotId)) {
         this.retryLatestHighlight()
         return
       }
@@ -522,7 +547,7 @@ export class CodeRenderable extends TextBufferRenderable {
 
         chunks = await this.transformChunks(chunks, context)
 
-        if (!this._session.isCurrent(snapshotId)) {
+        if (!session.isCurrent(snapshotId)) {
           this.retryLatestHighlight()
           return
         }
@@ -543,7 +568,7 @@ export class CodeRenderable extends TextBufferRenderable {
       this.updateTextInfoAfterHighlight(scrollWidth, scrollHeight)
       this.coalesceRender()
     } catch (error) {
-      if (!this._session.isCurrent(snapshotId)) {
+      if (!session.isCurrent(snapshotId)) {
         this.retryLatestHighlight()
         return
       }
@@ -576,6 +601,7 @@ export class CodeRenderable extends TextBufferRenderable {
 
   private clearPendingHighlight(): void {
     this._session.revise("fullReplace")
+    this._bufferedHighlightSource?.release()
     this._isHighlighting = false
     this._highlightRerun = false
     this._highlightingPromise = Promise.resolve()
@@ -774,6 +800,7 @@ export class CodeRenderable extends TextBufferRenderable {
     if (this.isDestroyed) return
     this.clearPendingHighlight()
     this._session.close()
+    this._bufferedHighlightSource?.close()
     super.destroy()
   }
 }

@@ -4,6 +4,7 @@ import type {
   TreeSitterClientOptions,
   TreeSitterClientEvents,
   BufferState,
+  CreateBufferHighlightResult,
   ParsedBuffer,
   FiletypeParserOptions,
   Edit,
@@ -111,6 +112,7 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     | undefined
   private messageCallbacks = new Map<string, PendingRequest>()
   private messageIdCounter: number = 0
+  private nextOwnedBufferId = -1
   private works: Map<number, BufferWorks> = new Map()
   private updateMetrics: UpdateQueueStats = {
     posted: 0,
@@ -525,7 +527,12 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
           const settled = active
           works!.active = undefined
           for (const waiter of settled.waiters) {
-            waiter.resolve({ status: "completed", bufferId: message.bufferId, version: waiter.version })
+            waiter.resolve({
+              status: "completed",
+              bufferId: message.bufferId,
+              version: waiter.version,
+              highlights: message.simpleHighlights,
+            })
             this.updateMetrics.completed++
           }
           this.emit("highlights:response", message.bufferId, message.version, message.highlights)
@@ -578,7 +585,12 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
         const callback = this.messageCallbacks.get(message.messageId)
         if (callback) {
           this.messageCallbacks.delete(message.messageId)
-          callback.resolve({ hasParser: message.hasParser, warning: message.warning, error: message.error })
+          callback.resolve({
+            hasParser: message.hasParser,
+            simpleHighlights: message.simpleHighlights,
+            warning: message.warning,
+            error: message.error,
+          })
         }
         return
       }
@@ -691,16 +703,33 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     version: number = 1,
     autoInitialize: boolean = true,
   ): Promise<boolean> {
+    const result = await this.createBufferWithHighlights(id, content, filetype, version, autoInitialize)
+    return result.hasParser
+  }
+
+  /** Allocate a client-scoped id for an internally owned buffer. */
+  public allocateBufferId(): number {
+    while (this.buffers.has(this.nextOwnedBufferId)) this.nextOwnedBufferId--
+    return this.nextOwnedBufferId--
+  }
+
+  public async createBufferWithHighlights(
+    id: number,
+    content: string,
+    filetype: string,
+    version: number = 1,
+    autoInitialize: boolean = true,
+  ): Promise<CreateBufferHighlightResult> {
     if (!this.initialized) {
       if (!autoInitialize) {
         this.emitError("Could not create buffer because client is not initialized")
-        return false
+        return { hasParser: false, error: "Tree-sitter client is not initialized" }
       }
       try {
         await this.initialize()
       } catch (error) {
         this.emitError("Could not create buffer because of initialization error")
-        return false
+        return { hasParser: false, error: "Could not initialize tree-sitter client" }
       }
     }
 
@@ -712,7 +741,12 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     this.buffers.set(id, { id, content, filetype, version, hasParser: false })
 
     const messageId = `init_${this.messageIdCounter++}`
-    const response = await new Promise<{ hasParser: boolean; warning?: string; error?: string }>((resolve, reject) => {
+    const response = await new Promise<{
+      hasParser: boolean
+      simpleHighlights?: SimpleHighlight[]
+      warning?: string
+      error?: string
+    }>((resolve, reject) => {
       this.messageCallbacks.set(messageId, { resolve, reject })
       try {
         this.sendWorkerMessage({
@@ -734,7 +768,11 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
       if (filetype !== "plaintext") {
         this.emitWarning(response.warning || response.error || "Buffer has no parser", id)
       }
-      return false
+      return {
+        hasParser: false,
+        warning: response.warning,
+        error: response.error,
+      }
     }
 
     // Update buffer state to indicate it has a parser
@@ -742,7 +780,12 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     this.buffers.set(id, bufferState)
 
     this.emit("buffer:initialized", id, true)
-    return true
+    return {
+      hasParser: true,
+      highlights: response.simpleHighlights ?? [],
+      warning: response.warning,
+      error: response.error,
+    }
   }
 
   public updateBuffer(id: number, edits: Edit[], newContent: string, version: number): Promise<UpdateOutcome> {

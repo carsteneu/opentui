@@ -25,6 +25,8 @@ const treeSitterClientTestDataPaths = [
   "tree-sitter-conceal-test-data",
   "tree-sitter-edge-case-test-data",
   "tree-sitter-reactive-data-path-test",
+  "tree-sitter-lifecycle-test-data",
+  "tree-sitter-backpressure-test-data",
 ].map((name) => resolve(tmpdir(), name))
 const treeSitterTestDataPaths = [
   treeSitterStyledTextDataPath,

@@ -11,6 +11,7 @@ describe("CodeRenderable", () => {
   test("default-styled streaming prose uses layout-safe full replacements", async () => {
     const { renderer } = await createTestRenderer({ width: 30, height: 10 })
     const syntaxStyle = SyntaxStyle.create()
+    const client = new MockTreeSitterClient()
     const fg = RGBA.fromValues(1, 1, 1, 1)
     const initial = new StyledText([{ __isChunk: true, text: "Stable prose", fg }])
     const code = new CodeRenderable(renderer, {
@@ -21,6 +22,7 @@ describe("CodeRenderable", () => {
       deferStreamingHighlight: true,
       drawUnstyledText: true,
       streaming: true,
+      treeSitterClient: client,
       fg,
     })
     const buffer = (code as unknown as { textBuffer: TextBuffer }).textBuffer
@@ -48,6 +50,7 @@ describe("CodeRenderable", () => {
       expect(buffer.getPlainText()).toBe("Stable prose grows styled")
     } finally {
       renderer.destroy()
+      await client.destroy()
       syntaxStyle.destroy()
     }
   })
@@ -55,6 +58,7 @@ describe("CodeRenderable", () => {
   test("default-styled streaming prose replaces the buffer after its default style changes", async () => {
     const { renderer } = await createTestRenderer({ width: 30, height: 10 })
     const syntaxStyle = SyntaxStyle.create()
+    const client = new MockTreeSitterClient()
     const red = RGBA.fromValues(1, 0, 0, 1)
     const green = RGBA.fromValues(0, 1, 0, 1)
     const code = new CodeRenderable(renderer, {
@@ -65,6 +69,7 @@ describe("CodeRenderable", () => {
       deferStreamingHighlight: true,
       drawUnstyledText: true,
       streaming: true,
+      treeSitterClient: client,
       fg: red,
     })
     const buffer = (code as unknown as { textBuffer: TextBuffer }).textBuffer
@@ -83,6 +88,7 @@ describe("CodeRenderable", () => {
       expect(buffer.getPlainText()).toBe("Hello world")
     } finally {
       renderer.destroy()
+      await client.destroy()
       syntaxStyle.destroy()
     }
   })
@@ -90,6 +96,7 @@ describe("CodeRenderable", () => {
   test("default-styled streaming prose replaces unsafe native text boundaries", async () => {
     const { renderer } = await createTestRenderer({ width: 30, height: 10 })
     const syntaxStyle = SyntaxStyle.create()
+    const client = new MockTreeSitterClient()
     const fg = RGBA.fromValues(1, 1, 1, 1)
 
     try {
@@ -111,6 +118,7 @@ describe("CodeRenderable", () => {
           deferStreamingHighlight: true,
           drawUnstyledText: true,
           streaming: true,
+          treeSitterClient: client,
           fg,
           width: 5,
           wrapMode: "word",
@@ -123,6 +131,7 @@ describe("CodeRenderable", () => {
           deferStreamingHighlight: true,
           drawUnstyledText: true,
           streaming: true,
+          treeSitterClient: client,
           fg,
           width: 5,
           wrapMode: "word",
@@ -146,6 +155,7 @@ describe("CodeRenderable", () => {
       }
     } finally {
       renderer.destroy()
+      await client.destroy()
       syntaxStyle.destroy()
     }
   })
@@ -153,6 +163,7 @@ describe("CodeRenderable", () => {
   test("deferred streaming highlight reapplies same-content styled text", async () => {
     const { renderer, renderOnce, captureSpans } = await createTestRenderer({ width: 30, height: 10 })
     const syntaxStyle = SyntaxStyle.create()
+    const client = new MockTreeSitterClient()
     const red = RGBA.fromValues(1, 0, 0, 1)
     const green = RGBA.fromValues(0, 1, 0, 1)
     const code = new CodeRenderable(renderer, {
@@ -163,6 +174,7 @@ describe("CodeRenderable", () => {
       deferStreamingHighlight: true,
       drawUnstyledText: true,
       streaming: true,
+      treeSitterClient: client,
       fg: red,
     })
 
@@ -185,6 +197,7 @@ describe("CodeRenderable", () => {
       ).toEqual(green.toInts())
     } finally {
       renderer.destroy()
+      await client.destroy()
       syntaxStyle.destroy()
     }
   })

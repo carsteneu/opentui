@@ -367,13 +367,14 @@ class ParserWorker {
     }
     this.bufferParsers.set(bufferId, parserState)
 
+    const highlights = await this.initialQuery(parserState)
     postWorkerMessage({
       type: "PARSER_INIT_RESPONSE",
       bufferId,
       messageId,
       hasParser: true,
+      simpleHighlights: highlights.simpleHighlights,
     })
-    const highlights = await this.initialQuery(parserState)
     postWorkerMessage({
       type: "HIGHLIGHT_RESPONSE",
       bufferId,
@@ -393,7 +394,10 @@ class ParserWorker {
       injectionRanges = injectionResult.injectionRanges
     }
 
-    return this.getHighlights(parserState, matches, injectionRanges)
+    return {
+      ...this.getHighlights(parserState, matches, injectionRanges),
+      simpleHighlights: this.getSimpleHighlights(matches, injectionRanges),
+    }
   }
 
   private getNodeText(node: any, content: string): string {
@@ -549,7 +553,12 @@ class ParserWorker {
     bufferId: number,
     content: string,
     edits: Edit[],
-  ): Promise<{ highlights?: HighlightResponse[]; warning?: string; error?: string }> {
+  ): Promise<{
+    highlights?: HighlightResponse[]
+    simpleHighlights?: SimpleHighlight[]
+    warning?: string
+    error?: string
+  }> {
     const parserState = this.bufferParsers.get(bufferId)
     if (!parserState) {
       return { warning: "No parser state found for buffer" }
@@ -629,12 +638,17 @@ class ParserWorker {
       matches.push(...nodeCaptures)
     }
 
+    // CodeRenderable needs a complete offset-based result to rebuild its
+    // StyledText exactly. Keep the legacy line delta for existing event
+    // consumers, but query one full capture set for the versioned owner.
+    const completeMatches = parserState.queries.highlights.captures(parserState.tree.rootNode)
     let injectionRanges = new Map<string, Array<{ start: number; end: number }>>()
     if (parserState.queries.injections) {
       const injectionResult = await this.processInjections(parserState)
       // Only add injection matches that are in the changed ranges
       // This is a simplification - ideally we'd only process injections in changed ranges
       matches.push(...injectionResult.captures)
+      completeMatches.push(...injectionResult.captures)
       injectionRanges = injectionResult.injectionRanges
     }
 
@@ -647,7 +661,10 @@ class ParserWorker {
     this.performance.averageQueryTime =
       this.performance.queryTimes.reduce((acc, time) => acc + time, 0) / this.performance.queryTimes.length
 
-    return this.getHighlights(parserState, matches, injectionRanges)
+    return {
+      ...this.getHighlights(parserState, matches, injectionRanges),
+      simpleHighlights: this.getSimpleHighlights(completeMatches, injectionRanges),
+    }
   }
 
   private nodeContainsRange(node: any, range: any): boolean {
@@ -778,7 +795,12 @@ class ParserWorker {
     bufferId: number,
     version: number,
     content: string,
-  ): Promise<{ highlights?: HighlightResponse[]; warning?: string; error?: string }> {
+  ): Promise<{
+    highlights?: HighlightResponse[]
+    simpleHighlights?: SimpleHighlight[]
+    warning?: string
+    error?: string
+  }> {
     const parserState = this.bufferParsers.get(bufferId)
     if (!parserState) {
       return { warning: "No parser state found for buffer" }
@@ -802,7 +824,10 @@ class ParserWorker {
       injectionRanges = injectionResult.injectionRanges
     }
 
-    return this.getHighlights(parserState, matches, injectionRanges)
+    return {
+      ...this.getHighlights(parserState, matches, injectionRanges),
+      simpleHighlights: this.getSimpleHighlights(matches, injectionRanges),
+    }
   }
 
   disposeBuffer(bufferId: number): void {
@@ -993,6 +1018,7 @@ if (isWorkerRuntime) {
               bufferId: message.bufferId,
               version: message.version,
               highlights: response.highlights ?? [],
+              simpleHighlights: response.simpleHighlights,
             } satisfies TreeSitterWorkerResponse)
             if (response.warning) {
               postWorkerMessage({
@@ -1023,6 +1049,7 @@ if (isWorkerRuntime) {
               bufferId: message.bufferId,
               version: message.version,
               highlights: resetResponse.highlights ?? [],
+              simpleHighlights: resetResponse.simpleHighlights,
             } satisfies TreeSitterWorkerResponse)
             if (resetResponse.warning) {
               postWorkerMessage({

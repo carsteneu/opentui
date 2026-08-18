@@ -5,7 +5,7 @@ import { RGBA } from "../lib/RGBA.js"
 import { createTestRenderer, type TestRenderer, MockTreeSitterClient } from "../testing.js"
 import { ManualClock } from "../testing/manual-clock.js"
 import { treeSitterToTextChunks } from "../lib/tree-sitter-styled-text.js"
-import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
+import type { CreateBufferHighlightResult, Edit, SimpleHighlight, UpdateOutcome } from "../lib/tree-sitter/types.js"
 import type { CapturedFrame } from "../types.js"
 
 const HIGHLIGHT_TIMEOUT_MS = 5000
@@ -55,6 +55,37 @@ function recordHighlightContents(mockClient: MockTreeSitterClient): string[] {
   return contents
 }
 
+class BufferedOnlyClient extends MockTreeSitterClient {
+  readonly creates: Array<{ id: number; content: string; filetype: string; version: number }> = []
+  readonly updates: Array<{ id: number; edits: Edit[]; content: string; version: number }> = []
+  readonly removes: number[] = []
+  oneShotCalls = 0
+
+  override async highlightOnce(): Promise<{ highlights?: SimpleHighlight[]; warning?: string; error?: string }> {
+    this.oneShotCalls++
+    throw new Error("streaming CodeRenderable must not use highlightOnce")
+  }
+
+  override async createBufferWithHighlights(
+    id: number,
+    content: string,
+    filetype: string,
+    version: number = 1,
+  ): Promise<CreateBufferHighlightResult> {
+    this.creates.push({ id, content, filetype, version })
+    return { hasParser: true, highlights: [[0, 5, "keyword"]] }
+  }
+
+  override async updateBuffer(id: number, edits: Edit[], content: string, version: number): Promise<UpdateOutcome> {
+    this.updates.push({ id, edits, content, version })
+    return { status: "completed", bufferId: id, version, highlights: [[0, 5, "keyword"]] }
+  }
+
+  override async removeBuffer(id: number): Promise<void> {
+    this.removes.push(id)
+  }
+}
+
 beforeEach(async () => {
   clock = new ManualClock()
   const testRenderer = await createTestRenderer({ width: 80, height: 24 })
@@ -67,6 +98,44 @@ beforeEach(async () => {
 afterEach(() => {
   if (currentRenderer) {
     currentRenderer.destroy()
+  }
+})
+
+test("consumer: streaming uses the versioned buffer path and releases its owned buffer", async () => {
+  const client = new BufferedOnlyClient()
+  const style = SyntaxStyle.create()
+  const code = new CodeRenderable(currentRenderer, {
+    id: "c-buffered-source",
+    content: "const a = 1\n",
+    filetype: "typescript",
+    syntaxStyle: style,
+    treeSitterClient: client,
+    streaming: true,
+  })
+  try {
+    currentRenderer.root.add(code)
+
+    await renderOnce()
+    await waitForHighlight(code)
+    await renderOnce()
+    expect(client.creates).toHaveLength(1)
+    expect(client.oneShotCalls).toBe(0)
+
+    code.content = "const a = 1\nconst b = 2\n"
+    await renderOnce()
+    await waitForHighlight(code)
+    await renderOnce()
+    expect(client.updates).toHaveLength(1)
+    expect(client.updates[0].id).toBe(client.creates[0].id)
+    expect(client.oneShotCalls).toBe(0)
+
+    code.destroy()
+    await flushAsync()
+    expect(client.removes).toEqual([client.creates[0].id])
+  } finally {
+    code.destroy()
+    await client.destroy()
+    style.destroy()
   }
 })
 
