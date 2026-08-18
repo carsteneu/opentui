@@ -48,7 +48,7 @@ export function buildMarkdownCorpus(category: MarkdownCategory, bytes: number): 
     ],
     block: [
       "> A blockquote line spanning enough text to count toward the byte budget.\n>\n",
-      "```\n<div class=\"x\">\n```\n\n",
+      '```\n<div class="x">\n```\n\n',
     ],
     fence: [
       "```js\nconst a = 1; function f() { return a + 2 }\n```\n\n",
@@ -149,8 +149,7 @@ export function analyzeMarkdownStreaming(
     steps,
     aggregate: {
       meanParseDurationMs: steps.reduce((sum, s) => sum + s.parseDurationMs, 0) / steps.length,
-      meanStableReuseRatio:
-        steps.reduce((sum, s) => sum + s.stableReuseRatio, 0) / (steps.length || 1),
+      meanStableReuseRatio: steps.reduce((sum, s) => sum + s.stableReuseRatio, 0) / (steps.length || 1),
       tailClassCounts,
       allStableRefsPreserved: steps.every((s) => s.stableRefsPreserved),
     },

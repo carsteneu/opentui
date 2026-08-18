@@ -17,13 +17,15 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { runWave3CodeGeneration, assertWave3SampleGreen, Wave3Arm, Wave3Sample } from "../src/benchmark/wave3-harness.js"
+import {
+  runWave3CodeGeneration,
+  assertWave3SampleGreen,
+  Wave3Arm,
+  Wave3Sample,
+} from "../src/benchmark/wave3-harness.js"
 import { analyzeMarkdownStreaming } from "../src/benchmark/wave3-markdown-attribution.js"
 import { MockTreeSitterClient } from "../src/testing/mock-tree-sitter-client.js"
-import {
-  createPairedSchedule,
-  analyzePairedObservations,
-} from "../src/benchmark/ffi-fast-path-paired-analysis.js"
+import { createPairedSchedule, analyzePairedObservations } from "../src/benchmark/ffi-fast-path-paired-analysis.js"
 
 const PINNED_NATIVE_SHA = "e7e9764462f2ee7f2c808856b60101ff659c6bda4a1df7cf235e418cf481a15c"
 
@@ -111,35 +113,24 @@ async function main(): Promise<void> {
   const { content, keyword } = buildScenarioContent(scenarioKey)
   const scenario = `code-stream:80x24:${scenarioKey}`
 
-  const nativeSha = sha256File(
-    join(process.cwd(), ".yesmem/native-assets/@opentui/core-linux-x64/libopentui.so"),
-  ) ?? PINNED_NATIVE_SHA
+  const nativeSha =
+    sha256File(join(process.cwd(), ".yesmem/native-assets/@opentui/core-linux-x64/libopentui.so")) ?? PINNED_NATIVE_SHA
   if (nativeSha !== PINNED_NATIVE_SHA) {
     console.warn(`[wave3] native hash differs from pinned (${nativeSha.slice(0, 12)}...)`)
   }
 
-    const schedule = createPairedSchedule([scenarioKey], ["bun"], pairs, 2026)
-    const rows: SampleRow[] = []
+  const schedule = createPairedSchedule([scenarioKey], ["bun"], pairs, 2026)
+  const rows: SampleRow[] = []
 
-    for (let pair = 0; pair < pairs; pair++) {
-      // Alternate the lead arm per pair so the schedule is balanced (both strata).
-      const lead: Wave3Arm = pair % 2 === 0 ? "baseline" : "candidate"
-      const follow: Wave3Arm = lead === "baseline" ? "candidate" : "baseline"
-      const pairOrder = `${lead}-first`
-      for (const arm of [lead, follow]) {
-        // Warmup runs (balanced, not recorded) keep caches warm.
-        for (let w = 0; w < 3; w++) {
-          await runWave3CodeGeneration({
-            content,
-            expectedStyledText: keyword,
-            treeSitterClient: cloneMockClient(content, keyword),
-            expectedNativeSha256: nativeSha,
-            sourceClean: true,
-            arm,
-            scenario,
-          })
-        }
-        const sample = await runWave3CodeGeneration({
+  for (let pair = 0; pair < pairs; pair++) {
+    // Alternate the lead arm per pair so the schedule is balanced (both strata).
+    const lead: Wave3Arm = pair % 2 === 0 ? "baseline" : "candidate"
+    const follow: Wave3Arm = lead === "baseline" ? "candidate" : "baseline"
+    const pairOrder = `${lead}-first`
+    for (const arm of [lead, follow]) {
+      // Warmup runs (balanced, not recorded) keep caches warm.
+      for (let w = 0; w < 3; w++) {
+        await runWave3CodeGeneration({
           content,
           expectedStyledText: keyword,
           treeSitterClient: cloneMockClient(content, keyword),
@@ -148,19 +139,29 @@ async function main(): Promise<void> {
           arm,
           scenario,
         })
-        assertWave3SampleGreen(sample)
-        rows.push({
-          pair,
-          order: pairOrder,
-          scenario,
-          arm,
-          mainThreadSumMs: sample.mainThreadSumMs,
-          updateToCommitMs: sample.stages.nativeCommit[1] - sample.stages.append[0],
-          nativeFrameCount: sample.counts.nativeFrameCount,
-          cellsUpdated: sample.counts.cellsUpdated,
-        })
       }
+      const sample = await runWave3CodeGeneration({
+        content,
+        expectedStyledText: keyword,
+        treeSitterClient: cloneMockClient(content, keyword),
+        expectedNativeSha256: nativeSha,
+        sourceClean: true,
+        arm,
+        scenario,
+      })
+      assertWave3SampleGreen(sample)
+      rows.push({
+        pair,
+        order: pairOrder,
+        scenario,
+        arm,
+        mainThreadSumMs: sample.mainThreadSumMs,
+        updateToCommitMs: sample.stages.nativeCommit[1] - sample.stages.append[0],
+        nativeFrameCount: sample.counts.nativeFrameCount,
+        cellsUpdated: sample.counts.cellsUpdated,
+      })
     }
+  }
 
   // Balanced paired analysis: baseline-vs-candidate are the same binary here, so a
   // large |pairedChange| or secondPositionEffect flags an imbalance in the harness.

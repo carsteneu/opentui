@@ -23,11 +23,11 @@ Worktree: `home/user/projects/opentui/.worktrees/wave3-stream-gate`
 
 ## 3. Commitfolge
 
-| Commit | Nachricht |
-|---|---|
-| `962a2099` | `perf(core): add wave3 opt-in stage-span telemetry` |
-| `e07f4e48` | `perf(core): add wave3 streaming e2e + markdown attribution harness` |
-| `d1429cec` | `perf(core): record wave3 loop-a frozen baseline + attribution data` |
+| Commit     | Nachricht                                                                     |
+| ---------- | ----------------------------------------------------------------------------- |
+| `962a2099` | `perf(core): add wave3 opt-in stage-span telemetry`                           |
+| `e07f4e48` | `perf(core): add wave3 streaming e2e + markdown attribution harness`          |
+| `d1429cec` | `perf(core): record wave3 loop-a frozen baseline + attribution data`          |
 | `1d57922b` | `perf(core): wave3 loop-a verify matrix (test:js/test:dist) + toolchain note` |
 
 ## 4. Geänderte Dateien und Ownership-Begründung
@@ -57,6 +57,7 @@ Vor der Harness-Implementierung schlug der TDD-Test fehl: `Export named 'recordW
 bun test ./src/telemetry.wave3.test.ts ./src/telemetry.test.ts ./src/benchmark/wave3-harness.test.ts ./src/benchmark/wave3-markdown-attribution.test.ts
   → 20 pass, 0 fail (129 expect calls), exit 0
 ```
+
 - Harness GREEN: styled generation committed, Stages disjunkt, Verdict PASS, `assertWave3SampleGreen` ok.
 - Hard-Fails: unclean source arm, wrong scenario, nativer Hash-Mismatch, Plain-Text-only → alle werfen (Tests decken das ab).
 
@@ -65,10 +66,10 @@ bun test ./src/telemetry.wave3.test.ts ./src/telemetry.test.ts ./src/benchmark/w
 Szenario `code-stream:100` (80x24 Viewport, 100 Zeilen), gefrorene Basis (beide Arme = gleiche Binär):
 n=10 balancierte Paare (Lead wechselt pro Paar), 3 Warmups je Arm.
 
-| Arm | n | p50 ms | p95 ms | p99 ms |
-|---|---|---|---|---|
-| baseline | 10 | 38.83 | 46.82 | 47.81 |
-| candidate | 10 | 41.03 | 113.72 | 147.75 |
+| Arm       | n   | p50 ms | p95 ms | p99 ms |
+| --------- | --- | ------ | ------ | ------ |
+| baseline  | 10  | 38.83  | 46.82  | 47.81  |
+| candidate | 10  | 41.03  | 113.72 | 147.75 |
 
 `analyzePairedObservations` (2000 Bootstrap, seed 7): `pairedChange≈+0.33`, `secondPositionEffect≈+0.07`, CI und Rohdaten in `.yesmem/bench/wave3-loop-a/baseline-code-stream:100-2026-08-17T22-03-28-383Z.json`.
 
@@ -95,6 +96,7 @@ Markdown-Attribution (prose, 8k Bytes, 16 Steps): `stableRefsPreserved: true`, T
 - `bun run test:dist`: **GREEN** (Dist-Test inkl. Packed-Dist-Smoke-Test, Node-26-Smoke, CommonJS-Smoke), nach Install von Zig 0.16.0 (siehe §10).
 
 **UNCLEAR (nur echter Real-Worker-Baseline offen, §5.7):**
+
 - Die echte Worker-Kette (`parser.worker.js` + WASM-Assets über `#opentui/runtime-assets`) wurde mit dem kontrollierten Completion-Seam gemessen (kein echtes Worker-Queue/ACK dieser Messung). Mit `build:lib` liegen nun `dist/parser.worker.js` + Assets vor — die Real-Worker-Messung ist damit im Integrationsschritt machbar, gehört aber zur Cross-Loop-Integration (Worker/Parsing gehört Loop D).
 - Nicht neu ausgeführt: `test:js:node` (vorbestehend rot an fccae215, unabhängig von Loop A: tsc-spyOn-Cast in Code.test + Yoga/TextBuffer-.node-Festures; Doku in Wave-2-Gotchas).
 - Kaltstart-/Additions-Gate (§13.2): Loop-A-Änderungen sind additiv (neue Dateien + 1 Guard im Off-State), kein zusätzlicher Cold-Import in Renderable/Markdown-Pfad (Parser nicht instrumentiert; Parse wird vom Harness extern getimed).

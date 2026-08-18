@@ -209,7 +209,9 @@ report.push(
 )
 report.push("")
 report.push("Secondary 5k (realistic density=3) for transparency:")
-report.push(`- opt p50=${rows[3].o.p50.toFixed(3)} ms vs base p50=${rows[3].b.p50.toFixed(3)} ms (ratio ${(rows[3].o.p50 / rows[3].b.p50).toFixed(3)})`)
+report.push(
+  `- opt p50=${rows[3].o.p50.toFixed(3)} ms vs base p50=${rows[3].b.p50.toFixed(3)} ms (ratio ${(rows[3].o.p50 / rows[3].b.p50).toFixed(3)})`,
+)
 report.push("")
 
 const fs = await import("node:fs")

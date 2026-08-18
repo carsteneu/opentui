@@ -8,7 +8,6 @@ import type { SimpleHighlight } from "../../../packages/core/src/lib/tree-sitter
 import { createTextAttributes } from "../../../packages/core/src/utils.js"
 import { registerEnvVar, env } from "../../../packages/core/src/lib/env.js"
 
-
 registerEnvVar({ name: "OTUI_TS_STYLE_WARN", default: false, description: "Enable warnings for missing syntax styles" })
 
 interface TextChunkOptions {

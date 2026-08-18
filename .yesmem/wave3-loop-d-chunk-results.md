@@ -25,16 +25,16 @@
    - `packages/core/src/lib/tree-sitter-styled-text.test.ts`
    - `.yesmem/bench/wave3-loop-d/` (bench.ts, baseline.ts, raw-2026-08-18.json, report.md)
    - `.yesmem/wave3-loop-d-chunk-results.md`
-   Keine Abhängigkeit von Loop A/B/C; einzeln cherry-pick-fähig.
+     Keine Abhängigkeit von Loop A/B/C; einzeln cherry-pick-fähig.
 
 ## 4. Geänderte Dateien & Ownership
 
-| Datei | Art | Begründung (§8.2) |
-|---|---|---|
-| `packages/core/src/lib/tree-sitter-styled-text.ts` | geändert | Loop-D-Ownership |
+| Datei                                                   | Art      | Begründung (§8.2)                                           |
+| ------------------------------------------------------- | -------- | ----------------------------------------------------------- |
+| `packages/core/src/lib/tree-sitter-styled-text.ts`      | geändert | Loop-D-Ownership                                            |
 | `packages/core/src/lib/tree-sitter-styled-text.test.ts` | geändert | Loop-D-Ownership (Oracle + Differentialkorpus + Testrunner) |
-| `.yesmem/bench/wave3-loop-d/*` | neu | Loop-D-Benchmark |
-| `.yesmem/wave3-loop-d-chunk-results.md` | neu | Loop-D-Handoff |
+| `.yesmem/bench/wave3-loop-d/*`                          | neu      | Loop-D-Benchmark                                            |
+| `.yesmem/wave3-loop-d-chunk-results.md`                 | neu      | Loop-D-Handoff                                              |
 
 Nicht angefasst (Ownership-Grenzen eingehalten): `Code.ts`, Client-/Worker-/Plattformdateien, `TextBuffer`, Native/Zig, `node-assets`, Loop-A-Telemetriedateien.
 
@@ -53,24 +53,24 @@ bun run test:js                                        # 5558 pass, 0 fail, 23 s
 bun run build:lib                                      # TypeScript declarations generated, build ok, exit 0
 ```
 
-| Suite | Ergebnis |
-|---|---|
-| Styled-Text-Tests (44 bestehende + 20 Differential) | **64 pass / 0 fail** |
-| Differentialkorpus (sparse/dense/nested/equal/empty-span/CRLF/Unicode/Conceal/Injection/base/…) | 20 Tests, 19380 expects, 0 Mismatch |
-| `test:js` (gesamte Core-JS-Suite) | **5558 pass / 0 fail** (198 Dateien) |
+| Suite                                                                                           | Ergebnis                             |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------ |
+| Styled-Text-Tests (44 bestehende + 20 Differential)                                             | **64 pass / 0 fail**                 |
+| Differentialkorpus (sparse/dense/nested/equal/empty-span/CRLF/Unicode/Conceal/Injection/base/…) | 20 Tests, 19380 expects, 0 Mismatch  |
+| `test:js` (gesamte Core-JS-Suite)                                                               | **5558 pass / 0 fail** (198 Dateien) |
 
 ## 7. Baseline/Candidate, n, p50/p95/p99, Host/Load/Governor
 
 Paired, in-process, per-call ms; sub-ms-Workloads Batch-getimed. Workloads mit validen Ranges (start < end).
 Rohdaten: `.yesmem/bench/wave3-loop-d/raw-2026-08-18.json`.
 
-| Workload | n | Baseline p50/p95/p99 | Candidate p50/p95/p99 | Ratio p50 |
-|---|---|---|---|---|
-| 20 Zeilen (small) | 25 | 0.011 / 0.036 / 0.058 | 0.009 / 0.017 / 0.026 | 0.80 |
-| small-sparse | 25 | 0.003 / 0.010 / 0.011 | 0.003 / 0.010 / 0.010 | 0.95 |
-| 1000 Zeilen density=2 | 25 | 1.659 / 3.647 / 5.903 | 1.182 / 2.921 / 3.682 | 0.71 |
-| 5000 Zeilen density=3 (realistisch) | 25 | 17.064 / 21.635 / 23.318 | 10.591 / 12.905 / 13.382 | 0.62 |
-| inject-5k K=600 (adversarial) | 25 | 28.844 / 33.163 / 35.880 | 13.746 / 15.597 / 15.954 | **0.48** |
+| Workload                            | n   | Baseline p50/p95/p99     | Candidate p50/p95/p99    | Ratio p50 |
+| ----------------------------------- | --- | ------------------------ | ------------------------ | --------- |
+| 20 Zeilen (small)                   | 25  | 0.011 / 0.036 / 0.058    | 0.009 / 0.017 / 0.026    | 0.80      |
+| small-sparse                        | 25  | 0.003 / 0.010 / 0.011    | 0.003 / 0.010 / 0.010    | 0.95      |
+| 1000 Zeilen density=2               | 25  | 1.659 / 3.647 / 5.903    | 1.182 / 2.921 / 3.682    | 0.71      |
+| 5000 Zeilen density=3 (realistisch) | 25  | 17.064 / 21.635 / 23.318 | 10.591 / 12.905 / 13.382 | 0.62      |
+| inject-5k K=600 (adversarial)       | 25  | 28.844 / 33.163 / 35.880 | 13.746 / 15.597 / 15.954 | **0.48**  |
 
 - Host/Load: `linux x64`, 16 Kerne; CPU-Governor `powersave`. **Wichtige Messbedingung: geteilter Host, erheblich parallel ausgelastet**
   (Loadavg schwankte während der Messungen zwischen ~7 und ~16, nproc=16 — mehrere parallele yesloop-Agenten/Bun). Unter einer solchen

@@ -113,9 +113,7 @@ async function waitForStyledGeneration(
     }
     const spans = setup.captureSpans()
     const found = spans.lines.some((line) =>
-      line.spans.some(
-        (span) => span.fg && span.text.includes(needle) && span.fg.equals(RGBA.fromValues(...keywordFg)),
-      ),
+      line.spans.some((span) => span.fg && span.text.includes(needle) && span.fg.equals(RGBA.fromValues(...keywordFg))),
     )
     if (found) return true
     await new Promise((resolve) => setTimeout(resolve, 1))

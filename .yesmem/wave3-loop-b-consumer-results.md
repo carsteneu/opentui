@@ -67,17 +67,17 @@ bun test src/renderables/CodeHighlightConsumer.test.ts
 
 ## Verifikationsmatrix (§6.4)
 
-| Gate | Ergebnis |
-|---|---|
-| `bun test src/renderables/Code.test.ts` | 76 pass, 1 skip, 0 fail |
-| fokussiert (Code+Session+Consumer+scrollback-surface) | 101 pass, 1 skip, 0 fail |
-| `bun run test:js` (gesamte JS-Suite) | **5551 pass, 23 skip, 0 fail** (200 Dateien) |
-| `bun run build:lib` | exit 0, TS-Deklarationen erzeugt |
-| `bun run test:dist --skip-build` (Node v26.4.0) | 1 pass (Dist-Smoke) |
-| `bun run fmt:check` | sauber |
-| `bun run lint` (oxlint) | 0 warnings, 0 errors |
-| `git diff --check` | sauber |
-| `bun run test:js:node` (Node v26.4.0) | **nicht vollständig GREEN** (siehe unten) |
+| Gate                                                  | Ergebnis                                     |
+| ----------------------------------------------------- | -------------------------------------------- |
+| `bun test src/renderables/Code.test.ts`               | 76 pass, 1 skip, 0 fail                      |
+| fokussiert (Code+Session+Consumer+scrollback-surface) | 101 pass, 1 skip, 0 fail                     |
+| `bun run test:js` (gesamte JS-Suite)                  | **5551 pass, 23 skip, 0 fail** (200 Dateien) |
+| `bun run build:lib`                                   | exit 0, TS-Deklarationen erzeugt             |
+| `bun run test:dist --skip-build` (Node v26.4.0)       | 1 pass (Dist-Smoke)                          |
+| `bun run fmt:check`                                   | sauber                                       |
+| `bun run lint` (oxlint)                               | 0 warnings, 0 errors                         |
+| `git diff --check`                                    | sauber                                       |
+| `bun run test:js:node` (Node v26.4.0)                 | **nicht vollständig GREEN** (siehe unten)    |
 
 Ausgangsbasis (vor Änderungen): `bun test src/renderables/Code.test.ts` = 76 pass, 1 skip, 0 fail – identisch zum
 finalen Stand, d. h. **keine Regression** durch die Session-Integration (fable: Vorher/Nachher verglichen).
@@ -124,6 +124,7 @@ Stale-Discard-Chronologie (kein TOCTOU), die close/destroy-Reihenfolge und die O
 verifiziert (keine verbotenen Dateien angefasst) und die Testaussagen als nicht-vakant bestätigt.
 
 Befunde und Disposition:
+
 - **[SHOULD-FIX] `CodeHighlightSession.run()` und `CodeHighlightPipeline` sind heute kein Produktionspfad** –
   `CodeRenderable` zäunt dieselbe Invariante inline über `revise`/`isCurrent`/`source.highlight` selbst (Code.ts:471/
   492/525/546); zwei Implementierungen derselben Invariante koexistieren. **Disposition: bewusstes Staging**, im
