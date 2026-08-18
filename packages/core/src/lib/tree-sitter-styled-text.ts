@@ -47,21 +47,50 @@ export function treeSitterToTextChunks(
   const concealEnabled = options?.enabled ?? true
   const baseStyle = options?.baseHighlight ? syntaxStyle.getStyle(options.baseHighlight) : undefined
 
-  const injectionContainerRanges: Array<{ start: number; end: number }> = []
-  const boundaries: Boundary[] = []
+  const n = highlights.length
 
-  for (let i = 0; i < highlights.length; i++) {
+  // Precompute specificity and a unique total order (specificity asc, index asc) so the
+  // active group list can be kept sorted incrementally instead of re-sorting on every segment.
+  const spec = new Array<number>(n)
+  const order = new Array<number>(n)
+  for (let i = 0; i < n; i++) {
+    spec[i] = getSpecificity(highlights[i][2])
+    order[i] = i
+  }
+  order.sort((a, b) => spec[a] - spec[b] || a - b)
+  const rank = new Array<number>(n)
+  for (let r = 0; r < n; r++) rank[order[r]] = r
+
+  // Injection containment reduced to a returning sweep-line counter over [start, end) ranges.
+  const byStart = new Array<{ s: number; e: number }>()
+  const byEnd = new Array<{ s: number; e: number }>()
+  for (let i = 0; i < n; i++) {
     const [start, end, , meta] = highlights[i]
-    if (start === end) continue // Skip zero-length ranges
+    // Only well-formed ranges participate in the containment sweep. Legacy checked each
+    // segment with `.some(r => off >= r.start && off < r.end)`, which ignores inverted
+    // (start > end) ranges; counting them here would cancel valid containers.
+    if (start >= end) continue
     if (meta?.containsInjection) {
-      injectionContainerRanges.push({ start, end })
+      byStart.push({ s: start, e: end })
+      byEnd.push({ s: start, e: end })
     }
+  }
+  byStart.sort((a, b) => a.s - b.s)
+  byEnd.sort((a, b) => a.e - b.e)
+  let sPtr = 0
+  let ePtr = 0
+  let insideCount = 0
+
+  const boundaries: Boundary[] = []
+  for (let i = 0; i < n; i++) {
+    const [start, end] = highlights[i]
+    if (start === end) continue
     boundaries.push({ offset: start, type: "start", highlightIndex: i })
     boundaries.push({ offset: end, type: "end", highlightIndex: i })
   }
 
-  // Sort boundaries by offset, with ends before starts at same offset
-  // This ensures we close old ranges before opening new ones at the same position
+  // Sort boundaries by offset, with ends before starts at same offset.
+  // This ensures we close old ranges before opening new ones at the same position.
   boundaries.sort((a, b) => {
     if (a.offset !== b.offset) return a.offset - b.offset
     if (a.type === "end" && b.type === "start") return -1
@@ -69,36 +98,57 @@ export function treeSitterToTextChunks(
     return 0
   })
 
-  const activeHighlights = new Set<number>()
+  // Active highlight indices, kept unordered. The style merge is computed as a
+  // per-property max-rank winner (equivalent to folding by rank with later-wins),
+  // so we never keep a sorted active array: add/remove are O(1) via swap-with-last.
+  const active: number[] = []
+  const isActive = new Uint8Array(n)
+  const pos = new Int32Array(n)
   let currentOffset = 0
 
   for (let i = 0; i < boundaries.length; i++) {
     const boundary = boundaries[i]
 
-    if (currentOffset < boundary.offset && activeHighlights.size > 0) {
+    if (currentOffset < boundary.offset && active.length > 0) {
+      while (sPtr < byStart.length && byStart[sPtr].s <= currentOffset) {
+        insideCount++
+        sPtr++
+      }
+      while (ePtr < byEnd.length && byEnd[ePtr].e <= currentOffset) {
+        insideCount--
+        ePtr++
+      }
+      const insideInjectionContainer = insideCount > 0
+
       const segmentText = content.slice(currentOffset, boundary.offset)
 
-      const activeGroups: Array<{ group: string; meta: any; index: number }> = []
-      for (const idx of activeHighlights) {
-        const [, , group, meta] = highlights[idx]
-        activeGroups.push({ group, meta, index: idx })
+      // Check if any active highlight has a conceal property. The original logic picks the
+      // first conceal in start-event order (smallest start offset, ties by index), so track the minimum.
+      // Priority: 1. Check meta.conceal first 2. Check group === "conceal" or starts with "conceal."
+      let concealIndex = -1
+      if (concealEnabled) {
+        for (let k = 0; k < active.length; k++) {
+          const idx = active[k]
+          const [start, , group, meta] = highlights[idx]
+          if (meta?.conceal !== undefined || group === "conceal" || group.startsWith("conceal.")) {
+            if (concealIndex === -1) {
+              concealIndex = idx
+            } else {
+              const prevStart = highlights[concealIndex][0]
+              if (start < prevStart || (start === prevStart && idx < concealIndex)) concealIndex = idx
+            }
+          }
+        }
       }
 
-      // Check if any active highlight has a conceal property
-      // Priority: 1. Check meta.conceal first 2. Check group === "conceal" or starts with "conceal."
-      const concealHighlight = concealEnabled
-        ? activeGroups.find(
-            (h) => h.meta?.conceal !== undefined || h.group === "conceal" || h.group.startsWith("conceal."),
-          )
-        : undefined
-
-      if (concealHighlight) {
+      if (concealIndex !== -1) {
+        const [, , group, meta] = highlights[concealIndex]
         let replacementText = ""
 
-        if (concealHighlight.meta?.conceal !== undefined) {
+        if (meta?.conceal !== undefined) {
           // If meta.conceal is set, use it (this would come from (#set! conceal "...") if supported)
-          replacementText = concealHighlight.meta.conceal
-        } else if (concealHighlight.group === "conceal.with.space") {
+          replacementText = meta.conceal ?? ""
+        } else if (group === "conceal.with.space") {
           // Special group name means replace with space
           replacementText = " "
         }
@@ -120,35 +170,32 @@ export function treeSitterToTextChunks(
           })
         }
       } else {
-        const insideInjectionContainer = injectionContainerRanges.some(
-          (range) => currentOffset >= range.start && currentOffset < range.end,
-        )
-
-        // Filter out highlights that should be suppressed
-        // Suppress highlights when we're inside an injection container
-        const validGroups = activeGroups.filter((h) => {
-          // If we're inside an injection container, suppress all markup.raw.block highlights
-          // This includes both the container itself and any nested markup.raw.block
-          if (insideInjectionContainer && shouldSuppressInInjection(h.group, h.meta)) {
-            return false
-          }
-          return true
-        })
-
-        // Sort groups by specificity (least to most), then by index (earlier to later)
-        // This ensures we merge styles in the correct order: parent styles first, then child overrides
-        const sortedGroups = validGroups.sort((a, b) => {
-          const aSpec = getSpecificity(a.group)
-          const bSpec = getSpecificity(b.group)
-          if (aSpec !== bSpec) return aSpec - bSpec // Lower specificity first
-          return a.index - b.index // Earlier index first
-        })
-
-        // Merge all active styles in order (like CSS cascade)
-        // Later/more specific styles override earlier/less specific ones
+        // Later-wins by (specificity, index) rank means the fold result equals, per
+        // property, the value from the highest-rank active highlight that defines it.
+        // Compute these winners in one pass over the unordered active set.
         const mergedStyle: StyleDefinition = baseStyle ? { ...baseStyle } : {}
+        let bestFgRank = -1
+        let bestBgRank = -1
+        let bestBoldRank = -1
+        let bestItalicRank = -1
+        let bestUnderlineRank = -1
+        let bestDimRank = -1
+        let bestFg: StyleDefinition["fg"]
+        let bestBg: StyleDefinition["bg"]
+        let bestBold: boolean | undefined
+        let bestItalic: boolean | undefined
+        let bestUnderline: boolean | undefined
+        let bestDim: boolean | undefined
 
-        for (const { group } of sortedGroups) {
+        for (let k = 0; k < active.length; k++) {
+          const idx = active[k]
+          const [, , group, meta] = highlights[idx]
+
+          // If we're inside an injection container, suppress all markup.raw.block highlights
+          if (insideInjectionContainer && shouldSuppressInInjection(group, meta)) {
+            continue
+          }
+
           let styleForGroup = syntaxStyle.getStyle(group)
 
           if (!styleForGroup && group.includes(".")) {
@@ -158,13 +205,31 @@ export function treeSitterToTextChunks(
           }
 
           if (styleForGroup) {
-            // Merge properties - later styles override earlier ones
-            if (styleForGroup.fg !== undefined) mergedStyle.fg = styleForGroup.fg
-            if (styleForGroup.bg !== undefined) mergedStyle.bg = styleForGroup.bg
-            if (styleForGroup.bold !== undefined) mergedStyle.bold = styleForGroup.bold
-            if (styleForGroup.italic !== undefined) mergedStyle.italic = styleForGroup.italic
-            if (styleForGroup.underline !== undefined) mergedStyle.underline = styleForGroup.underline
-            if (styleForGroup.dim !== undefined) mergedStyle.dim = styleForGroup.dim
+            const r = rank[idx]
+            if (styleForGroup.fg !== undefined && r > bestFgRank) {
+              bestFgRank = r
+              bestFg = styleForGroup.fg
+            }
+            if (styleForGroup.bg !== undefined && r > bestBgRank) {
+              bestBgRank = r
+              bestBg = styleForGroup.bg
+            }
+            if (styleForGroup.bold !== undefined && r > bestBoldRank) {
+              bestBoldRank = r
+              bestBold = styleForGroup.bold
+            }
+            if (styleForGroup.italic !== undefined && r > bestItalicRank) {
+              bestItalicRank = r
+              bestItalic = styleForGroup.italic
+            }
+            if (styleForGroup.underline !== undefined && r > bestUnderlineRank) {
+              bestUnderlineRank = r
+              bestUnderline = styleForGroup.underline
+            }
+            if (styleForGroup.dim !== undefined && r > bestDimRank) {
+              bestDimRank = r
+              bestDim = styleForGroup.dim
+            }
           } else {
             if (group.includes(".")) {
               const baseName = group.split(".")[0]
@@ -180,6 +245,13 @@ export function treeSitterToTextChunks(
             }
           }
         }
+
+        if (bestFgRank >= 0) mergedStyle.fg = bestFg
+        if (bestBgRank >= 0) mergedStyle.bg = bestBg
+        if (bestBoldRank >= 0) mergedStyle.bold = bestBold
+        if (bestItalicRank >= 0) mergedStyle.italic = bestItalic
+        if (bestUnderlineRank >= 0) mergedStyle.underline = bestUnderline
+        if (bestDimRank >= 0) mergedStyle.dim = bestDim
 
         // Use merged style, falling back to default if nothing was merged
         const finalStyle = Object.keys(mergedStyle).length > 0 ? mergedStyle : defaultStyle
@@ -219,12 +291,25 @@ export function treeSitterToTextChunks(
     }
 
     if (boundary.type === "start") {
-      activeHighlights.add(boundary.highlightIndex)
+      const idx = boundary.highlightIndex
+      active.push(idx)
+      pos[idx] = active.length - 1
+      isActive[idx] = 1
     } else {
-      activeHighlights.delete(boundary.highlightIndex)
+      const idx = boundary.highlightIndex
+      if (isActive[idx]) {
+        const p = pos[idx]
+        const last = active.pop()!
+        if (last !== idx) {
+          active[p] = last
+          pos[last] = p
+        }
+        isActive[idx] = 0
+        pos[idx] = -1
+      }
 
       if (concealEnabled) {
-        const [, , group, meta] = highlights[boundary.highlightIndex]
+        const [, , group, meta] = highlights[idx]
         if (meta?.concealLines !== undefined) {
           if (boundary.offset < content.length && content[boundary.offset] === "\n") {
             currentOffset = boundary.offset + 1
@@ -278,7 +363,6 @@ export function treeSitterToTextChunks(
 
   return chunks
 }
-
 export interface TreeSitterToStyledTextOptions {
   conceal?: Pick<TextChunkOptions, "enabled">
   baseHighlight?: string
