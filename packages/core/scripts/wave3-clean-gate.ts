@@ -16,6 +16,14 @@ const PRIMARY_METRIC = "updateToStyledCommitMs" as const
 
 type Role = "baseline" | "candidate"
 type Scenario = (typeof SCENARIOS)[number]
+export type NativeArtifactPolicy = "identical" | "per-arm"
+
+export function validateNativeArtifacts(policy: NativeArtifactPolicy, baselineSha256: string, candidateSha256: string) {
+  if (policy === "identical" && baselineSha256 !== candidateSha256) {
+    throw new Error("native artifact SHA differs between arms")
+  }
+  return { policy, baselineSha256, candidateSha256 }
+}
 
 interface ProbeResult {
   schemaVersion: 1
@@ -118,6 +126,14 @@ function numberArg(name: string, fallback: number, minimum: number): number {
   const parsed = Number(optionalArg(name) ?? fallback)
   if (!Number.isFinite(parsed) || parsed < minimum) throw new Error(`--${name} must be a number >= ${minimum}`)
   return parsed
+}
+
+function nativeArtifactPolicyArg(): NativeArtifactPolicy {
+  const policy = optionalArg("native-policy") ?? "identical"
+  if (policy !== "identical" && policy !== "per-arm") {
+    throw new Error("--native-policy must be identical or per-arm")
+  }
+  return policy
 }
 
 function run(root: string, command: string, args: string[]): string {
@@ -224,6 +240,7 @@ async function main(): Promise<void> {
   if (pairs % 2 !== 0) throw new Error("--pairs must be even")
   const warmups = intArg("warmups", 3, 0)
   const maximumLoad = numberArg("max-load", 4, 0)
+  const nativePolicy = nativeArtifactPolicyArg()
   const outputDir = resolve(optionalArg("output-dir") ?? join(process.cwd(), ".yesmem/bench/wave3-clean-gate"))
   const probePath = join(import.meta.dir, "wave3-real-worker-probe.ts")
 
@@ -241,8 +258,7 @@ async function main(): Promise<void> {
 
   const baselineNative = nativeArtifact(baselineRoot)
   const candidateNative = nativeArtifact(candidateRoot)
-  const nativeSha256 = sha256File(baselineNative)
-  if (sha256File(candidateNative) !== nativeSha256) throw new Error("native artifact SHA differs between arms")
+  const nativeArtifacts = validateNativeArtifacts(nativePolicy, sha256File(baselineNative), sha256File(candidateNative))
 
   const startLoad = hostLoad()
   if (startLoad.one > maximumLoad) throw new Error(`host load ${startLoad.one} exceeds --max-load=${maximumLoad}`)
@@ -259,7 +275,7 @@ async function main(): Promise<void> {
     date: new Date().toISOString(),
     baseline: { root: baselineRoot, revision: baselineHead },
     candidate: { root: candidateRoot, revision: candidateHead },
-    nativeSha256,
+    nativeArtifacts,
     bun: Bun.version,
     node: process.version,
     pairs,
@@ -278,7 +294,7 @@ async function main(): Promise<void> {
           role === "baseline" ? baselineHead : candidateHead,
           scenario,
           role === "baseline" ? baselineNative : candidateNative,
-          nativeSha256,
+          role === "baseline" ? nativeArtifacts.baselineSha256 : nativeArtifacts.candidateSha256,
         )
       }
     }
@@ -301,7 +317,7 @@ async function main(): Promise<void> {
         role === "baseline" ? baselineHead : candidateHead,
         entry.scenario as Scenario,
         role === "baseline" ? baselineNative : candidateNative,
-        nativeSha256,
+        role === "baseline" ? nativeArtifacts.baselineSha256 : nativeArtifacts.candidateSha256,
       )
       if (index === 0) firstEnd = performance.now()
     }
@@ -359,7 +375,9 @@ async function main(): Promise<void> {
   report += `- generated: ${new Date().toISOString()}\n`
   report += `- baseline: \`${baselineHead}\` (${baselineRoot})\n`
   report += `- candidate: \`${candidateHead}\` (${candidateRoot})\n`
-  report += `- native SHA: \`${nativeSha256}\`\n`
+  report += `- native policy: \`${nativeArtifacts.policy}\`\n`
+  report += `- baseline native SHA: \`${nativeArtifacts.baselineSha256}\`\n`
+  report += `- candidate native SHA: \`${nativeArtifacts.candidateSha256}\`\n`
   report += `- Bun: ${Bun.version}; Node host: ${process.version}\n`
   report += `- protocol: ${pairs} balanced pairs, ${warmups} fresh-process warmups/arm/scenario, 20000 bootstrap samples\n`
   report += `- load: start ${startLoad.one}/${startLoad.five}/${startLoad.fifteen}; end ${endLoad.one}/${endLoad.five}/${endLoad.fifteen}\n\n`

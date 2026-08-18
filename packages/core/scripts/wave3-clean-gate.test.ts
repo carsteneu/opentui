@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { parseProbeOutput, summarize, WAVE3_CLEAN_GATE_SCHEMA_VERSION } from "./wave3-clean-gate.js"
+import {
+  parseProbeOutput,
+  summarize,
+  validateNativeArtifacts,
+  WAVE3_CLEAN_GATE_SCHEMA_VERSION,
+} from "./wave3-clean-gate.js"
 import { makeWarmAppendWorkload } from "./wave3-real-worker-workload.js"
 
 const expected = {
@@ -66,5 +71,14 @@ describe("wave3 clean gate evidence parser", () => {
 
   test("uses interpolated even-sample percentiles", () => {
     expect(summarize([1, 2, 3, 4])).toEqual({ n: 4, p50: 2.5, p95: 3.8499999999999996, p99: 3.9699999999999998 })
+  })
+
+  test("requires identical native artifacts by default and pins both arms for native comparisons", () => {
+    expect(() => validateNativeArtifacts("identical", "base", "candidate")).toThrow(/SHA differs/)
+    expect(validateNativeArtifacts("per-arm", "base", "candidate")).toEqual({
+      policy: "per-arm",
+      baselineSha256: "base",
+      candidateSha256: "candidate",
+    })
   })
 })
