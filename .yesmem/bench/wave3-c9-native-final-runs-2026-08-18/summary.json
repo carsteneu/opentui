@@ -1,0 +1,250 @@
+{
+  "analyses": [
+    {
+      "scenario": "cold-1000",
+      "wall": {
+        "baseline": {
+          "n": 30,
+          "p50": 1059.8949315,
+          "p95": 1454.8408759000001,
+          "p99": 1594.7188183900003
+        },
+        "candidate": {
+          "n": 30,
+          "p50": 439.578623,
+          "p95": 550.6596505499999,
+          "p99": 601.1977279500001
+        },
+        "nominal": {
+          "pairs": 30,
+          "orderCounts": {
+            "baselineFirst": 15,
+            "candidateFirst": 15
+          },
+          "medianBaselineNsPerOp": 1059894931.5,
+          "medianCandidateNsPerOp": 439578623,
+          "pairedChange": -0.5943028280761891,
+          "ci": {
+            "confidence": 0.95,
+            "lower": -0.6108479756334082,
+            "upper": -0.5753054086065009
+          },
+          "orderEstimates": {
+            "baselineFirst": -0.5800862288140186,
+            "candidateFirst": -0.6080381102002951
+          },
+          "secondPositionEffect": 0.03504239182825852,
+          "logRatioSd": 0.1286789201839739,
+          "pairCorrelation": 0.6897925990462176,
+          "candidateFasterPairs": 30,
+          "pairGapMs": {
+            "median": 0.0024495000106981024,
+            "min": 0.001242000002093846,
+            "max": 0.003616999994846992
+          }
+        },
+        "familywise": {
+          "pairs": 30,
+          "orderCounts": {
+            "baselineFirst": 15,
+            "candidateFirst": 15
+          },
+          "medianBaselineNsPerOp": 1059894931.5,
+          "medianCandidateNsPerOp": 439578623,
+          "pairedChange": -0.5943028280761891,
+          "ci": {
+            "confidence": 0.975,
+            "lower": -0.6131352111772113,
+            "upper": -0.5723253025414875
+          },
+          "orderEstimates": {
+            "baselineFirst": -0.5800862288140186,
+            "candidateFirst": -0.6080381102002951
+          },
+          "secondPositionEffect": 0.03504239182825852,
+          "logRatioSd": 0.1286789201839739,
+          "pairCorrelation": 0.6897925990462176,
+          "candidateFasterPairs": 30,
+          "pairGapMs": {
+            "median": 0.0024495000106981024,
+            "min": 0.001242000002093846,
+            "max": 0.003616999994846992
+          }
+        },
+        "p95Change": -0.6214983647546002
+      },
+      "converter": {
+        "baseline": {
+          "n": 30,
+          "p50": 17.747162499999945,
+          "p95": 27.587465350000016,
+          "p99": 32.47427940000003
+        },
+        "candidate": {
+          "n": 30,
+          "p50": 22.86103350000002,
+          "p95": 39.143913049999966,
+          "p99": 41.81458852999993
+        },
+        "nominal": {
+          "pairs": 30,
+          "orderCounts": {
+            "baselineFirst": 15,
+            "candidateFirst": 15
+          },
+          "medianBaselineNsPerOp": 17747162.499999944,
+          "medianCandidateNsPerOp": 22861033.50000002,
+          "pairedChange": 0.2885682872387598,
+          "ci": {
+            "confidence": 0.95,
+            "lower": 0.17279317977967348,
+            "upper": 0.40961977826665813
+          },
+          "orderEstimates": {
+            "baselineFirst": 0.3169567071344568,
+            "candidateFirst": 0.26079181030201415
+          },
+          "secondPositionEffect": 0.022030978239057752,
+          "logRatioSd": 0.2659863070257161,
+          "pairCorrelation": 0.44233446147327316,
+          "candidateFasterPairs": 6,
+          "pairGapMs": {
+            "median": 0.0024495000106981024,
+            "min": 0.001242000002093846,
+            "max": 0.003616999994846992
+          }
+        },
+        "p95Change": 0.418902119255401
+      }
+    },
+    {
+      "scenario": "warm-1000-append100",
+      "wall": {
+        "baseline": {
+          "n": 30,
+          "p50": 872.2244774999999,
+          "p95": 1315.0838581499997,
+          "p99": 1387.80315678
+        },
+        "candidate": {
+          "n": 30,
+          "p50": 105.4861995,
+          "p95": 167.31136825000002,
+          "p99": 175.70893115000004
+        },
+        "nominal": {
+          "pairs": 30,
+          "orderCounts": {
+            "baselineFirst": 15,
+            "candidateFirst": 15
+          },
+          "medianBaselineNsPerOp": 872224477.5,
+          "medianCandidateNsPerOp": 105486199.5,
+          "pairedChange": -0.8757902561575724,
+          "ci": {
+            "confidence": 0.95,
+            "lower": -0.8857547931673947,
+            "upper": -0.8644948640697679
+          },
+          "orderEstimates": {
+            "baselineFirst": -0.8852478024389675,
+            "candidateFirst": -0.8655532460962603
+          },
+          "secondPositionEffect": -0.07614174209547409,
+          "logRatioSd": 0.25429067741062256,
+          "pairCorrelation": 0.32944207731241393,
+          "candidateFasterPairs": 30,
+          "pairGapMs": {
+            "median": 0.002414499998849351,
+            "min": 0.001171999996586237,
+            "max": 0.0032269999937852845
+          }
+        },
+        "familywise": {
+          "pairs": 30,
+          "orderCounts": {
+            "baselineFirst": 15,
+            "candidateFirst": 15
+          },
+          "medianBaselineNsPerOp": 872224477.5,
+          "medianCandidateNsPerOp": 105486199.5,
+          "pairedChange": -0.8757902561575724,
+          "ci": {
+            "confidence": 0.975,
+            "lower": -0.8871314926228421,
+            "upper": -0.8629412442363964
+          },
+          "orderEstimates": {
+            "baselineFirst": -0.8852478024389675,
+            "candidateFirst": -0.8655532460962603
+          },
+          "secondPositionEffect": -0.07614174209547409,
+          "logRatioSd": 0.25429067741062256,
+          "pairCorrelation": 0.32944207731241393,
+          "candidateFasterPairs": 30,
+          "pairGapMs": {
+            "median": 0.002414499998849351,
+            "min": 0.001171999996586237,
+            "max": 0.0032269999937852845
+          }
+        },
+        "p95Change": -0.8727751335299895
+      },
+      "converter": {
+        "baseline": {
+          "n": 30,
+          "p50": 15.237449500000025,
+          "p95": 20.087788600000135,
+          "p99": 21.09520109999995
+        },
+        "candidate": {
+          "n": 30,
+          "p50": 16.37161199999997,
+          "p95": 30.1844703499999,
+          "p99": 33.29035002000004
+        },
+        "nominal": {
+          "pairs": 30,
+          "orderCounts": {
+            "baselineFirst": 15,
+            "candidateFirst": 15
+          },
+          "medianBaselineNsPerOp": 15237449.500000026,
+          "medianCandidateNsPerOp": 16371611.99999997,
+          "pairedChange": 0.16515904828940764,
+          "ci": {
+            "confidence": 0.95,
+            "lower": 0.051638630235156864,
+            "upper": 0.29180384050100194
+          },
+          "orderEstimates": {
+            "baselineFirst": 0.1363709005408824,
+            "candidateFirst": 0.19467649793258435
+          },
+          "secondPositionEffect": -0.024707483318084145,
+          "logRatioSd": 0.2923507232375357,
+          "pairCorrelation": 0.18062557499405651,
+          "candidateFasterPairs": 10,
+          "pairGapMs": {
+            "median": 0.002414499998849351,
+            "min": 0.001171999996586237,
+            "max": 0.0032269999937852845
+          }
+        },
+        "p95Change": 0.5026278377899545
+      }
+    }
+  ],
+  "wallPrimaryPass": true,
+  "wallRegressionSafe": true,
+  "startLoad": {
+    "one": 6.45,
+    "five": 7.62,
+    "fifteen": 7.81
+  },
+  "endLoad": {
+    "one": 12.93,
+    "five": 9.73,
+    "fifteen": 8.56
+  }
+}

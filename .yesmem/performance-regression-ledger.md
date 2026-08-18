@@ -1,9 +1,10 @@
 # OpenTUI Performance-Wins und Regression Ledger
 
 Stand: 2026-08-18  
-Kanonische Runtime-Referenz: `yesloop/wave3-streaming-integration@6ec90b97d72606fc98761417304c8039048bbc06`
+Kanonische Integrationslinie: `yesloop/wave3-streaming-integration` mit C9-Runtime aus
+`yesloop/wave3-textbuffer-tail@11b1fdec1d56282237bd068f798fa139a66deb19`
 OpenTUI-Paketversion: `@opentui/core@0.5.3`  
-Git-Describe der Runtime-Referenz: `v0.5.3-91-g6ec90b97`
+Git-Describe des verifizierten C9-Prüfstands: `v0.5.3-98-g11b1fdec`
 
 ## 1. Zweck und Statusregeln
 
@@ -45,7 +46,10 @@ Ersatzbaselines.
 | Wave 0             | `f3ef5a19` | Observability und gehärtetes A/B-Harness                       | Wave 1        |
 | Wave 1 Runtime     | `f33c8019` | Lifecycle-/Hang-Schutz plus Hotpath-Nacharbeit                 | Wave 2        |
 | Wave 2 Integration | `fccae215` | Lazy FFI, lean Entrypoints, Ready-Stufen, ruhiges Startupgate  | Wave 3        |
-| Wave 3 stabil      | `6ec90b97` | A→C→B→D integriert, geprüft und als Zwischenbasis dokumentiert | nächste Welle |
+| Wave 3 Runtime     | `917ef5f7` | Streaming-Harness, Backpressure und Chunk-Sweep                | Consumer      |
+| Wave 3 stabil      | `6ec90b97` | Runtime integriert, geprüft und als Zwischenbasis dokumentiert | Consumer      |
+| Consumer-Bridge    | `fcf1cb70` | Versionierter Buffer-/ACK-Pfad im echten Renderpfad            | C9 Native     |
+| C9 Candidate       | `11b1fdec` | Sicherer inkrementeller Styled-TextBuffer-Tail                 | Integration   |
 
 Hinweise:
 
@@ -67,6 +71,8 @@ Jeder Performance-Claim muss vor der Bewertung alle folgenden Punkte erfüllen:
 - identisches Native-Artefakt in beiden Armen; für die TypeScript-Waves ist die bisherige
   Referenz-SHA
   `e7e9764462f2ee7f2c808856b60101ff659c6bda4a1df7cf235e418cf481a15c`;
+- bei einer expliziten Native-Optimierung sind unterschiedliche Binaries nur mit
+  `native-policy=per-arm`, separat gepinnten SHAs und identischem Zig-/Buildprotokoll zulässig;
 - gleicher Viewport, Input, Seed, Warmup, Messpunkt und Abschlusszustand;
 - mindestens 30 balancierte A/B-Paare, drei Warmups und 20.000 Bootstrap-Samples für finale
   Startup-/E2E-Claims;
@@ -322,12 +328,20 @@ Wave-2-Gesamtevidenz: `.yesmem/bench/wave2-final-root-vs-renderer-clean/report.m
 `.yesmem/wave2-integration-results.md`. Abschluss: 5.538 JS-Passes, 23 Skips, 0 Fails sowie
 grüne Build-, Packed-Node-/Bun-, Format- und Lint-Gates.
 
-## 8. Wave 3: integrierte Streaming-Wins und noch offene Gesamtmessung
+## 8. Wave 3: integrierte Streaming-Wins und C9-Native-Candidate
 
-Stabile integrierte Referenz: `6ec90b97` (Runtimeintegration `917ef5f7` plus versionierter
-Integrationsbericht). Die integrierte Core-JS-Suite lief mit 5.592 Passes,
-23 Skips und 0 Fails über 203 Dateien. Die folgenden Loop-Gates sind vorhanden; ein finales
-30-Paar-E2E-Gesamtgate gegen `fccae215` ist noch `OPEN`.
+Stabile Zwischenreferenz: `6ec90b97` (Runtimeintegration `917ef5f7` plus versionierter
+Integrationsbericht). Die damalige Core-JS-Suite lief mit 5.592 Passes, 23 Skips und 0 Fails
+über 203 Dateien. Dieser Stand wurde über die Consumer-Bridge `fcf1cb70` bis zum
+C9-Candidate `11b1fdec` fortgeführt. Die vollständige Core-JS-Suite lief vor dem letzten
+kompakten Snapshot-Refactor mit 5.612 Passes, 23 Skips und 0 Fails; danach liefen die 155
+direkt betroffenen Tests mit einem intentionalen Skip und 0 Fails. Das native Gesamtgate
+bestand mit 2.009 Passes, 8 Skips und 0 Fails. Root-Build und gepackte Node-ESM-/CJS-/Bun-
+Distribution sind grün. Der Node-26-Quelltest hat in Baseline und Candidate dieselben sieben
+bekannten Adapter-/Boolean-Assertion-Fehler und damit keine neue C9-Regression.
+
+Das formale C9-A/B gegen `fcf1cb70` ist bestanden. Das übergreifende Wave-3-Gesamtgate mit
+30 Paaren direkt gegen `fccae215` bleibt davon getrennt und weiterhin `OPEN`.
 
 ### W3-01 — Echtes Streaming-E2E-/Attributionsharness (`PASS` als Infrastruktur)
 
@@ -413,20 +427,55 @@ Streaming-E2E-Harness bestätigt werden.
 
 Evidenz: `.yesmem/wave3-loop-d-chunk-results.md` und `.yesmem/bench/wave3-loop-d/`.
 
-### W3-05 — Noch offenes Wave-3-Gesamtgate (`OPEN`)
+### W3-05 — Real-Worker-E2E-Wallgate (`PASS` für C9, Gesamt-CPU `OPEN`)
 
-Final gegen detached `fccae215`, Real Worker, identische Native-SHA, mindestens 30 Paare:
+Finaler C9-Lauf: Consumer-Bridge `fcf1cb70` gegen Candidate `11b1fdec`, je 30 balancierte
+Paare, drei Warmups, frischer Prozess je Arm, 20.000 Bootstrap-Samples. Weil C9 nativen Code
+ändert, wurden die Binaries separat gepinnt: Baseline `e7e97644…`, Candidate `deacf806…`.
+Die Hostlast stieg von 6,45 auf 12,93; deshalb sind die absoluten Zeiten Diagnosewerte, die
+großen gepaarten Effekte und alle 30/30 schnelleren Candidate-Paare bleiben belastbar.
 
-- familienweise obere 95-%-CI-Grenze für aufsummierte disjunkte synchrone Mainthread-Stufen
-  `≤-30 %`;
-- update-to-styled-native-commit p95 ebenfalls `≤-30 %`;
-- Queue-HWM und stale-/final-output-Gates aus W3-02/W3-03;
-- keine Sekundärregression über `+3 %`, kein p99 über `+5 %`;
+| Szenario                 |                 Baseline p50/p95/p99 |          Candidate p50/p95/p99 | gepaarter Win |    familywise 95-%-CI |      p95-Win |
+| ------------------------ | -----------------------------------: | -----------------------------: | ------------: | --------------------: | -----------: |
+| Cold 1.000 Zeilen        | 1.059,895 / 1.454,841 / 1.594,719 ms | 439,579 / 550,660 / 601,198 ms |  **-59,43 %** | **-61,31 … -57,23 %** | **-62,15 %** |
+| Warm 1.000 + 100 Appends |   872,224 / 1.315,084 / 1.387,803 ms | 105,486 / 167,311 / 175,709 ms |  **-87,58 %** | **-88,71 … -86,29 %** | **-87,28 %** |
+
+Framebuffer-, Span- und Chunk-Digests waren in allen Paaren exakt gleich. Der
+Update→gestylter-nativer-Commit-Walltarget von mindestens 30 % ist damit bestanden. Die im
+Report aufgeführten Converterwerte sind bewusst nur post-run Diagnostik: Sie werden nach dem
+zustandsbehafteten Renderpfad gemessen; für C3 bleibt der isolierte Converter-Gate
+maßgeblich, dessen Runtimecode zwischen den beiden C9-Armen unverändert ist.
+
+Noch `OPEN` für ein pauschales Wave-3-Gesamt-PASS:
+
+- disjunkte reine Mainthread-CPU-Stufen mit familywise oberer CI `≤-30 %`;
 - 10.000 Rolling-Updates mit fester Dokument-/Viewportgröße ohne ungebundenes Heap-, Queue-,
-  Worker-, Listener-, Timer- oder FFI-Handle-Wachstum.
+  Worker-, Listener-, Timer- oder FFI-Handle-Wachstum;
+- die verbleibenden Layout-/Partial-Safety-Achsen aus dem Wave-3-Plan.
 
-Bis dieser Lauf existiert, dürfen W3-02 und W3-04 nicht zu einem pauschalen „Wave 3 ist X %
-schneller“ addiert werden.
+Evidenz: `.yesmem/bench/wave3-c9-native-final-runs-2026-08-18/{raw.ndjson,report.md,summary.json}`.
+
+### W3-06 — Inkrementeller nativer Styled-TextBuffer (`PASS` auf C9-Branch)
+
+Der frühere Full-Replacement-Pfad verbrauchte in einer attribuierten Warmprobe rund 512,6 ms
+von 545,9 ms Worker+Pipeline-Zeit und überschritt die 10-%-Go-Schwelle deutlich. C9 ergänzt
+deshalb einen konservativen nativen Append-Pfad:
+
+- nur echte Source- und Rendered-Text-Appends an sicheren Zeilengrenzen;
+- unveränderter Prefix wird text-, style-, attribute- und linkgenau geprüft;
+- kompakte immutable Style-Runs halten keine mutierbaren Chunk-/RGBA-Objekte fest;
+- Unicode, CRLF, Combining, ZWJ, Flags, Skin tones, Hangul, Keycaps sowie none/char/word-wrap
+  sind differential gegen Full Replacement geprüft;
+- unsichere Edits, Stylewechsel, Registry-Grenze oder Native-Fehler fallen auf Full Replacement
+  zurück;
+- native Tail-Buffer sind explizit owned, begrenzt und werden bei Clear/Reset/Destroy genau
+  freigegeben;
+- Styledefinitionen werden nach exakter Definition wiederverwendet; die frühere
+  Chunk×Line-Schleife wurde durch einen monotonen Line-Hint ersetzt.
+
+Eine einzelne attribuierte Candidate-Probe lag für den nativen Append bei 5,76 ms. Dieser
+Stagewert ist Diagnose, nicht der finale Claim; maßgeblich ist das gepaarte E2E-Gate W3-05.
+Die C9-Commits beginnen bei `32ff2072` und enden auf `11b1fdec`.
 
 Der echte Fresh-process-/Real-Worker-Runner wurde dafür getrennt auf
 `yesloop/wave3-clean-gate@b2ac235d` angelegt. Er misst `fccae215` gegen exakt `6ec90b97`, pinnt
@@ -441,14 +490,14 @@ verwendet werden.
 | ---- | ------- | ---------------------------------------------------------------------------------------------------------------- |
 | R-01 | `OPEN`  | Wave-1 Custom-Feed 25k p95 `+11,26 %`; sichere Ownership darf nicht entfernt werden                              |
 | R-02 | `OPEN`  | relatives Wave-2-TTFMF-Ziel `-30 %`; aktuell `-16,44 %`                                                          |
-| R-03 | `OPEN`  | finales Wave-3-Real-worker-/fresh-process-E2E-Gate fehlt                                                         |
+| R-03 | `OPEN`  | E2E-Wallgate ist grün; reine disjunkte Mainthread-CPU und Rolling-Memory-Abnahme fehlen                          |
 | R-04 | `OPEN`  | C5 kompakte Spans/Transferables nur nach Clone-Profil; portabler Worker-Seam hat noch keine Transferliste        |
 | R-05 | `NO-OP` | B4 Native-Library-Split/Symboltrim erst nach neuem isolierten Cost-Weight-Beleg                                  |
 | R-06 | `OPEN`  | Bun-Worker-Resolve außerhalb des Plattformseams ist ein Robustheitsrisiko                                        |
 | R-07 | `OPEN`  | globale ConsoleCapture/TerminalConsoleCache-Policy ist bei zwei aktiven Root-Overlay-Renderern nicht refcounted  |
 | R-08 | `OPEN`  | `hasSafePartialComposition` bleibt potenziell O(K·N); erst Scaling-Gate, dann Umbau                              |
 | R-09 | `OPEN`  | Streaming-Layout kann stabile Geschwister global traversieren; Wave 3 misst, optimiert diesen Bereich noch nicht |
-| R-10 | `OPEN`  | C9 nativer TextBuffer-Tail-Reflow nur bei ≥10-%-E2E-Anteil und mit Zig 0.16/Differentialkorpus                   |
+| R-10 | `PASS`  | C9 TextBuffer-Tail auf `11b1fdec`; Integration erst nach Erhalt aller W3-05-/W3-06-Gates                         |
 
 ## 10. Ausführbare Prüfbefehle
 
@@ -535,7 +584,27 @@ bun ../../.yesmem/bench/wave3-loop-d/bench.ts
 Da der Microbenchmark in-process läuft, zählen primär das gepaarte Verhältnis und die
 Outputparität; absolute Millisekunden nur unter vergleichbarer ruhiger Last.
 
-### 10.7 Paket-/Portabilitätsabschluss
+### 10.7 C9 Native-Real-Worker-Gate
+
+Aus dem versionierten Gate-Worktree, mit sauberer Consumer-Bridge-Baseline und sauberem
+Candidate:
+
+```bash
+bun packages/core/scripts/wave3-clean-gate.ts \
+  --baseline-root=home/user/projects/opentui/.worktrees/wave3-consumer-bridge \
+  --candidate-root=home/user/projects/opentui/.worktrees/wave3-textbuffer-tail \
+  --baseline-revision=fcf1cb70659c9b39b0b7d9f3168e2d894b16a0b3 \
+  --candidate-revision=11b1fdec1d56282237bd068f798fa139a66deb19 \
+  --native-policy=per-arm \
+  --pairs=30 --warmups=3 --max-load=30 \
+  --output-dir=<append-only-output>
+```
+
+Vorher beide Native-SHAs und `ps -C bun` prüfen. `per-arm` ist hier erforderlich, weil genau
+die native C9-Implementierung verglichen wird; für TypeScript-only-Vergleiche bleibt die
+Defaultpolicy `identical` zwingend.
+
+### 10.8 Paket-/Portabilitätsabschluss
 
 ```bash
 bun run build:lib
@@ -603,6 +672,44 @@ Rohdatenpfad:
 Reportpfad:
 ```
 
+### 11.1 C9-Abnahme 2026-08-18
+
+```text
+Datum/Run-ID: 2026-08-18 / wave3-c9-native-final-runs
+Candidate-Branch/Worktree: yesloop/wave3-textbuffer-tail / .worktrees/wave3-textbuffer-tail
+Candidate-Commit: 11b1fdec1d56282237bd068f798fa139a66deb19
+Vergleichscommit und Worktree: fcf1cb70659c9b39b0b7d9f3168e2d894b16a0b3 / .worktrees/wave3-consumer-bridge
+OpenTUI-Version/git describe: 0.5.3 / v0.5.3-98-g11b1fdec
+Bun/Node/Zig: 1.3.14 / 26.4.0 funktional (Messhost process v24.3.0) / 0.16.0
+Native-SHA: baseline e7e9764462f2… / candidate deacf8067c00…
+Load vorher-nachher: 6.45/7.62/7.81 -> 12.93/9.73/8.56
+Andere Bun-Prozesse: keine beim Gate-Start
+Gitstatus beider Messarme: clean
+Szenario: 80x24, TypeScript 1.000 Zeilen cold sowie 1.000 + 100 monotone Same-turn-Appends
+Paare/Warmups/Bootstrap: 30 je Szenario / 3 je Arm und Szenario / 20.000
+
+W3-02/03: PASS, deterministische Queue-/Stale-/Finaloutput-Gates
+W3-04: unverändert; isolierter C3-Gate bleibt maßgeblich
+W3-05 Wall: PASS; pure Mainthread-CPU und Rolling-Memory UNCLEAR
+W3-06 C9: PASS auf eigenem Branch
+
+Cold Update→styled Commit: candidate 439.579/550.660/601.198 ms p50/p95/p99;
+  paired -59.43 %, familywise CI -61.31…-57.23 %
+Warm Update→styled Commit: candidate 105.486/167.311/175.709 ms p50/p95/p99;
+  paired -87.58 %, familywise CI -88.71…-86.29 %
+Output-/Style-/Link-Parität: PASS, alle Frame-/Span-/Chunk-Digests identisch
+Heap/Handles/Listener/Timer/Worker: fokussierte Ownership-/Bound-Tests PASS; Rolling-10k offen
+Tests: 5.612 JS-Passes vor finalem Snapshot-Refactor; danach 155 fokussiert PASS, 1 Skip;
+  native 2.009 PASS/8 Skip; packed Dist PASS; Root-Build PASS; Lint 0/0
+Node Source: Baseline und Candidate identische 7 bekannte Adapter-/Boolean-Testfehler
+Fmt: geänderte Dateien PASS; globaler Check in beiden Armen am geerbten
+  .yesmem/wave3-integration-results.md-Format blocker
+
+Gesamturteil: C9 PASS; gesamtes Wave 3 UNCLEAR bis Mainthread-CPU und Rolling-Memory grün
+Rohdatenpfad: .yesmem/bench/wave3-c9-native-final-runs-2026-08-18/raw.ndjson
+Reportpfad: .yesmem/bench/wave3-c9-native-final-runs-2026-08-18/report.md
+```
+
 ## 12. Evidenzindex
 
 - Fastpatch-Codeanalyse: `.yesmem/ptomanalyse.md` im Repository-Hauptworktree
@@ -619,6 +726,8 @@ Reportpfad:
   `.yesmem/bench/wave3-loop-c/`
 - Wave 3 Chunk-Sweep: `.yesmem/wave3-loop-d-chunk-results.md` und
   `.yesmem/bench/wave3-loop-d/`
+- Wave 3 C9 Real-Worker/native A/B:
+  `.yesmem/bench/wave3-c9-native-final-runs-2026-08-18/`
 - Wave-3-Implementierungsvertrag:
   `.yesmem/plan/2026-08-17-wave3-parallel-agent-implementation.md` am Plancommit `82ee8b99`
 
