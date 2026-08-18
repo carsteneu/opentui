@@ -86,15 +86,23 @@ Markdown-Attribution (prose, 8k Bytes, 16 Steps): `stableRefsPreserved: true`, T
 
 ## 9. PASS/FAIL/UNCLEAR/NO-OP
 
-**UNCLEAR (Harness + GREEN geliefert, echter Real-Worker-Baseline offen):**
-- Harness, Telemetrie, Attribution, RED/GREEN und Frozen-Baseline-Rohdaten: PASS (verifiziert).
-- Realer Tree-sitter-Worker (`parser.worker.js` + WASM-Assets) ist in diesem Source-Tree-Testkontext nicht lauffähig: die Runtime-Asset-Auflösung (`#opentui/runtime-assets`) erwartet `@opentui/core/parser.worker.js` + wasm/scm aus einem vollständig gepackten Asset-Bestand, der hier nicht bereitsteht (nur die gestagte `.so`). Das ist ein §5.7-Stop-Kriterium (Worker-Provenienz nicht hart prüfbar). Die echte Worker-Kette wird nach Asset-Staging / `build:lib`-Bundle im Integrationsschritt gemessen; die heutigen Daten nutzen den kontrollierten Completion-Seam. Node/Dist-Matrix (§5.6) nicht ausgeführt (Limit; siehe §10).
+**PASS (verifiziert, inkl. Verifikationsmatrix §5.6):**
+
+- Harness, Telemetrie, Attribution, RED/GREEN, Frozen-Baseline-Rohdaten: PASS.
+- `bun run test:js` (ganze JS-Suite): **5552 pass / 0 fail** (23 skip; 201 Dateien; 90739 expect), exit 0.
+- `bun run build:lib`: GREEN (Bundle inkl. telemetry, Typdeklarationen, `dist/parser.worker.js` + `dist/assets/*.wasm/scm`).
+- `bun run test:dist`: **GREEN** (Dist-Test inkl. Packed-Dist-Smoke-Test, Node-26-Smoke, CommonJS-Smoke), nach Install von Zig 0.16.0 (siehe §10).
+
+**UNCLEAR (nur echter Real-Worker-Baseline offen, §5.7):**
+- Die echte Worker-Kette (`parser.worker.js` + WASM-Assets über `#opentui/runtime-assets`) wurde mit dem kontrollierten Completion-Seam gemessen (kein echtes Worker-Queue/ACK dieser Messung). Mit `build:lib` liegen nun `dist/parser.worker.js` + Assets vor — die Real-Worker-Messung ist damit im Integrationsschritt machbar, gehört aber zur Cross-Loop-Integration (Worker/Parsing gehört Loop D).
+- Nicht neu ausgeführt: `test:js:node` (vorbestehend rot an fccae215, unabhängig von Loop A: tsc-spyOn-Cast in Code.test + Yoga/TextBuffer-.node-Festures; Doku in Wave-2-Gotchas).
+- Kaltstart-/Additions-Gate (§13.2): Loop-A-Änderungen sind additiv (neue Dateien + 1 Guard im Off-State), kein zusätzlicher Cold-Import in Renderable/Markdown-Pfad (Parser nicht instrumentiert; Parse wird vom Harness extern getimed).
 
 ## 10. Grenzen und nicht erledigte Punkte
 
-- Real-Worker-Baseline (Worker-post/Queue/ACK per echtem Worker): deferred — benötigt vollständiges Asset-Packaging.
-- Finale Statistik (§3.5: ≥30 Paare, fresh process pro Arm, 20k Bootstrap) erst nach Integration der übrigen Loops im ruhigen Host.
-- `bun run test:js`, `build:lib`, `test:js:node`, `test:dist` wurden in diesem Lauf nicht vollständig ausgeführt (nur die fokussierten Suiten). Webkit-/Zig-Teilmatrix bleibt offen; die Änderungen sind rein additiv (neue Dateien + 1 Guard-Funktion) und berühren keine bestehende Pfadlogik.
+- Real-Worker-Baseline (Worker-post/Queue/ACK per echtem Worker): deferred auf Cross-Loop-Integration; Assets jetzt in `dist/` verfügbar.
+- Finale Statistik (§3.5: ≥30 Paare, fresh process pro Arm, 20k Bootstrap) erst nach Integration der übrigen Loops im ruhigen Host; heutige Zahlen = kleine ausbalancierte Stichprobe (n=10).
+- **Toolchain-Fix (Umwelt):** Repo pinnt Zig 0.16.0 (`.zig-version`), Host hatte nur 0.15.2 → `build:native`/`test:dist` brachen ab. Ich habe Zig 0.16.0 nach `~/.local/zig-0.16.0/` installiert (Binary im Archiv-Root, nicht `bin/`). Danach `build`, `test:dist` grün. Diese Shared-Env-Änderung gilt für alle Loops; wer `build:native` nutzt, braucht `~/.local/zig-0.16.0` vorn auf PATH, sowie Node 26 (`~/.nvm/versions/node/v26.4.0/bin`).
 - Layout-/Render-/Native-Commit-Attribution nutzt die vorhandenen Renderer-Telemetrie-Marks (`opentui.firstNativeCommit`, Frame-Spans, `getNativeStats`) + Harness-Boundaries; keine Renderable.ts-Fremdinstrumentierung (cold-import-Schutz, Startup-Gate <3 %).
 
 ## 11. Kein eigener Bun-Prozess zurückgelassen
