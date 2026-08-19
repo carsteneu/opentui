@@ -53,7 +53,11 @@
     "bench:wave3": "bun src/benchmark/wave3-harness.test.ts",
     "bench:wave3:baseline": "bun scripts/wave3-baseline.ts",
     "bench:wave3:clean-gate": "bun scripts/wave3-clean-gate.ts",
-    "bench:wave3:render-scaling": "bun scripts/wave3-render-scaling.ts"
+    "bench:wave3:render-scaling": "bun scripts/wave3-render-scaling.ts",
+    "bench:wave3:cpu-gate": "bun scripts/wave3-clean-gate-cpu.ts",
+    "bench:wave3:startup-gate": "bun scripts/wave3-startup-gate.ts",
+    "test:wave3:cpu": "bun test src/benchmark/wave3-cpu-harness.test.ts scripts/wave3-clean-gate-cpu.test.ts",
+    "test:wave3:startup": "bun test scripts/wave3-startup-gate.test.ts"
   },
   "license": "MIT",
   "devDependencies": {
