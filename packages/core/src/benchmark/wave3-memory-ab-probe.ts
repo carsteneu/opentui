@@ -41,7 +41,10 @@ function makeTsContent(lines: number): string {
   for (let i = 0; i < lines; i++) {
     const variant = i % 3
     if (variant === 0) out.push(`const item${i} = { id: ${i}, name: "item_${i % 7}", qty: ${i * 2} }`)
-    else if (variant === 1) out.push(`function process_${i}(${i % 5 > 0 ? "entry" : "value"}: number): boolean { return entry${i % 5 > 0 ? ` + ${i}` : ""} > ${i}; }`)
+    else if (variant === 1)
+      out.push(
+        `function process_${i}(${i % 5 > 0 ? "entry" : "value"}: number): boolean { return entry${i % 5 > 0 ? ` + ${i}` : ""} > ${i}; }`,
+      )
     else out.push(`// handle id ${i} case for rolling ab probe`)
   }
   return out.join("\n")
@@ -51,7 +54,9 @@ function rollingShift(content: string, offset: number): string {
   const lines = content.split("\n")
   lines.shift()
   lines.push(
-    offset % 2 === 0 ? `const r${offset} = { id: ${offset}, qty: ${offset + 1} }` : `function roll_${offset}(x: number): number { return x + ${offset}; }`,
+    offset % 2 === 0
+      ? `const r${offset} = { id: ${offset}, qty: ${offset + 1} }`
+      : `function roll_${offset}(x: number): number { return x + ${offset}; }`,
   )
   return lines.join("\n")
 }
@@ -120,7 +125,8 @@ async function main(): Promise<void> {
     const heapWindows: number[][] = []
     let mutation = 0
     for (; mutation < mutations; mutation++) {
-      code.content = mutation % 256 === 0 ? makeTsContent(windowLines) : rollingShift(fullContent, (mutation * 7) % windowLines)
+      code.content =
+        mutation % 256 === 0 ? makeTsContent(windowLines) : rollingShift(fullContent, (mutation * 7) % windowLines)
       if (mutation > 0 && mutation % settleEvery === 0) {
         await settle()
         if (doGc) forceGC()

@@ -112,8 +112,7 @@ async function run(): Promise<void> {
   console.log(`raw: ${join(outDir, "candidate-raw.json")}`)
 }
 
-run()
-  .catch((error) => {
-    console.error("wave3-memory-gate failed:", error)
-    process.exitCode = 1
-  })
+run().catch((error) => {
+  console.error("wave3-memory-gate failed:", error)
+  process.exitCode = 1
+})

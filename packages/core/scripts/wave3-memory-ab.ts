@@ -65,10 +65,7 @@ function main(): void {
   // Ensure the baseline arm carries the byte-identical measurement source.
   if (!existsSync(baselineProbe)) {
     copyFileSync(candidateProbe, baselineProbe)
-    copyFileSync(
-      join(CANDIDATE_ROOT, "packages/core/src/benchmark/wave3-memory-portable.ts"),
-      baselinePortable,
-    )
+    copyFileSync(join(CANDIDATE_ROOT, "packages/core/src/benchmark/wave3-memory-portable.ts"), baselinePortable)
   }
 
   mkdirSync(outDir, { recursive: true })
@@ -117,7 +114,11 @@ function main(): void {
     candidateRoot: CANDIDATE_ROOT,
     baselineRoot,
     params: { mutations, windowLines, settleEvery, gc, runs },
-    candidate: { revisions: candidateResults.map((r) => r.revision), eventLoopP99: p99Candidates, medP99: medCandidateP99 },
+    candidate: {
+      revisions: candidateResults.map((r) => r.revision),
+      eventLoopP99: p99Candidates,
+      medP99: medCandidateP99,
+    },
     baseline: { revisions: baselineResults.map((r) => r.revision), eventLoopP99: p99Baselines, medP99: medBaselineP99 },
     deltaPct: Number(deltaPct.toFixed(2)),
     gate: "GC-/Eventloop-p99 <= baseline * 1.05",
