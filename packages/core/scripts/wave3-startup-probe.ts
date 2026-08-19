@@ -55,7 +55,6 @@ async function main(): Promise<void> {
   }
 
   let ttfmMs: number | null = null
-  let nativeLoadedMs: number | null = null
   if (doRender) {
     const { createTestRenderer } = await import(join(src, "testing/test-renderer.js"))
     const { TextRenderable } = await import(join(src, "renderables/Text.js"))
@@ -66,7 +65,6 @@ async function main(): Promise<void> {
     setup.renderer.root.add(text)
     await setup.renderOnce()
     ttfmMs = performance.now() - t0
-    nativeLoadedMs = 0 // native load is integral to the cold start; no separate mark
     setup.renderer.destroy()
   }
 
@@ -80,7 +78,6 @@ async function main(): Promise<void> {
     nativeSha256: expectedNativeSha,
     importMs,
     ttfmMs,
-    nativeLoadedMs,
     correct: ttfmMs !== null ? ttfmMs > 0 : true,
   }
   process.stdout.write(`${RESULT_PREFIX}${JSON.stringify(result)}\n`)

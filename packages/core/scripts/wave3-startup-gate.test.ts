@@ -20,7 +20,6 @@ function probe(role: StartupProbeResult["role"], importMs: number, ttfmMs: numbe
     nativeSha256: role === "baseline" ? "bb" : "cc",
     importMs,
     ttfmMs,
-    nativeLoadedMs: 0,
     correct: true,
   }
 }

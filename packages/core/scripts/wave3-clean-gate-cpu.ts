@@ -352,7 +352,16 @@ async function main(): Promise<void> {
   }
 
   const startLoad = hostLoad()
-  const hostLoadExceeded = startLoad.one > maximumLoad
+  // Load is sampled continuously (start, after each warmup, after each pair);
+  // the PEAK decides UNCLEAR, so a run that becomes noisy mid-flight is never
+  // certified from a stale start (or end) snapshot.
+  let hostLoadExceeded = startLoad.one > maximumLoad
+  let peakLoadOne = startLoad.one
+  const sampleLoad = () => {
+    const current = hostLoad().one
+    if (current > peakLoadOne) peakLoadOne = current
+    if (current > maximumLoad) hostLoadExceeded = true
+  }
   const otherBuns = otherBunProcesses()
 
   mkdirSync(outputDir, { recursive: true })
@@ -388,6 +397,7 @@ async function main(): Promise<void> {
           role === "baseline" ? baselineNative : candidateNative,
           role === "baseline" ? baselineSha : candidateSha,
         )
+        sampleLoad()
       }
     }
   }
@@ -423,6 +433,7 @@ async function main(): Promise<void> {
     }
     rows.push(row)
     appendRaw({ kind: "pair", ...row })
+    sampleLoad()
   }
 
   const validated = buildCpuRows(rows)
@@ -444,6 +455,8 @@ async function main(): Promise<void> {
     return analysis.familywise.ci.upper <= 0.03 && analysis.p99Change <= 0.05
   }
   const verdict = classifyCpuGate({
+    // allSamplesValid/digestParity are guaranteed true here: buildCpuRows()
+    // already threw on any invalid sample or digest divergence above.
     hostLoadExceeded,
     allSamplesValid: true,
     digestParity: true,
@@ -467,14 +480,18 @@ async function main(): Promise<void> {
     `- protocol: ${pairs} balanced pairs, ${warmups} fresh-process warmups/arm/scenario, 20000 bootstrap samples`,
   )
   report.push(
-    `- load: start ${startLoad.one}/${startLoad.five}/${startLoad.fifteen}; end ${endLoad.one}/${endLoad.five}/${endLoad.fifteen}; hostLoadExceeded=${hostLoadExceeded}`,
+    `- load: start ${startLoad.one}/${startLoad.five}/${startLoad.fifteen}; peak ${peakLoadOne.toFixed(2)} (1-min); end ${endLoad.one}/${endLoad.five}/${endLoad.fifteen}; hostLoadExceeded=${hostLoadExceeded}`,
   )
   report.push("")
   report.push(
     "Measurement: disjoint main-thread stages (contentUpdate, workerPost, converter, safeAppend, textbuffer) via external seams; workerWait and workerCpu reported separately and excluded; updateToStyledCommitMs is the full wall time to the styled native commit.",
   )
   report.push("")
-  report.push("## Results (paired, familywise across 2 primary metrics)")
+  report.push("## Results (paired, familywise per scenario across its 2 primary metrics)")
+  report.push("")
+  report.push(
+    "Familywise control is applied per (scenario): the 2 primary metrics in a scenario share the Bonferroni-style /2 widening; the 2 scenarios are evaluated independently, so the effective comparison count is 4 (2 scenarios x 2 metrics).",
+  )
   report.push("")
   report.push(
     "| Scenario | Metric | Baseline p50/p95/p99 | Candidate p50/p95/p99 | Paired (95% CI) | Familywise upper | p99 change |",

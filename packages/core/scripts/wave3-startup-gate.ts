@@ -7,6 +7,9 @@ import { createPairedSchedule, type PairedOrder } from "../src/benchmark/ffi-fas
 
 export const WAVE3_STARTUP_GATE_SCHEMA_VERSION = 1
 const RESULT_PREFIX = "WAVE3_STARTUP_RESULT "
+// Familywise correction: 2 metrics (import, TTFMF) x 3 budgeted quantiles
+// (p50/p95/p99) = 6 simultaneous comparisons against the +3%/+5% budgets.
+const FAMILY_COMPARISONS = 6
 
 export interface StartupProbeResult {
   schemaVersion: number
@@ -18,7 +21,6 @@ export interface StartupProbeResult {
   nativeSha256: string
   importMs: number
   ttfmMs: number | null
-  nativeLoadedMs: number | null
   correct: boolean
 }
 
@@ -126,10 +128,10 @@ export function quantileChangeBootstrap(
   }
   samples.sort((a, b) => a - b)
   const tail = (1 - confidence) / 2
-  const familywiseTail = 1 - (1 - confidence) / 2
+  const upperTail = 1 - tail
   return {
     change: point,
-    ci: { lower: percentile(samples, tail), upper: percentile(samples, familywiseTail) },
+    ci: { lower: percentile(samples, tail), upper: percentile(samples, upperTail) },
   }
 }
 
@@ -298,7 +300,15 @@ async function main(): Promise<void> {
   const candidateEntry = pathToFileURL(join(candidateSrc, "renderer-entry.ts")).href
 
   const startLoad = hostLoad()
-  const hostLoadExceeded = startLoad.one > maximumLoad
+  // PEAK load decides UNCLEAR; sampled across warmups+pairs so a run that
+  // becomes noisy mid-flight is never certified from a stale start snapshot.
+  let hostLoadExceeded = startLoad.one > maximumLoad
+  let peakLoadOne = startLoad.one
+  const sampleLoad = () => {
+    const current = hostLoad().one
+    if (current > peakLoadOne) peakLoadOne = current
+    if (current > maximumLoad) hostLoadExceeded = true
+  }
 
   mkdirSync(outputDir, { recursive: true })
   const rawPath = join(outputDir, "startup-raw.ndjson")
@@ -365,6 +375,7 @@ async function main(): Promise<void> {
         role === "baseline" ? baselineNative : candidateNative,
         role === "baseline" ? baselineSha : candidateSha,
       )
+      sampleLoad()
     }
   }
 
@@ -399,20 +410,21 @@ async function main(): Promise<void> {
     }
     rows.push(row)
     appendRaw({ kind: "pair", ...row })
+    sampleLoad()
   }
   const validated = buildStartupPairs(rows)
   const endLoad = hostLoad()
   const enoughPairs = validated.length >= 10
 
-  const metricBudget = (pairsList: readonly StartupPair[], metric: "importMs" | "ttfmMs") => {
+  const metricBudget = (pairsList: readonly StartupPair[], metric: "importMs" | "ttfmMs", confidence: number) => {
     const obs = pairsList.map((p) => ({
       order: p.order,
       baseline: p.baseline[metric]!,
       candidate: p.candidate[metric]!,
     }))
-    const p50 = quantileChangeBootstrap(obs, 0.5, bootstrap, 0.95, 0xa1 + metric.length)
-    const p95 = quantileChangeBootstrap(obs, 0.95, bootstrap, 0.95, 0xb2 + metric.length)
-    const p99 = quantileChangeBootstrap(obs, 0.99, bootstrap, 0.95, 0xc3 + metric.length)
+    const p50 = quantileChangeBootstrap(obs, 0.5, bootstrap, confidence, 0xa1 + metric.length)
+    const p95 = quantileChangeBootstrap(obs, 0.95, bootstrap, confidence, 0xb2 + metric.length)
+    const p99 = quantileChangeBootstrap(obs, 0.99, bootstrap, confidence, 0xc3 + metric.length)
     return {
       p50: { change: p50.change, ci: p50.ci },
       p95: { change: p95.change, ci: p95.ci },
@@ -421,8 +433,9 @@ async function main(): Promise<void> {
     }
   }
 
-  const importMs = metricBudget(validated, "importMs")
-  const ttfmMs = metricBudget(validated, "ttfmMs")
+  const familywiseConfidence = 1 - 0.05 / FAMILY_COMPARISONS
+  const importMs = metricBudget(validated, "importMs", familywiseConfidence)
+  const ttfmMs = metricBudget(validated, "ttfmMs", familywiseConfidence)
   const baselineImport = summarize(validated.map((p) => p.baseline.importMs))
   const candidateImport = summarize(validated.map((p) => p.candidate.importMs))
   const baselineTtfm = summarize(validated.map((p) => p.baseline.ttfmMs!))
@@ -448,7 +461,10 @@ async function main(): Promise<void> {
     `- Bun: ${Bun.version}; protocol: ${validated.length} balanced pairs, ${warmups} warmups, ${bootstrap} bootstrap samples`,
   )
   report.push(
-    `- load: start ${startLoad.one}/${startLoad.five}/${startLoad.fifteen}; end ${endLoad.one}/${endLoad.five}/${endLoad.fifteen}; hostLoadExceeded=${hostLoadExceeded}`,
+    `- load: start ${startLoad.one}/${startLoad.five}/${startLoad.fifteen}; peak ${peakLoadOne.toFixed(2)} (1-min); end ${endLoad.one}/${endLoad.five}/${endLoad.fifteen}; hostLoadExceeded=${hostLoadExceeded}`,
+  )
+  report.push(
+    `- CIs are familywise-corrected across ${FAMILY_COMPARISONS} comparisons (2 metrics x p50/p95/p99), alpha=0.05: confidence ${(familywiseConfidence * 100).toFixed(2)}% per comparison (Bonferroni-style /6).`,
   )
   report.push("")
   report.push(
