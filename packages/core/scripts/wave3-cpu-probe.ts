@@ -22,7 +22,11 @@ import { tmpdir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { makeCodeContent, makeWarmAppendWorkload } from "./wave3-real-worker-workload.js"
-import { buildDisjointStages, computeMainThreadSum, classifyWave3CpuResult } from "../src/benchmark/wave3-cpu-harness.js"
+import {
+  buildDisjointStages,
+  computeMainThreadSum,
+  classifyWave3CpuResult,
+} from "../src/benchmark/wave3-cpu-harness.js"
 import type { Wave3CpuStageSpan } from "../src/benchmark/wave3-cpu-harness.js"
 
 const RESULT_PREFIX = "WAVE3_CPU_RESULT "
@@ -42,7 +46,13 @@ interface CpuProbeResult {
   updateToStyledCommitMs: number
   styledVerified: boolean
   nativeFrameDelta: number
-  counts: { cellsUpdated: number; highlightCount: number; chunkCount: number; setStyledCalls: number; appendStyledCalls: number }
+  counts: {
+    cellsUpdated: number
+    highlightCount: number
+    chunkCount: number
+    setStyledCalls: number
+    appendStyledCalls: number
+  }
   correctness: { frameSha256: string; spansSha256: string; chunksSha256: string; finalMarkerVisible: boolean }
   verdict: "PASS" | "FAIL" | "UNCLEAR"
 }
@@ -331,7 +341,9 @@ async function main(): Promise<void> {
       verdict: classification.verdict,
     }
 
-    process.stdout.write(`WAVE3_CPU_DIAGNOSTIC ${JSON.stringify({ textBufferWriteMs, bufferWriteSamples, classification })}\n`)
+    process.stdout.write(
+      `WAVE3_CPU_DIAGNOSTIC ${JSON.stringify({ textBufferWriteMs, bufferWriteSamples, classification })}\n`,
+    )
     process.stdout.write(`WAVE3_WORKER_PERFORMANCE ${JSON.stringify(workerPerf)}\n`)
     process.stdout.write(`${RESULT_PREFIX}${JSON.stringify(result)}\n`)
   } finally {

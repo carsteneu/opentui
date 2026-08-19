@@ -175,12 +175,6 @@ describe("wave3 cpu harness: classification", () => {
 
 describe("wave3 cpu harness: stage order contract", () => {
   test("canonical order covers the five main-thread stages exactly once", () => {
-    expect(WAVE3_CPU_STAGE_ORDER).toEqual([
-      "contentUpdate",
-      "workerPost",
-      "converter",
-      "safeAppend",
-      "textbuffer",
-    ])
+    expect(WAVE3_CPU_STAGE_ORDER).toEqual(["contentUpdate", "workerPost", "converter", "safeAppend", "textbuffer"])
   })
 })

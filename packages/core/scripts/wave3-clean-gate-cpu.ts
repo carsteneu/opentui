@@ -8,7 +8,11 @@ import {
   type PairedObservation,
   type PairedOrder,
 } from "../src/benchmark/ffi-fast-path-paired-analysis.js"
-import { buildDisjointStages, computeMainThreadSum, type Wave3CpuStageSpan } from "../src/benchmark/wave3-cpu-harness.js"
+import {
+  buildDisjointStages,
+  computeMainThreadSum,
+  type Wave3CpuStageSpan,
+} from "../src/benchmark/wave3-cpu-harness.js"
 
 export const WAVE3_CLEAN_GATE_CPU_SCHEMA_VERSION = 1
 const PROBE_RESULT_PREFIX = "WAVE3_CPU_RESULT "
@@ -33,7 +37,13 @@ export interface CpuProbeResult {
   updateToStyledCommitMs: number
   styledVerified: boolean
   nativeFrameDelta: number
-  counts: { cellsUpdated: number; highlightCount: number; chunkCount: number; setStyledCalls: number; appendStyledCalls: number }
+  counts: {
+    cellsUpdated: number
+    highlightCount: number
+    chunkCount: number
+    setStyledCalls: number
+    appendStyledCalls: number
+  }
   correctness: { frameSha256: string; spansSha256: string; chunksSha256: string; finalMarkerVisible: boolean }
   verdict: "PASS" | "FAIL" | "UNCLEAR"
 }
@@ -151,7 +161,11 @@ export interface CpuScenarioMetricAnalysis {
   p99Change: number
 }
 
-export function computeCpuAnalyses(rows: CpuPairRow[], scenario: CpuScenario, metric: CpuMetric): CpuScenarioMetricAnalysis {
+export function computeCpuAnalyses(
+  rows: CpuPairRow[],
+  scenario: CpuScenario,
+  metric: CpuMetric,
+): CpuScenarioMetricAnalysis {
   const baseline = summarize(rows.filter((row) => row.scenario === scenario).map((row) => row.baseline[metric]))
   const candidate = summarize(rows.filter((row) => row.scenario === scenario).map((row) => row.candidate[metric]))
   const nominal = analysisFor(rows, scenario, metric, 0.95)
@@ -223,7 +237,8 @@ function numberArg(name: string, fallback: number, minimum: number): number {
 function run(root: string, command: string, args: string[]): string {
   const child = spawnSync(command, args, { cwd: root, encoding: "utf8", env: { ...process.env, OTUI_ASSET_ROOT: "" } })
   if (child.error) throw child.error
-  if (child.status !== 0) throw new Error(`${command} ${args.join(" ")} failed in ${root}:\n${child.stderr}\n${child.stdout}`)
+  if (child.status !== 0)
+    throw new Error(`${command} ${args.join(" ")} failed in ${root}:\n${child.stderr}\n${child.stdout}`)
   return child.stdout.trim()
 }
 
@@ -238,7 +253,12 @@ function sha256File(path: string): string {
 function nativeArtifact(root: string): string {
   const target = `${process.platform}-${process.arch}`
   const libc = process.env.OPENTUI_LIBC === "musl" ? "-musl" : ""
-  const filename = process.platform === "win32" ? "libopentui.dll" : process.platform === "darwin" ? "libopentui.dylib" : "libopentui.so"
+  const filename =
+    process.platform === "win32"
+      ? "libopentui.dll"
+      : process.platform === "darwin"
+        ? "libopentui.dylib"
+        : "libopentui.so"
   const path = join(root, "packages/core/node_modules", `@opentui/core-${target}${libc}`, filename)
   if (!existsSyncSafe(path)) throw new Error(`missing native artifact: ${path}`)
   return path
@@ -443,14 +463,22 @@ async function main(): Promise<void> {
   report.push(`- candidate: \`${candidateHead}\` (${candidateRoot})`)
   report.push(`- native policy: per-arm (baseline \`${baselineSha}\`, candidate \`${candidateSha}\`)`)
   report.push(`- Bun: ${Bun.version}; probe node: ${process.version}`)
-  report.push(`- protocol: ${pairs} balanced pairs, ${warmups} fresh-process warmups/arm/scenario, 20000 bootstrap samples`)
-  report.push(`- load: start ${startLoad.one}/${startLoad.five}/${startLoad.fifteen}; end ${endLoad.one}/${endLoad.five}/${endLoad.fifteen}; hostLoadExceeded=${hostLoadExceeded}`)
+  report.push(
+    `- protocol: ${pairs} balanced pairs, ${warmups} fresh-process warmups/arm/scenario, 20000 bootstrap samples`,
+  )
+  report.push(
+    `- load: start ${startLoad.one}/${startLoad.five}/${startLoad.fifteen}; end ${endLoad.one}/${endLoad.five}/${endLoad.fifteen}; hostLoadExceeded=${hostLoadExceeded}`,
+  )
   report.push("")
-  report.push("Measurement: disjoint main-thread stages (contentUpdate, workerPost, converter, safeAppend, textbuffer) via external seams; workerWait and workerCpu reported separately and excluded; updateToStyledCommitMs is the full wall time to the styled native commit.")
+  report.push(
+    "Measurement: disjoint main-thread stages (contentUpdate, workerPost, converter, safeAppend, textbuffer) via external seams; workerWait and workerCpu reported separately and excluded; updateToStyledCommitMs is the full wall time to the styled native commit.",
+  )
   report.push("")
   report.push("## Results (paired, familywise across 2 primary metrics)")
   report.push("")
-  report.push("| Scenario | Metric | Baseline p50/p95/p99 | Candidate p50/p95/p99 | Paired (95% CI) | Familywise upper | p99 change |")
+  report.push(
+    "| Scenario | Metric | Baseline p50/p95/p99 | Candidate p50/p95/p99 | Paired (95% CI) | Familywise upper | p99 change |",
+  )
   report.push("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
   for (const a of allAnalyses) {
     report.push(
@@ -460,17 +488,27 @@ async function main(): Promise<void> {
   report.push("")
   report.push("## Worker (separate, not in main-thread sum)")
   report.push("")
-  report.push(`- workerWait baseline p50/p95/p99: ${formatMs(workerWaitBaseline.p50)} / ${formatMs(workerWaitBaseline.p95)} / ${formatMs(workerWaitBaseline.p99)}`)
-  report.push(`- workerWait candidate p50/p95/p99: ${formatMs(workerWaitCandidate.p50)} / ${formatMs(workerWaitCandidate.p95)} / ${formatMs(workerWaitCandidate.p99)}`)
+  report.push(
+    `- workerWait baseline p50/p95/p99: ${formatMs(workerWaitBaseline.p50)} / ${formatMs(workerWaitBaseline.p95)} / ${formatMs(workerWaitBaseline.p99)}`,
+  )
+  report.push(
+    `- workerWait candidate p50/p95/p99: ${formatMs(workerWaitCandidate.p50)} / ${formatMs(workerWaitCandidate.p95)} / ${formatMs(workerWaitCandidate.p99)}`,
+  )
   report.push(`- workerCpu baseline median ~ ${formatMs(workerCpuBaseline.p50)} (streaming path diagnostic)`)
   report.push(`- workerCpu candidate median ~ ${formatMs(workerCpuCandidate.p50)} (streaming path diagnostic)`)
   report.push("")
   report.push("## Verdict")
   report.push("")
-  report.push(`- measurement validity (disjoint, worker-excluded, styled native commit): **PASS** (every sample PASS, digests identical)`)
-  report.push(`- regression safety (familywise upper <= +3% and p99 <= +5%): **${verdict === "PASS" ? "PASS" : verdict}**`)
+  report.push(
+    `- measurement validity (disjoint, worker-excluded, styled native commit): **PASS** (every sample PASS, digests identical)`,
+  )
+  report.push(
+    `- regression safety (familywise upper <= +3% and p99 <= +5%): **${verdict === "PASS" ? "PASS" : verdict}**`,
+  )
   const bestImprovement = primaryCandidates.length ? Math.min(...primaryCandidates) : 0
-  report.push(`- Wave-3 -30% primary target (familywise upper <= -30%): **${bestImprovement <= -0.3 ? "PASS" : "NOT MET in isolated Loop B"}** (partial main-thread sum; full claim requires B+D integration: layout.render/native.commit spans live in Loop D)`)
+  report.push(
+    `- Wave-3 -30% primary target (familywise upper <= -30%): **${bestImprovement <= -0.3 ? "PASS" : "NOT MET in isolated Loop B"}** (partial main-thread sum; full claim requires B+D integration: layout.render/native.commit spans live in Loop D)`,
+  )
   report.push(`- gate result: **${verdict}**`)
   writeFileSync(reportPath, report.join("\n") + "\n")
   appendRaw({ kind: "verdict", verdict, bestImprovement, regressionSafeOverall: verdict === "PASS" })

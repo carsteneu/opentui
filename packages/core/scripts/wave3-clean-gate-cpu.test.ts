@@ -8,7 +8,9 @@ import {
   type CpuProbeResult,
 } from "./wave3-clean-gate-cpu.js"
 
-function probe(overrides: Partial<CpuProbeResult> & { role: CpuProbeResult["role"] } = { role: "candidate" }): CpuProbeResult {
+function probe(
+  overrides: Partial<CpuProbeResult> & { role: CpuProbeResult["role"] } = { role: "candidate" },
+): CpuProbeResult {
   return {
     schemaVersion: 1,
     role: "candidate",
@@ -133,12 +135,25 @@ describe("assertCpuProbeValid", () => {
 describe("buildCpuRows / computeCpuAnalyses", () => {
   test("computes paired per-scenario analyses and rejects digest divergence", () => {
     const baseline = slowProbe("baseline")
-    const candidate = probe({ role: "candidate", correctness: {
-      frameSha256: "f", spansSha256: "s", chunksSha256: "c", finalMarkerVisible: true,
-    } })
+    const candidate = probe({
+      role: "candidate",
+      correctness: {
+        frameSha256: "f",
+        spansSha256: "s",
+        chunksSha256: "c",
+        finalMarkerVisible: true,
+      },
+    })
     const rows = buildCpuRows([
       { pair: 0, order: "baseline-first", scenario: "cold-1000", gapMs: 1, baseline, candidate },
-      { pair: 1, order: "candidate-first", scenario: "cold-1000", gapMs: 1, baseline: slowProbe("baseline"), candidate: probe({ role: "candidate" }) },
+      {
+        pair: 1,
+        order: "candidate-first",
+        scenario: "cold-1000",
+        gapMs: 1,
+        baseline: slowProbe("baseline"),
+        candidate: probe({ role: "candidate" }),
+      },
     ])
     expect(rows.length).toBe(2)
     const analysis = computeCpuAnalyses(rows, "cold-1000", "mainThreadSumMs")
@@ -150,13 +165,17 @@ describe("buildCpuRows / computeCpuAnalyses", () => {
 
   test("throws when baseline and candidate output digests diverge", () => {
     const baseline = slowProbe("baseline")
-    const candidate = probe({ role: "candidate", correctness: {
-      frameSha256: "DIFFERENT", spansSha256: "s", chunksSha256: "c", finalMarkerVisible: true,
-    } })
+    const candidate = probe({
+      role: "candidate",
+      correctness: {
+        frameSha256: "DIFFERENT",
+        spansSha256: "s",
+        chunksSha256: "c",
+        finalMarkerVisible: true,
+      },
+    })
     expect(() =>
-      buildCpuRows([
-        { pair: 0, order: "baseline-first", scenario: "cold-1000", gapMs: 1, baseline, candidate },
-      ]),
+      buildCpuRows([{ pair: 0, order: "baseline-first", scenario: "cold-1000", gapMs: 1, baseline, candidate }]),
     ).toThrow(/parity failed/)
   })
 })
@@ -173,11 +192,43 @@ describe("classifyCpuGate", () => {
     expect(verdict).toBe("PASS")
   })
   test("FAIL when samples are invalid, digests differ, or regression is detected", () => {
-    expect(classifyCpuGate({ hostLoadExceeded: false, allSamplesValid: false, digestParity: true, scenarios: ["cold-1000"], regressionSafe: () => true })).toBe("FAIL")
-    expect(classifyCpuGate({ hostLoadExceeded: false, allSamplesValid: true, digestParity: false, scenarios: ["cold-1000"], regressionSafe: () => true })).toBe("FAIL")
-    expect(classifyCpuGate({ hostLoadExceeded: false, allSamplesValid: true, digestParity: true, scenarios: ["cold-1000"], regressionSafe: () => false })).toBe("FAIL")
+    expect(
+      classifyCpuGate({
+        hostLoadExceeded: false,
+        allSamplesValid: false,
+        digestParity: true,
+        scenarios: ["cold-1000"],
+        regressionSafe: () => true,
+      }),
+    ).toBe("FAIL")
+    expect(
+      classifyCpuGate({
+        hostLoadExceeded: false,
+        allSamplesValid: true,
+        digestParity: false,
+        scenarios: ["cold-1000"],
+        regressionSafe: () => true,
+      }),
+    ).toBe("FAIL")
+    expect(
+      classifyCpuGate({
+        hostLoadExceeded: false,
+        allSamplesValid: true,
+        digestParity: true,
+        scenarios: ["cold-1000"],
+        regressionSafe: () => false,
+      }),
+    ).toBe("FAIL")
   })
   test("UNCLEAR when host load budget was exceeded", () => {
-    expect(classifyCpuGate({ hostLoadExceeded: true, allSamplesValid: true, digestParity: true, scenarios: ["cold-1000"], regressionSafe: () => true })).toBe("UNCLEAR")
+    expect(
+      classifyCpuGate({
+        hostLoadExceeded: true,
+        allSamplesValid: true,
+        digestParity: true,
+        scenarios: ["cold-1000"],
+        regressionSafe: () => true,
+      }),
+    ).toBe("UNCLEAR")
   })
 })

@@ -53,22 +53,31 @@ function percentile(sortedValues: readonly number[], probability: number): numbe
 export function summarize(values: readonly number[]) {
   if (values.length === 0) throw new Error("cannot summarize an empty sample")
   const sorted = [...values].sort((left, right) => left - right)
-  return { n: sorted.length, p50: percentile(sorted, 0.5), p95: percentile(sorted, 0.95), p99: percentile(sorted, 0.99) }
+  return {
+    n: sorted.length,
+    p50: percentile(sorted, 0.5),
+    p95: percentile(sorted, 0.95),
+    p99: percentile(sorted, 0.99),
+  }
 }
 
-export function parseStartupProbeOutput(output: string, expected: {
-  role: StartupProbeResult["role"]
-  root: string
-  revision: string
-  scenario: string
-  nativeSha256: string
-}): StartupProbeResult {
+export function parseStartupProbeOutput(
+  output: string,
+  expected: {
+    role: StartupProbeResult["role"]
+    root: string
+    revision: string
+    scenario: string
+    nativeSha256: string
+  },
+): StartupProbeResult {
   const line = output.split(/\r?\n/).findLast((l) => l.startsWith(RESULT_PREFIX))
   if (!line) throw new Error("startup probe output is missing WAVE3_STARTUP_RESULT")
   const result = JSON.parse(line.slice(RESULT_PREFIX.length)) as StartupProbeResult
   if (result.schemaVersion !== WAVE3_STARTUP_GATE_SCHEMA_VERSION) throw new Error("startup probe schema mismatch")
   for (const key of ["role", "root", "revision", "scenario", "nativeSha256"] as const) {
-    if (result[key] !== expected[key]) throw new Error(`startup probe ${key} mismatch: ${result[key]} != ${expected[key]}`)
+    if (result[key] !== expected[key])
+      throw new Error(`startup probe ${key} mismatch: ${result[key]} != ${expected[key]}`)
   }
   if (!result.correct) throw new Error("startup probe did not produce a valid TTFMF")
   if (!Number.isFinite(result.importMs) || result.importMs < 0) throw new Error("invalid importMs")
@@ -78,7 +87,10 @@ export function parseStartupProbeOutput(output: string, expected: {
 
 export function buildStartupPairs(rows: readonly StartupPair[]): StartupPair[] {
   for (const row of rows) {
-    for (const [name, sample] of [["baseline", row.baseline], ["candidate", row.candidate]] as const) {
+    for (const [name, sample] of [
+      ["baseline", row.baseline],
+      ["candidate", row.candidate],
+    ] as const) {
       if (!sample.correct) throw new Error(`${row.pair} ${name} startup probe not correct`)
     }
   }
@@ -109,15 +121,12 @@ export function quantileChangeBootstrap(
   const random = mulberry32(seed)
   const samples = new Array<number>(bootstrapSamples)
   for (let b = 0; b < bootstrapSamples; b++) {
-    const resampled = [
-      ...resample(baselineFirst, random),
-      ...resample(candidateFirst, random),
-    ]
+    const resampled = [...resample(baselineFirst, random), ...resample(candidateFirst, random)]
     samples[b] = ratioAtQuantile(resampled, q)
   }
   samples.sort((a, b) => a - b)
   const tail = (1 - confidence) / 2
-  const familywiseTail = (1 - (1 - confidence) / 2)
+  const familywiseTail = 1 - (1 - confidence) / 2
   return {
     change: point,
     ci: { lower: percentile(samples, tail), upper: percentile(samples, familywiseTail) },
@@ -195,7 +204,8 @@ function numberArg(name: string, fallback: number, minimum: number): number {
 function run(root: string, command: string, args: string[]): string {
   const child = spawnSync(command, args, { cwd: root, encoding: "utf8", env: { ...process.env, OTUI_ASSET_ROOT: "" } })
   if (child.error) throw child.error
-  if (child.status !== 0) throw new Error(`${command} ${args.join(" ")} failed in ${root}:\n${child.stderr}\n${child.stdout}`)
+  if (child.status !== 0)
+    throw new Error(`${command} ${args.join(" ")} failed in ${root}:\n${child.stderr}\n${child.stdout}`)
   return child.stdout.trim()
 }
 
@@ -210,7 +220,12 @@ function sha256File(path: string): string {
 function nativeArtifact(root: string): string {
   const target = `${process.platform}-${process.arch}`
   const libc = process.env.OPENTUI_LIBC === "musl" ? "-musl" : ""
-  const filename = process.platform === "win32" ? "libopentui.dll" : process.platform === "darwin" ? "libopentui.dylib" : "libopentui.so"
+  const filename =
+    process.platform === "win32"
+      ? "libopentui.dll"
+      : process.platform === "darwin"
+        ? "libopentui.dylib"
+        : "libopentui.so"
   const path = join(root, "packages/core/node_modules", `@opentui/core-${target}${libc}`, filename)
   if (!existsSyncSafe(path)) throw new Error(`missing native artifact: ${path}`)
   return path
@@ -234,7 +249,11 @@ function otherBunProcesses(): string[] {
   const child = spawnSync("ps", ["-C", "bun", "-o", "pid=,args="], { encoding: "utf8" })
   if (child.error) throw child.error
   if (child.status !== 0 && child.status !== 1) throw new Error(`ps -C bun failed: ${child.stderr}`)
-  return child.stdout.trim().split(/\r?\n/).filter(Boolean).filter((l) => Number(l.trim().split(/\s+/, 1)[0]) !== process.pid)
+  return child.stdout
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .filter((l) => Number(l.trim().split(/\s+/, 1)[0]) !== process.pid)
 }
 
 function formatMs(value: number): string {
@@ -285,9 +304,29 @@ async function main(): Promise<void> {
   const rawPath = join(outputDir, "startup-raw.ndjson")
   const reportPath = join(outputDir, "startup-report.md")
   const appendRaw = (v: unknown) => appendFileSync(rawPath, `${JSON.stringify(v)}\n`)
-  appendRaw({ kind: "header", schemaVersion: WAVE3_STARTUP_GATE_SCHEMA_VERSION, date: new Date().toISOString(), baseline: { root: baselineRoot, revision: baselineHead, nativeSha256: baselineSha }, candidate: { root: candidateRoot, revision: candidateHead, nativeSha256: candidateSha }, bun: Bun.version, pairs, warmups, bootstrap, startLoad, hostLoadExceeded })
+  appendRaw({
+    kind: "header",
+    schemaVersion: WAVE3_STARTUP_GATE_SCHEMA_VERSION,
+    date: new Date().toISOString(),
+    baseline: { root: baselineRoot, revision: baselineHead, nativeSha256: baselineSha },
+    candidate: { root: candidateRoot, revision: candidateHead, nativeSha256: candidateSha },
+    bun: Bun.version,
+    pairs,
+    warmups,
+    bootstrap,
+    startLoad,
+    hostLoadExceeded,
+  })
 
-  const runProbe = (role: "baseline" | "candidate", root: string, revision: string, entry: string, src: string, nativePath: string, nativeSha: string): StartupProbeResult => {
+  const runProbe = (
+    role: "baseline" | "candidate",
+    root: string,
+    revision: string,
+    entry: string,
+    src: string,
+    nativePath: string,
+    nativeSha: string,
+  ): StartupProbeResult => {
     const child = spawnSync(
       process.execPath,
       [
@@ -305,30 +344,59 @@ async function main(): Promise<void> {
     )
     if (child.error) throw child.error
     if (child.status !== 0) throw new Error(`startup probe failed (${role}):\n${child.stderr}\n${child.stdout}`)
-    return parseStartupProbeOutput(child.stdout, { role, root, revision, scenario: "renderer-entry", nativeSha256: nativeSha })
+    return parseStartupProbeOutput(child.stdout, {
+      role,
+      root,
+      revision,
+      scenario: "renderer-entry",
+      nativeSha256: nativeSha,
+    })
   }
 
   for (let warmup = 0; warmup < warmups; warmup++) {
     const order: ("baseline" | "candidate")[] = warmup % 2 === 0 ? ["baseline", "candidate"] : ["candidate", "baseline"]
     for (const role of order) {
-      runProbe(role, role === "baseline" ? baselineRoot : candidateRoot, role === "baseline" ? baselineHead : candidateHead, role === "baseline" ? baselineEntry : candidateEntry, role === "baseline" ? baselineSrc : candidateSrc, role === "baseline" ? baselineNative : candidateNative, role === "baseline" ? baselineSha : candidateSha)
+      runProbe(
+        role,
+        role === "baseline" ? baselineRoot : candidateRoot,
+        role === "baseline" ? baselineHead : candidateHead,
+        role === "baseline" ? baselineEntry : candidateEntry,
+        role === "baseline" ? baselineSrc : candidateSrc,
+        role === "baseline" ? baselineNative : candidateNative,
+        role === "baseline" ? baselineSha : candidateSha,
+      )
     }
   }
 
   const schedule = createPairedSchedule(["cold-import"], ["bun"], pairs, 0x517a17)
   const rows: StartupPair[] = []
   for (const entry of schedule) {
-    const order: ("baseline" | "candidate")[] = entry.order === "baseline-first" ? ["baseline", "candidate"] : ["candidate", "baseline"]
+    const order: ("baseline" | "candidate")[] =
+      entry.order === "baseline-first" ? ["baseline", "candidate"] : ["candidate", "baseline"]
     const samples = {} as Record<"baseline" | "candidate", StartupProbeResult>
     let firstEnd = 0
     let secondStart = 0
     for (let i = 0; i < order.length; i++) {
       const role = order[i]!
       if (i === 1) secondStart = performance.now()
-      samples[role] = runProbe(role, role === "baseline" ? baselineRoot : candidateRoot, role === "baseline" ? baselineHead : candidateHead, role === "baseline" ? baselineEntry : candidateEntry, role === "baseline" ? baselineSrc : candidateSrc, role === "baseline" ? baselineNative : candidateNative, role === "baseline" ? baselineSha : candidateSha)
+      samples[role] = runProbe(
+        role,
+        role === "baseline" ? baselineRoot : candidateRoot,
+        role === "baseline" ? baselineHead : candidateHead,
+        role === "baseline" ? baselineEntry : candidateEntry,
+        role === "baseline" ? baselineSrc : candidateSrc,
+        role === "baseline" ? baselineNative : candidateNative,
+        role === "baseline" ? baselineSha : candidateSha,
+      )
       if (i === 0) firstEnd = performance.now()
     }
-    const row: StartupPair = { pair: entry.pair, order: entry.order, gapMs: Math.max(0, secondStart - firstEnd), baseline: samples.baseline, candidate: samples.candidate }
+    const row: StartupPair = {
+      pair: entry.pair,
+      order: entry.order,
+      gapMs: Math.max(0, secondStart - firstEnd),
+      baseline: samples.baseline,
+      candidate: samples.candidate,
+    }
     rows.push(row)
     appendRaw({ kind: "pair", ...row })
   }
@@ -337,7 +405,11 @@ async function main(): Promise<void> {
   const enoughPairs = validated.length >= 10
 
   const metricBudget = (pairsList: readonly StartupPair[], metric: "importMs" | "ttfmMs") => {
-    const obs = pairsList.map((p) => ({ order: p.order, baseline: p.baseline[metric]!, candidate: p.candidate[metric]! }))
+    const obs = pairsList.map((p) => ({
+      order: p.order,
+      baseline: p.baseline[metric]!,
+      candidate: p.candidate[metric]!,
+    }))
     const p50 = quantileChangeBootstrap(obs, 0.5, bootstrap, 0.95, 0xa1 + metric.length)
     const p95 = quantileChangeBootstrap(obs, 0.95, bootstrap, 0.95, 0xb2 + metric.length)
     const p99 = quantileChangeBootstrap(obs, 0.99, bootstrap, 0.95, 0xc3 + metric.length)
@@ -372,13 +444,23 @@ async function main(): Promise<void> {
   report.push(`- baseline: \`${baselineHead}\` (${baselineRoot}), native \`${baselineSha}\``)
   report.push(`- candidate: \`${candidateHead}\` (${candidateRoot}), native \`${candidateSha}\``)
   report.push(`- scenario: renderer-entry → renderer-entry; import + TTFMF (first native commit)`)
-  report.push(`- Bun: ${Bun.version}; protocol: ${validated.length} balanced pairs, ${warmups} warmups, ${bootstrap} bootstrap samples`)
-  report.push(`- load: start ${startLoad.one}/${startLoad.five}/${startLoad.fifteen}; end ${endLoad.one}/${endLoad.five}/${endLoad.fifteen}; hostLoadExceeded=${hostLoadExceeded}`)
+  report.push(
+    `- Bun: ${Bun.version}; protocol: ${validated.length} balanced pairs, ${warmups} warmups, ${bootstrap} bootstrap samples`,
+  )
+  report.push(
+    `- load: start ${startLoad.one}/${startLoad.five}/${startLoad.fifteen}; end ${endLoad.one}/${endLoad.five}/${endLoad.fifteen}; hostLoadExceeded=${hostLoadExceeded}`,
+  )
   report.push("")
-  report.push("| Metric | Baseline p50/p95/p99 | Candidate p50/p95/p99 | Paired p50 (CI) | p95 (CI) | p99 (CI) | p50/p95 budget (≤+3%) | p99 budget (≤+5%) |")
+  report.push(
+    "| Metric | Baseline p50/p95/p99 | Candidate p50/p95/p99 | Paired p50 (CI) | p95 (CI) | p99 (CI) | p50/p95 budget (≤+3%) | p99 budget (≤+5%) |",
+  )
   report.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-  report.push(`| Import | ${formatMs(baselineImport.p50)} / ${formatMs(baselineImport.p95)} / ${formatMs(baselineImport.p99)} | ${formatMs(candidateImport.p50)} / ${formatMs(candidateImport.p95)} / ${formatMs(candidateImport.p99)} | ${formatPercent(importMs.p50.change)} [${formatPercent(importMs.p50.ci.lower)}, ${formatPercent(importMs.p50.ci.upper)}] | ${formatPercent(importMs.p95.change)} [${formatPercent(importMs.p95.ci.lower)}, ${formatPercent(importMs.p95.ci.upper)}] | ${formatPercent(importMs.p99.change)} [${formatPercent(importMs.p99.ci.lower)}, ${formatPercent(importMs.p99.ci.upper)}] | ${formatPercent(importMs.p50.ci.upper)} / ${formatPercent(importMs.p95.ci.upper)} | ${formatPercent(importMs.p99.ci.upper)} |`)
-  report.push(`| TTFMF | ${formatMs(baselineTtfm.p50)} / ${formatMs(baselineTtfm.p95)} / ${formatMs(baselineTtfm.p99)} | ${formatMs(candidateTtfm.p50)} / ${formatMs(candidateTtfm.p95)} / ${formatMs(candidateTtfm.p99)} | ${formatPercent(ttfmMs.p50.change)} [${formatPercent(ttfmMs.p50.ci.lower)}, ${formatPercent(ttfmMs.p50.ci.upper)}] | ${formatPercent(ttfmMs.p95.change)} [${formatPercent(ttfmMs.p95.ci.lower)}, ${formatPercent(ttfmMs.p95.ci.upper)}] | ${formatPercent(ttfmMs.p99.change)} [${formatPercent(ttfmMs.p99.ci.lower)}, ${formatPercent(ttfmMs.p99.ci.upper)}] | ${formatPercent(ttfmMs.p50.ci.upper)} / ${formatPercent(ttfmMs.p95.ci.upper)} | ${formatPercent(ttfmMs.p99.ci.upper)} |`)
+  report.push(
+    `| Import | ${formatMs(baselineImport.p50)} / ${formatMs(baselineImport.p95)} / ${formatMs(baselineImport.p99)} | ${formatMs(candidateImport.p50)} / ${formatMs(candidateImport.p95)} / ${formatMs(candidateImport.p99)} | ${formatPercent(importMs.p50.change)} [${formatPercent(importMs.p50.ci.lower)}, ${formatPercent(importMs.p50.ci.upper)}] | ${formatPercent(importMs.p95.change)} [${formatPercent(importMs.p95.ci.lower)}, ${formatPercent(importMs.p95.ci.upper)}] | ${formatPercent(importMs.p99.change)} [${formatPercent(importMs.p99.ci.lower)}, ${formatPercent(importMs.p99.ci.upper)}] | ${formatPercent(importMs.p50.ci.upper)} / ${formatPercent(importMs.p95.ci.upper)} | ${formatPercent(importMs.p99.ci.upper)} |`,
+  )
+  report.push(
+    `| TTFMF | ${formatMs(baselineTtfm.p50)} / ${formatMs(baselineTtfm.p95)} / ${formatMs(baselineTtfm.p99)} | ${formatMs(candidateTtfm.p50)} / ${formatMs(candidateTtfm.p95)} / ${formatMs(candidateTtfm.p99)} | ${formatPercent(ttfmMs.p50.change)} [${formatPercent(ttfmMs.p50.ci.lower)}, ${formatPercent(ttfmMs.p50.ci.upper)}] | ${formatPercent(ttfmMs.p95.change)} [${formatPercent(ttfmMs.p95.ci.lower)}, ${formatPercent(ttfmMs.p95.ci.upper)}] | ${formatPercent(ttfmMs.p99.change)} [${formatPercent(ttfmMs.p99.ci.lower)}, ${formatPercent(ttfmMs.p99.ci.upper)}] | ${formatPercent(ttfmMs.p50.ci.upper)} / ${formatPercent(ttfmMs.p95.ci.upper)} | ${formatPercent(ttfmMs.p99.ci.upper)} |`,
+  )
   report.push("")
   report.push(`- Wave-3 Startup gate (p50/p95 familywise upper ≤ +3%, p99 ≤ +5%): **${verdict}**`)
   writeFileSync(reportPath, report.join("\n") + "\n")
