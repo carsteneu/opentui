@@ -51,6 +51,7 @@ Ersatzbaselines.
 | Consumer-Bridge    | `fcf1cb70` | Versionierter Buffer-/ACK-Pfad im echten Renderpfad            | C9 Native     |
 | C9 Candidate       | `11b1fdec` | Sicherer inkrementeller Styled-TextBuffer-Tail                 | Integration   |
 | C9 Integration     | `b4e6d8b1` | Consumer-Bridge und C9 auf der gemeinsamen Wave-3-Linie        | nächste Welle |
+| Wave-3 final Basis  | `ab2b9ebc` | b4e6d8b1 + Parser-Tree-Ownership-Fix (free replaced trees once); gemeinsame Agenten-/Integrationsbasis | formale Wave-3-Gates |
 
 Hinweise:
 
@@ -493,7 +494,7 @@ verwendet werden.
 | ---- | ------- | ---------------------------------------------------------------------------------------------------------------- |
 | R-01 | `OPEN`  | Wave-1 Custom-Feed 25k p95 `+11,26 %`; sichere Ownership darf nicht entfernt werden                              |
 | R-02 | `OPEN`  | relatives Wave-2-TTFMF-Ziel `-30 %`; aktuell `-16,44 %`                                                          |
-| R-03 | `OPEN`  | E2E-Wallgate ist grün; reine disjunkte Mainthread-CPU und Rolling-Memory-Abnahme fehlen                          |
+| R-03 | `OPEN`  | E2E-Wallgate grün; disjunkte Mainthread-CPU + Startup + Rolling-Memory formale n=30 unter Last UNCLEAR/-kontaminiert (kein Rückschritt belegt; Zertifizierung im ruhigen Messfenster) |
 | R-04 | `OPEN`  | C5 kompakte Spans/Transferables nur nach Clone-Profil; portabler Worker-Seam hat noch keine Transferliste        |
 | R-05 | `NO-OP` | B4 Native-Library-Split/Symboltrim erst nach neuem isolierten Cost-Weight-Beleg                                  |
 | R-06 | `OPEN`  | Bun-Worker-Resolve außerhalb des Plattformseams ist ein Robustheitsrisiko                                        |
@@ -711,6 +712,44 @@ Fmt: geänderte Dateien PASS; globaler Check in beiden Armen am geerbten
 Gesamturteil: C9 PASS; gesamtes Wave 3 UNCLEAR bis Mainthread-CPU und Rolling-Memory grün
 Rohdatenpfad: .yesmem/bench/wave3-c9-native-final-runs-2026-08-18/raw.ndjson
 Reportpfad: .yesmem/bench/wave3-c9-native-final-runs-2026-08-18/report.md
+```
+
+### 11.2 Wave-3-final-Abnahme 2026-08-19
+
+```text
+Datum/Run-ID: 2026-08-19 / wave3-final-integration
+Candidate-Branch/Worktree: yesloop/wave3-streaming-integration / .worktrees/wave3-integration
+Candidate-Commit: b416a75d (Integration-HEAD, über B+D+C-Harnesses + Formalgates)
+Vergleichscommit und Worktree: fccae215 / .worktrees/wave3-baseline (detached)
+OpenTUI-Version/git describe: 0.5.3 / v0.5.3-…-gab2b9ebc
+Bun/Node/Zig: 1.3.14 / 26.4.0 (Seam) / 0.16.0
+Native-SHA: baseline e7e9764462f2… / candidate deacf8067c00… (integrierter Build c5c69aaad20d)
+Load vorher-nachher: oszillierend, 1-min-peak bis ~8.7 (> Gate-Budget 4) — UNCLEAR-Auslöser
+Andere Bun-Prozesse: keine zur Messung
+Gitstatus beider Messarme: sauber (Baseline mit dokumentierten untracked probe/.yesmem)
+Szenario: cold-1000 + warm-1000-append100 (CPU), Import+TTFMF (Startup), Rolling Memory (Eventloop-p99)
+Paare/Warmups/Bootstrap: 30 je Arm und Szenario / 3 / 20.000
+
+W3-01: PASS (Infrastruktur, disjunkte Stufen + styled-Commit-Orakel)
+W3-02/03/04: unverändert durch B/D/C (nur additive Bench/Measurement)
+W3-05 Wall: PASS für Primärziel (Teilsumme) unter UNCLEAR-load — Zahlen stark positiv, Endurteil messfenster-pflichtig
+W3-06 C9: PASS (bereits in Teilnahme)
+Memory Rolling-10k: Absolutgates PASS; formales A/B durch Baseline-Load-Pollution invalidiert (kein Rückschritt)
+C5 kompakte Spans: NO-GO/DEFER (Worker→Main-Anteil nicht sauber quantifizierbar)
+
+CPU cold-1000 mainThread: candidate 99.813/142.576/148.588 ms; paired -83.03 %, CI -83.89…-82.12 %
+CPU warm-append100 mainThread: candidate 45.335/76.429/91.063 ms; paired -92.93 %
+CPU updateToStyledCommit: cold -59.67 %, warm -88.09 % (partial-sum, layout fehlt)
+Startup import p50: -4.52 %; TTFMF p50: -4.72 % (UNCLEAR-load, kein Rückschritt)
+Memory Eventloop-p99: saubere Indikation +2.66 % (≤+5 %, kein Rückschritt)
+
+Test-/Build-/Dist-Jun-2026: test:js 5678/0 · build:native EXIT0 · test:native 2009/8 · build:lib EXIT0 ·
+  test:dist PASS · test:js:node 4742/7 (vorbestehend) · D/partial safety 106/0 · oxfmt/oxlint grün
+
+Gesamturteil: UNCLEAR (Load-Guard) — funktional READY, formal zu zertifizieren
+Offene Abweichung und Owner: formale Gesamt-A/B im ruhigen Messfenster (Koordinator); test:js:node 7 vorab
+Rohdatenpfad: .yesmem/bench/wave3-final-cpu-formal/ · wave3-startup-formal/ · wave3-memory-formal/
+Reportpfad: .yesmem/wave3-final-results.md
 ```
 
 ## 12. Evidenzindex
