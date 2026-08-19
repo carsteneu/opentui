@@ -52,7 +52,8 @@
     "test": "bun run test:native && bun run test:js",
     "bench:wave3": "bun src/benchmark/wave3-harness.test.ts",
     "bench:wave3:baseline": "bun scripts/wave3-baseline.ts",
-    "bench:wave3:clean-gate": "bun scripts/wave3-clean-gate.ts"
+    "bench:wave3:clean-gate": "bun scripts/wave3-clean-gate.ts",
+    "bench:wave3:render-scaling": "bun scripts/wave3-render-scaling.ts"
   },
   "license": "MIT",
   "devDependencies": {
