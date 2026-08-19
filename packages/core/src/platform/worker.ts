@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs"
+
 export const WORKER_UNAVAILABLE = "OpenTUI tree-sitter workers are not available for this runtime yet."
 
 export interface WorkerMessageEvent<T = unknown> {
@@ -124,6 +126,36 @@ class UnsupportedWorker implements PlatformWorkerHandle {
 
 export const Worker: PlatformWorkerConstructor = loadWorkerConstructor()
 export const isWorkerRuntime = runtimeBridge !== undefined
+
+// Only the global (Bun/web) Worker runs a real module graph and can execute
+// source entrypoints (e.g. .ts) directly. The Node shim imports an ESM file
+// through an eval bootstrap and needs a built asset.
+const RUNS_SOURCE_ENTRYPOINTS = typeof globalWithWorker.Worker === "function"
+
+/**
+ * Runtime-aware worker entry resolution. Callers hand over their resolved
+ * bundle location; whether a missing bundle may be replaced with a source
+ * entrypoint is a platform capability (Bun), not a caller decision.
+ */
+export function resolveWorkerSpecifier(
+  resolved: string | URL,
+  sourceFallback?: string | URL,
+  canRunSource: boolean = RUNS_SOURCE_ENTRYPOINTS,
+): string | URL {
+  if (resolved instanceof URL || !canRunSource || sourceFallback === undefined) {
+    return resolved
+  }
+
+  if (isRuntimeSpecifier(resolved)) {
+    return resolved
+  }
+
+  if (!existsSync(resolved)) {
+    return sourceFallback instanceof URL ? sourceFallback.href : sourceFallback
+  }
+
+  return resolved
+}
 
 export function postWorkerMessage(value: unknown): void {
   if (!runtimeBridge) {
