@@ -22,6 +22,7 @@ import {
 import { maybeMakeRenderable, type VNode } from "./renderables/composition/vnode.js"
 import type { MouseEvent } from "./renderer.js"
 import type { RenderContext } from "./types.js"
+import type { ScalingCounterHost, Wave3ScalingCounters } from "./benchmark/wave3-scaling-counters.js"
 import {
   validateOptions,
   isPositionType,
@@ -1126,11 +1127,19 @@ export abstract class Renderable extends BaseRenderable {
     return this.yogaNode
   }
 
+  /** Opt-in scaling counter (Wave-3 Loop D). Null in the off-state (cheap guard). */
+  protected scalingCounters(): Wave3ScalingCounters | null {
+    return (this._ctx as ScalingCounterHost).scalingCounters ?? null
+  }
+
   public updateFromLayout(): void {
     // Yoga layout is stable within a frame; skip the FFI round-trip on repeat calls.
     const frameId = this._ctx.frameId
     if (this._lastLayoutFrame === frameId) return
     this._lastLayoutFrame = frameId
+
+    const counters = this.scalingCounters()
+    if (counters) counters.updateFromLayoutFfiCalls++
 
     const layout = this.yogaNode.getComputedLayout()
 
@@ -1420,6 +1429,9 @@ export abstract class Renderable extends BaseRenderable {
 
   public updateLayout(deltaTime: number, renderList: RenderCommand[] = []): void {
     if (!this.visible) return
+
+    const counters = this.scalingCounters()
+    if (counters) counters.visitedStableNodes++
 
     if (this._needsFrameUpdate) this.runFrameUpdate(deltaTime)
 
@@ -1900,6 +1912,10 @@ function renderBoundsOverlap(left: RenderBounds, right: RenderBounds): boolean {
   return left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top
 }
 
+function recordPartialRejection(counters: Wave3ScalingCounters, reason: string): void {
+  counters.partialRejectedBy[reason] = (counters.partialRejectedBy[reason] ?? 0) + 1
+}
+
 export class RootRenderable extends Renderable {
   private renderList: RenderCommand[] = []
   private renderIndices = new Map<Renderable, number>()
@@ -1964,25 +1980,38 @@ export class RootRenderable extends Renderable {
   }
 
   public hasSafePartialComposition(renderables: ReadonlySet<Renderable>): boolean {
+    const counters = this.scalingCounters()
+    if (counters) counters.hasSafePartialCompositionCalls++
     for (const renderable of renderables) {
       let current: Renderable | null = renderable
       while (current) {
-        if (current.opacity < 1) return false
+        if (counters) counters.boundsWalks++
+        if (current.opacity < 1) {
+          if (counters) recordPartialRejection(counters, "translucent-ancestor")
+          return false
+        }
         current = current.parent
       }
 
       const index = this.renderIndices.get(renderable)
-      if (index === undefined) return false
+      if (index === undefined) {
+        if (counters) recordPartialRejection(counters, "not-in-render-list")
+        return false
+      }
       const bounds = renderable.getVisibleRenderBounds(this.width, this.height)
       if (!bounds) continue
 
       // This is a frame-time guard. Avoid allocating a sliced command list on
       // every streaming update while conservatively checking later painters.
       for (let i = index + 1; i < this.renderList.length; i++) {
+        if (counters) counters.scannedLaterPainters++
         const command = this.renderList[i]
         if (command.action !== "render" || command.renderable._isDestroyed) continue
         const later = command.renderable.getVisibleRenderBounds(this.width, this.height)
-        if (later && renderBoundsOverlap(bounds, later)) return false
+        if (later && renderBoundsOverlap(bounds, later)) {
+          if (counters) recordPartialRejection(counters, "overlap-later-painter")
+          return false
+        }
       }
     }
     return true
@@ -2007,11 +2036,15 @@ export class RootRenderable extends Renderable {
     // but that's only possible if we move the layout tree to native.
 
     // 1. Calculate layout from root
+    const rCounters = this.scalingCounters()
+    const layoutStart = rCounters ? performance.now() : 0
     if (this.yogaNode.isDirty()) {
       this.calculateLayout()
+      if (rCounters) rCounters.dirtySubtreeLayouts++
     } else {
       this.syncExternalLayoutGeneration()
     }
+    if (rCounters) rCounters.layoutMs += performance.now() - layoutStart
 
     updatePassId++
     // Reusable command lists must not suppress per-frame onUpdate callbacks.
@@ -2028,6 +2061,7 @@ export class RootRenderable extends Renderable {
       this.appliedRenderListRevision === renderListRevision
 
     if (!canReuseRenderList) {
+      if (rCounters) rCounters.renderListRebuilds++
       this.updatables.length = 0
       beginRenderListCollection(this.updatables)
       this.renderList.length = 0
@@ -2045,9 +2079,13 @@ export class RootRenderable extends Renderable {
         this.renderListReusable = false
         throw error
       }
+    } else {
+      if (rCounters) rCounters.renderListReuses++
     }
+    if (rCounters) rCounters.renderCommands += this.renderList.length
 
     // 3. Render all collected renderables
+    const jsRenderStart = rCounters ? performance.now() : 0
     this._ctx.clearHitGridScissorRects()
     for (let i = 1; i < this.renderList.length; i++) {
       const command = this.renderList[i]
@@ -2076,6 +2114,7 @@ export class RootRenderable extends Renderable {
           break
       }
     }
+    if (rCounters) rCounters.jsRenderMs += performance.now() - jsRenderStart
   }
 
   protected propagateLiveCount(delta: number): void {
@@ -2090,6 +2129,8 @@ export class RootRenderable extends Renderable {
   }
 
   public calculateLayout(): void {
+    const counters = this.scalingCounters()
+    if (counters) counters.layoutGenerations++
     this.yogaNode.calculateLayout(this.width, this.height, Direction.LTR)
     bumpLayoutGeneration(this._ctx)
     this.yogaNode.markLayoutSeen()

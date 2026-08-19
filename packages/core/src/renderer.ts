@@ -1,6 +1,7 @@
 import { appendFileSync, writeFileSync } from "node:fs"
 import { ANSI } from "./ansi.js"
 import { Renderable, RootRenderable } from "./Renderable.js"
+import type { Wave3ScalingCounters } from "./benchmark/wave3-scaling-counters.js"
 import { BoxRenderable } from "./renderables/Box.js"
 import { TextRenderable } from "./renderables/Text.js"
 import {
@@ -862,6 +863,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     renderTime: 0,
     frameCallbackTime: 0,
   }
+  /** Opt-in Wave-3 scaling counters (§10.3/§10.4). Null in the off-state. */
+  public scalingCounters: Wave3ScalingCounters | null = null
   public debugOverlay = {
     enabled: env.OTUI_SHOW_STATS,
     corner: DebugOverlayCorner.bottomRight,
@@ -4857,14 +4860,23 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const partialRegion =
         this.partialFramePending && this.canPartialRender() ? this.renderPartialFrame(deltaTime) : null
       // A normal invalidation raised from a partial render was not part of this frame.
+      if (this.scalingCounters && this.partialFramePending && partialRegion) {
+        this.scalingCounters.partialAccepted++
+        this.scalingCounters.frameCounts.partial++
+      }
       if (partialRegion && this.ordinaryRenderGeneration !== this.committedOrdinaryRenderGeneration) {
         this.immediateRerenderRequested = true
+        if (this.scalingCounters) {
+          this.scalingCounters.partialToFullPromotions++
+          this.scalingCounters.frameCounts.followup++
+        }
         if (telemetryActive) increment("frame.promote.partialToFull")
       }
       this.partialFramePending = false
       this.partialRequests.clear()
 
       if (!partialRegion) {
+        if (this.scalingCounters) this.scalingCounters.frameCounts.full++
         this.nextRenderBuffer.clear(this.backgroundColor)
         this.root.render(this.nextRenderBuffer, deltaTime)
 
@@ -5062,6 +5074,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     if (left >= right || top >= bottom) return null
+    if (this.scalingCounters) this.scalingCounters.partialRegionAreas += (right - left) * (bottom - top)
     return { x: left, y: top, width: right - left, height: bottom - top }
   }
 
@@ -5106,6 +5119,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
 
       const force = this.forceFullRepaintRequested
+      const commitStart = this.scalingCounters ? performance.now() : 0
       const nativeStatus = partialRegion
         ? this.lib.renderPartial(
             this.rendererPtr,
@@ -5115,6 +5129,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
             partialRegion.height,
           )
         : this.lib.render(this.rendererPtr, force, true)
+      if (this.scalingCounters) this.scalingCounters.commitMs += performance.now() - commitStart
       if (nativeStatus === NATIVE_RENDER_STATUS_SKIPPED || nativeStatus === NATIVE_RENDER_STATUS_FAILED) {
         return this.handleNativeRenderRejection(nativeStatus)
       }
@@ -5212,6 +5227,40 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (!enabled) {
       this.frameTimes = []
     }
+  }
+
+  /**
+   * Attach the opt-in Wave-3 scaling counter (or detach with null). The counters
+   * live here so Renderable reaches them through the shared context cast. Off-state
+   * (null) leaves a zero-cost guard at every instrumentation site.
+   * @internal Wave-3 measurement-only; not part of the public renderer contract.
+   */
+  public attachWave3ScalingCounters(counters: Wave3ScalingCounters | null): void {
+    if (counters && counters !== this.scalingCounters) {
+      this.resetWave3ScalingCounters(counters)
+    }
+    this.scalingCounters = counters
+  }
+
+  public resetWave3ScalingCounters(counters: Wave3ScalingCounters): void {
+    counters.visitedStableNodes = 0
+    counters.updateFromLayoutFfiCalls = 0
+    counters.layoutGenerations = 0
+    counters.dirtySubtreeLayouts = 0
+    counters.renderListRebuilds = 0
+    counters.renderListReuses = 0
+    counters.renderCommands = 0
+    counters.frameCounts = { full: 0, partial: 0, followup: 0 }
+    counters.hasSafePartialCompositionCalls = 0
+    counters.scannedLaterPainters = 0
+    counters.boundsWalks = 0
+    counters.partialAccepted = 0
+    counters.partialRejectedBy = {}
+    counters.partialToFullPromotions = 0
+    counters.partialRegionAreas = 0
+    counters.layoutMs = 0
+    counters.jsRenderMs = 0
+    counters.commitMs = 0
   }
 
   public getSelection(): Selection | null {
