@@ -57,7 +57,11 @@
     "bench:wave3:cpu-gate": "bun scripts/wave3-clean-gate-cpu.ts",
     "bench:wave3:startup-gate": "bun scripts/wave3-startup-gate.ts",
     "test:wave3:cpu": "bun test src/benchmark/wave3-cpu-harness.test.ts scripts/wave3-clean-gate-cpu.test.ts",
-    "test:wave3:startup": "bun test scripts/wave3-startup-gate.test.ts"
+    "test:wave3:startup": "bun test scripts/wave3-startup-gate.test.ts",
+    "bench:wave3:memory": "bun scripts/wave3-memory-gate.ts",
+    "bench:wave3:memory:test": "bun test src/benchmark/wave3-memory-harness.test.ts",
+    "bench:wave3:memory:ab": "bun scripts/wave3-memory-ab.ts",
+    "bench:wave3:memory:ab:probe": "bun src/benchmark/wave3-memory-ab-probe.ts"
   },
   "license": "MIT",
   "devDependencies": {

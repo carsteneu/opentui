@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "candidateRoot": "home/user/projects/opentui/.worktrees/wave3-memory-gate",
+  "baselineRoot": "home/user/projects/opentui/.worktrees/wave3-baseline",
+  "params": {
+    "mutations": 1200,
+    "windowLines": 1000,
+    "settleEvery": 64,
+    "gc": 1,
+    "runs": 2
+  },
+  "candidate": {
+    "revisions": [
+      "ab2b9ebc",
+      "ab2b9ebc"
+    ],
+    "eventLoopP99": [
+      95.65792790000002,
+      101.17534419999991
+    ],
+    "medP99": 98.41663604999997
+  },
+  "baseline": {
+    "revisions": [
+      "fccae215",
+      "fccae215"
+    ],
+    "eventLoopP99": [
+      96.24613027999999,
+      95.48344628000001
+    ],
+    "medP99": 95.86478828
+  },
+  "deltaPct": 2.66,
+  "gate": "GC-/Eventloop-p99 <= baseline * 1.05",
+  "pass": true
+}
