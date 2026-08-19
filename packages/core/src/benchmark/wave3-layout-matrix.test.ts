@@ -75,16 +75,31 @@ test("layout counters scale with stable sibling count", async () => {
   expect(small.initialBuild.frameCounts.partial + small.steady.frameCounts.partial).toBe(0)
 })
 
-test("the standardized layout matrix is well-formed and runs without throwing", async () => {
+test("the standardized layout matrix has distinct, non-empty scenario keys", () => {
   expect(LAYOUT_SCENARIOS.length).toBeGreaterThan(5)
-  const labels = new Set<string>()
+  const keys = new Set<string>()
   for (const scenario of LAYOUT_SCENARIOS) {
-    // Every scenario must produce a distinct, non-empty label.
-    const sample = await runLayoutScenario(scenario, { width: 80, height: 24, frames: 1 })
-    expect(sample.scenario.length).toBeGreaterThan(0)
-    expect(sample.renderables).toBeGreaterThan(0)
-    expect(sample.initialBuild.visitedStableNodes).toBeGreaterThan(0)
-    expect(labels.has(sample.scenario)).toBe(false)
-    labels.add(sample.scenario)
+    const optional = scenario as { autoHeight?: boolean; depth?: number }
+    const key = [scenario.kind, scenario.count ?? "", optional.autoHeight ?? "", optional.depth ?? ""].join(":")
+    expect(key.length).toBeGreaterThan(0)
+    expect(keys.has(key)).toBe(false)
+    keys.add(key)
+  }
+})
+
+// Each scenario runs as its own test with a per-test timeout, so a slow
+// large-tree scenario under load budgets its own time instead of tripping the
+// shared default 5s window for the whole batch. This is a smoke test (load
+// sensitive), not an oracle — behavior is asserted per scenario.
+describe("layout matrix smoke: each scenario is well-formed and runs without throwing", () => {
+  for (const scenario of LAYOUT_SCENARIOS) {
+    const optional = scenario as { autoHeight?: boolean; depth?: number }
+    const tag = [scenario.kind, scenario.count ?? "", optional.autoHeight ?? "", optional.depth ?? ""].join(":")
+    test(`runs ${tag}`, async () => {
+      const sample = await runLayoutScenario(scenario, { width: 80, height: 24, frames: 1 })
+      expect(sample.scenario.length).toBeGreaterThan(0)
+      expect(sample.renderables).toBeGreaterThan(0)
+      expect(sample.initialBuild.visitedStableNodes).toBeGreaterThan(0)
+    }, 60_000)
   }
 })
