@@ -55,7 +55,8 @@ interface ReusableParserState {
   }
 }
 
-class ParserWorker {
+/** @internal Exported for focused worker ownership tests. */
+export class ParserWorker {
   private bufferParsers: Map<number, ParserState> = new Map()
   private filetypeParserOptions: Map<string, FiletypeParserOptions> = new Map()
   private filetypeAliases: Map<string, string> = new Map()
@@ -409,6 +410,40 @@ class ParserWorker {
     return content.substring(node.startIndex, node.endIndex)
   }
 
+  private replaceOwnedTree(parserState: ParserState, newTree: Tree): void
+  private replaceOwnedTree<Result>(
+    parserState: ParserState,
+    newTree: Tree,
+    beforeCommit: (previousTree: Tree, newTree: Tree) => Result,
+  ): Result
+  private replaceOwnedTree<Result>(
+    parserState: ParserState,
+    newTree: Tree,
+    beforeCommit?: (previousTree: Tree, newTree: Tree) => Result,
+  ): Result | void {
+    const previousTree = parserState.tree
+    if (previousTree === newTree) {
+      return beforeCommit?.(previousTree, newTree)
+    }
+
+    let result: Result | undefined
+    try {
+      result = beforeCommit?.(previousTree, newTree)
+    } catch (error) {
+      // parse() transferred a fresh tree to this scope, but it has not yet
+      // become the buffer's owner. Never leak it when pre-commit work fails.
+      newTree.delete()
+      throw error
+    }
+
+    // Publish the replacement before releasing the previous owner. If
+    // Tree.delete() unexpectedly throws, the buffer still points at the valid
+    // new tree and will not later double-delete the previous one.
+    parserState.tree = newTree
+    previousTree.delete()
+    return result
+  }
+
   private async processInjections(
     parserState: ParserState,
   ): Promise<{ captures: QueryCapture[]; injectionRanges: Map<string, Array<{ start: number; end: number }>> }> {
@@ -592,8 +627,9 @@ class ParserWorker {
       return { error: "Failed to parse buffer" }
     }
 
-    const changedRanges = parserState.simpleHighlightsOnly ? [] : parserState.tree.getChangedRanges(newTree)
-    parserState.tree = newTree
+    const changedRanges = this.replaceOwnedTree(parserState, newTree, (previousTree, replacementTree) =>
+      parserState.simpleHighlightsOnly ? [] : previousTree.getChangedRanges(replacementTree),
+    )
 
     const startQuery = performance.now()
     const matches: QueryCapture[] = []
@@ -821,7 +857,7 @@ class ParserWorker {
       return { error: "Failed to parse buffer during reset" }
     }
 
-    parserState.tree = newTree
+    this.replaceOwnedTree(parserState, newTree)
     const matches = parserState.queries.highlights.captures(parserState.tree.rootNode)
 
     let injectionRanges = new Map<string, Array<{ start: number; end: number }>>()
