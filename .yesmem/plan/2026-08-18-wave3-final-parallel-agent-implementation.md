@@ -11,13 +11,14 @@ Stand: 2026-08-18
 > - Quellworktree: `home/user/projects/opentui/.worktrees/wave3-integration`
 > - Branch: `yesloop/wave3-streaming-integration`
 > - Exakter gemeinsamer Agenten-Basiscommit:
->   `c1ef330baa8788280ec53bd2718ce8febf4d464a`
+>   `ab2b9ebcdc7bb56cbfe7e00f871351d1aa4de325`
 > - Letzter Runtime-Commit in dieser Linie:
->   `b4e6d8b18e68f769abfedbdc7b070a761bdfdc15`
+>   `ab2b9ebcdc7bb56cbfe7e00f871351d1aa4de325` (inkl. `fix(core): free replaced
+>   tree-sitter trees exactly once`, der Parser-Tree-Ownership-Commit nach `b4e6d8b1`)
 > - OpenTUI-Paket: `@opentui/core@0.5.3`
-> - Git-Describe: `v0.5.3-110-gc1ef330b`
+> - Git-Describe: `v0.5.3-110-gab2b9ebc`
 > - Enthalten: patched.98, Fastpatch 0.5.3, Wave 0–2, Wave-3-A→C→B→D,
->   Consumer-Bridge und C9.
+>   Consumer-Bridge, C9 und Parser-Tree-Ownership-Fix.
 >
 > Primäre OpenTUI-Performancebaseline:
 >
@@ -44,13 +45,13 @@ Für den OpenTUI-Gesamtvergleich sind `fastpatch@2cd44364`, patched.98, Wave 1,
 `6ec90b97`, `11b1fdec`, einzelne Agentenbranches, `main`, `origin/main` und Upstream
 keine Ersatzbaseline. Der Vergleich lautet ausschließlich:
 
-`fccae215` → `c1ef330b` mit Runtimeinhalt bis `b4e6d8b1`.
+`fccae215` → `ab2b9ebc` mit Runtimeinhalt bis `ab2b9ebc` (inkl. Parser-Ownership-Fix).
 
 Für OpenCode wird nie gleichzeitig die OpenCode-Quellrevision gewechselt. Sonst wäre nicht
 mehr feststellbar, ob eine Abweichung aus OpenTUI oder OpenCode stammt.
 
 Der Plan liegt nach dem Agenten-Basiscommit im Integrationsworktree. Die Agentenbranches
-starten trotzdem bewusst von `c1ef330b` und lesen diesen Plan über seinen absoluten Pfad:
+starten trotzdem bewusst von `ab2b9ebc` und lesen diesen Plan über seinen absoluten Pfad:
 
 `home/user/projects/opentui/.worktrees/wave3-integration/.yesmem/plan/2026-08-18-wave3-final-parallel-agent-implementation.md`
 
@@ -124,18 +125,19 @@ git -C home/user/projects/opentui/.worktrees/wave3-integration status --short
 git -C home/user/projects/opentui/.worktrees/wave3-integration branch --show-current
 git -C home/user/projects/opentui/.worktrees/wave3-integration rev-parse HEAD
 git -C home/user/projects/opentui/.worktrees/wave3-integration \
-  merge-base --is-ancestor c1ef330baa8788280ec53bd2718ce8febf4d464a HEAD
+  merge-base --is-ancestor ab2b9ebcdc7bb56cbfe7e00f871351d1aa4de325 HEAD
 git -C home/user/projects/opentui/.worktrees/wave3-integration \
-  diff --exit-code c1ef330baa8788280ec53bd2718ce8febf4d464a HEAD -- packages/core
+  diff --exit-code ab2b9ebcdc7bb56cbfe7e00f871351d1aa4de325 HEAD -- packages/core
 git -C home/user/projects/opentui/.worktrees/wave3-baseline status --short
 git -C home/user/projects/opentui/.worktrees/wave3-baseline rev-parse HEAD
 jq -r '.name + "@" + .version' \
   home/user/projects/opentui/.worktrees/wave3-integration/packages/core/package.json
 ```
 
-Erwartet: Der Integrationsbranch enthält `c1ef330b...` und hat danach höchstens Plan-/
-Dokumentcommits, aber keinen `packages/core`-Diff. Die Baseline steht detached auf exakt
-`fccae215...`; beide Worktrees sind sauber und melden `@opentui/core@0.5.3`.
+Erwartet: Der Integrationsbranch enthält `ab2b9ebc...` als gemeinsamen Agenten-Basiscommit
+(inkl. Parser-Tree-Ownership-Fix) und hat danach höchstens Plan-/Dokumentcommits, aber keinen
+weiteren `packages/core`-Diff. Die Baseline steht detached auf exakt `fccae215...`; beide
+Worktrees sind sauber und melden `@opentui/core@0.5.3`.
 
 ### 3.2 Drei OpenTUI-Agentenworktrees anlegen
 
@@ -147,15 +149,15 @@ cd home/user/projects/opentui
 
 git worktree add -b yesloop/wave3-final-cpu \
   home/user/projects/opentui/.worktrees/wave3-final-cpu \
-  c1ef330baa8788280ec53bd2718ce8febf4d464a
+  ab2b9ebcdc7bb56cbfe7e00f871351d1aa4de325
 
 git worktree add -b yesloop/wave3-memory-gate \
   home/user/projects/opentui/.worktrees/wave3-memory-gate \
-  c1ef330baa8788280ec53bd2718ce8febf4d464a
+  ab2b9ebcdc7bb56cbfe7e00f871351d1aa4de325
 
 git worktree add -b yesloop/wave3-render-scaling \
   home/user/projects/opentui/.worktrees/wave3-render-scaling \
-  c1ef330baa8788280ec53bd2718ce8febf4d464a
+  ab2b9ebcdc7bb56cbfe7e00f871351d1aa4de325
 ```
 
 Danach in jedem neuen OpenTUI-Worktree einmal `bun install`.
@@ -437,7 +439,7 @@ PTY-/TestRenderer-Seam und dokumentiert die fehlende manuelle Achse.
 
 ### 8.1 Auftrag
 
-Das bislang offene Wave-3-Primärgate direkt `fccae215` gegen `c1ef330b` schließen:
+Das bislang offene Wave-3-Primärgate direkt `fccae215` gegen `ab2b9ebc` schließen:
 
 - echte Real-Worker-Kette;
 - disjunkte Mainthread-Stufen statt Gesamtprozess-CPU;
@@ -784,7 +786,7 @@ Dann:
 - Branch: `yesloop/wave3-compact-spans`
 - Worktree: `home/user/projects/opentui/.worktrees/wave3-compact-spans`
 - Basis: vom Koordinator dokumentierter grüner Zwischenintegrationscommit nach B+C+D,
-  **nicht** `c1ef330b` und nicht ein Einzelbranch.
+  **nicht** `ab2b9ebc` und nicht ein Einzelbranch.
 
 ### 11.2 Regeln
 
@@ -868,7 +870,7 @@ git status --short
 ```
 
 Erwartet wird die aktuelle `yesloop/wave3-streaming-integration`-Linie mit dem Plancommit über
-Runtimebasis `c1ef330b`, sauber.
+Runtimebasis `ab2b9ebc`, sauber.
 
 ### 14.2 Reihenfolge
 
