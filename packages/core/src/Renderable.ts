@@ -298,6 +298,7 @@ export abstract class Renderable extends BaseRenderable {
 
   // Frame id of the last updateFromLayout(); -1 ensures the first call runs.
   private _lastLayoutFrame: number = -1
+  private _layoutEpoch: number = -1
   private _lastOnUpdatePass = -1
   private _needsFrameUpdate = false
   private _reuseScissorOk = false
@@ -1137,6 +1138,22 @@ export abstract class Renderable extends BaseRenderable {
     const frameId = this._ctx.frameId
     if (this._lastLayoutFrame === frameId) return
     this._lastLayoutFrame = frameId
+
+    // A node's computed layout can only change after a Yoga layout pass, and
+    // every layout pass bumps the ctx layout generation. While the generation
+    // is unchanged, getComputedLayout would return the same values we cached on
+    // the previous read, so the per-node FFI round-trip can be skipped entirely.
+    // Screen coordinates still derive from the (possibly translated) parent
+    // chain, so culled position reads stay current.
+    const layoutGeneration = getLayoutGeneration(this._ctx)
+    if (layoutGeneration === this._layoutEpoch) {
+      const cachedParentScreenX = this.parent ? this.parent._screenX : 0
+      const cachedParentScreenY = this.parent ? this.parent._screenY : 0
+      this._screenX = cachedParentScreenX + this._x + this._translateX
+      this._screenY = cachedParentScreenY + this._y + this._translateY
+      return
+    }
+    this._layoutEpoch = layoutGeneration
 
     const counters = this.scalingCounters()
     if (counters) counters.updateFromLayoutFfiCalls++
