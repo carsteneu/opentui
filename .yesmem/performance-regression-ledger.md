@@ -494,7 +494,7 @@ verwendet werden.
 | ---- | ------- | ---------------------------------------------------------------------------------------------------------------- |
 | R-01 | `OPEN`  | Wave-1 Custom-Feed 25k p95 `+11,26 %`; sichere Ownership darf nicht entfernt werden                              |
 | R-02 | `OPEN`  | relatives Wave-2-TTFMF-Ziel `-30 %`; aktuell `-16,44 %`                                                          |
-| R-03 | `OPEN`  | E2E-Wallgate grün; disjunkte Mainthread-CPU + Startup + Rolling-Memory formale n=30 unter Last UNCLEAR/-kontaminiert (kein Rückschritt belegt; Zertifizierung im ruhigen Messfenster) |
+| R-03 | `PARKED` | E2E-Wallgate grün; disjunkte Mainthread-CPU + Startup + Rolling-Memory formale n=30 unter Last UNCLEAR/-kontaminiert (kein Rückschritt belegt). Owner-Entscheidung 2026-08-20: ruhiges Messfenster (Load <4) realistisch nicht erreichbar — Zertifizierung geparkt, Referenzstand Tag `wave3-final` (f4fcb1fb) |
 | R-04 | `OPEN`  | C5 kompakte Spans/Transferables nur nach Clone-Profil; portabler Worker-Seam hat noch keine Transferliste        |
 | R-05 | `NO-OP` | B4 Native-Library-Split/Symboltrim erst nach neuem isolierten Cost-Weight-Beleg                                  |
 | R-06 | `OPEN`  | Bun-Worker-Resolve außerhalb des Plattformseams ist ein Robustheitsrisiko                                        |
