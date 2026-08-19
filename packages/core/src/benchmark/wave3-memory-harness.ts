@@ -188,6 +188,9 @@ async function settleStreaming(rig: CodeRig, maxMs: number): Promise<void> {
     await rig.setup.renderOnce()
     if (!rig.code.isHighlighting) {
       await rig.code.highlightingDone.catch(() => undefined)
+      // One extra flush so a content change queued for the next render is not
+      // measured mid-flight in the following GC-window snapshot.
+      await rig.setup.renderOnce()
       return
     }
     await new Promise((resolve) => setTimeout(resolve, 1))
@@ -242,7 +245,6 @@ export async function runPhaseASteady(
 
     const eventLoopSampler = startEventLoopLagSampler({})
     const windows: MemoryWindow[] = []
-    const queue = client.getUpdateQueueStats()
 
     let version = 2
     for (let mutation = 1; mutation <= mutations; mutation++) {
@@ -266,6 +268,9 @@ export async function runPhaseASteady(
     await settleStreaming(rig, 15_000)
     if (gcPerWindow) forceGC()
     const eventLoop = eventLoopSampler.stop()
+    // getUpdateQueueStats() returns a cumulative snapshot; fetch AFTER the loop
+    // so A2/A3 see the true high-water marks over the whole run.
+    const queue = client.getUpdateQueueStats()
     const resources = snapshotClientResources(client)
 
     return {

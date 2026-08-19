@@ -55,7 +55,7 @@ function main(): void {
   const windowLines = argNumber("window-lines", 1000)
   const settleEvery = argNumber("settle-every", 64)
   const gc = argNumber("gc", 1)
-  const runs = argNumber("runs", 1)
+  const runs = argNumber("runs", 5)
   const outDir = resolve(argString("out") ?? join(CANDIDATE_ROOT, ".yesmem", "bench", "wave3-memory", "ab"))
 
   const candidateProbe = join(CANDIDATE_ROOT, "packages/core/src/benchmark/wave3-memory-ab-probe.ts")

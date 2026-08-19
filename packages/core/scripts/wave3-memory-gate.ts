@@ -22,6 +22,7 @@ import {
   runPhaseCFaults,
   type MemorySamplesByPhase,
 } from "../src/benchmark/wave3-memory-harness.js"
+import { forceGC } from "../src/benchmark/wave3-memory-portable.js"
 
 function arg(name: string, fallback: number): number {
   const prefix = `--${name}=`
@@ -62,13 +63,18 @@ async function run(): Promise<void> {
 
   // Phases are intentionally run sequentially so memory measurements are not
   // contaminated by unrelated concurrent work.
-  const steady = await runPhaseASteady(makeClient(), {
+  const steadyClient = makeClient()
+  const steady = await runPhaseASteady(steadyClient, {
     mutations,
     settleEvery: 32,
     fullReplacementEvery: 256,
     windowLines: 1000,
     gcPerWindow: true,
   })
+  // Free the phase-A client (and its worker) before phases B/C so the process-global
+  // native/allocator baselines measured there are not inflated by a stranded worker.
+  await steadyClient.destroy()
+  forceGC()
   const lifecycle = await runPhaseBLifecycle(makeClient, { cycles, windowLines: 300 })
   const faults = await runPhaseCFaults(makeClient, { supersedeBurst: burst })
 

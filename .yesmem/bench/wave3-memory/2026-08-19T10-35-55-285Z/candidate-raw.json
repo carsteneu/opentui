@@ -1,0 +1,2401 @@
+{
+  "schemaVersion": 1,
+  "arm": "candidate",
+  "revision": "f808128d",
+  "dataPath": "/tmp/opentui-wave3-memory-gate-ZZRi6K",
+  "startedAt": "2026-08-19T10:36:52.195Z",
+  "wallMs": 56905.239885,
+  "samples": {
+    "steady": {
+      "phase": "A",
+      "mutations": 10000,
+      "windowContentBytes": 58865,
+      "windows": [
+        {
+          "heapUsed": 10929962,
+          "heapTotal": 6112256,
+          "arrayBuffers": 1050,
+          "rss": 246128640,
+          "nativeActiveAllocations": 105
+        },
+        {
+          "heapUsed": 11030671,
+          "heapTotal": 5997568,
+          "arrayBuffers": 1050,
+          "rss": 250482688,
+          "nativeActiveAllocations": 93
+        },
+        {
+          "heapUsed": 11066279,
+          "heapTotal": 6112256,
+          "arrayBuffers": 1050,
+          "rss": 243773440,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11082031,
+          "heapTotal": 6030336,
+          "arrayBuffers": 1050,
+          "rss": 238854144,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11097468,
+          "heapTotal": 6161408,
+          "arrayBuffers": 1050,
+          "rss": 220827648,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11138962,
+          "heapTotal": 6030336,
+          "arrayBuffers": 1050,
+          "rss": 219906048,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11103758,
+          "heapTotal": 6177792,
+          "arrayBuffers": 1050,
+          "rss": 222543872,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11133145,
+          "heapTotal": 6014976,
+          "arrayBuffers": 1050,
+          "rss": 206893056,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11132832,
+          "heapTotal": 6162432,
+          "arrayBuffers": 1050,
+          "rss": 202403840,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11113713,
+          "heapTotal": 6047744,
+          "arrayBuffers": 1050,
+          "rss": 195977216,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11188997,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 190029824,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11223627,
+          "heapTotal": 6080512,
+          "arrayBuffers": 1050,
+          "rss": 186863616,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11225310,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 171151360,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11229691,
+          "heapTotal": 6080512,
+          "arrayBuffers": 1050,
+          "rss": 173178880,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11230577,
+          "heapTotal": 6260736,
+          "arrayBuffers": 1050,
+          "rss": 173096960,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11375071,
+          "heapTotal": 6064128,
+          "arrayBuffers": 1050,
+          "rss": 173035520,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11300475,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 173252608,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11286081,
+          "heapTotal": 6096896,
+          "arrayBuffers": 1050,
+          "rss": 173690880,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11291505,
+          "heapTotal": 6260736,
+          "arrayBuffers": 1050,
+          "rss": 174043136,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11292060,
+          "heapTotal": 6096896,
+          "arrayBuffers": 1050,
+          "rss": 174776320,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11285274,
+          "heapTotal": 6260736,
+          "arrayBuffers": 1050,
+          "rss": 180887552,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11286376,
+          "heapTotal": 6096896,
+          "arrayBuffers": 1050,
+          "rss": 181129216,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11289146,
+          "heapTotal": 6293504,
+          "arrayBuffers": 1050,
+          "rss": 180322304,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11315075,
+          "heapTotal": 6096896,
+          "arrayBuffers": 1050,
+          "rss": 172797952,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11322477,
+          "heapTotal": 6277120,
+          "arrayBuffers": 1050,
+          "rss": 173285376,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11299894,
+          "heapTotal": 6113280,
+          "arrayBuffers": 1050,
+          "rss": 172777472,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11311834,
+          "heapTotal": 6309888,
+          "arrayBuffers": 1050,
+          "rss": 172445696,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11311996,
+          "heapTotal": 6113280,
+          "arrayBuffers": 1050,
+          "rss": 172687360,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11313635,
+          "heapTotal": 6293504,
+          "arrayBuffers": 1050,
+          "rss": 172670976,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11319787,
+          "heapTotal": 6146048,
+          "arrayBuffers": 1050,
+          "rss": 172765184,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11317857,
+          "heapTotal": 6326272,
+          "arrayBuffers": 1050,
+          "rss": 172785664,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 12916627,
+          "heapTotal": 6918144,
+          "arrayBuffers": 1050,
+          "rss": 173473792,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 10769230,
+          "heapTotal": 6359040,
+          "arrayBuffers": 1050,
+          "rss": 175828992,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11406575,
+          "heapTotal": 6178816,
+          "arrayBuffers": 1050,
+          "rss": 174792704,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11437003,
+          "heapTotal": 6391808,
+          "arrayBuffers": 1050,
+          "rss": 175104000,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11462477,
+          "heapTotal": 6178816,
+          "arrayBuffers": 1050,
+          "rss": 175386624,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11463807,
+          "heapTotal": 6408192,
+          "arrayBuffers": 1050,
+          "rss": 175452160,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11462082,
+          "heapTotal": 6195200,
+          "arrayBuffers": 1050,
+          "rss": 175370240,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11479287,
+          "heapTotal": 6424576,
+          "arrayBuffers": 1050,
+          "rss": 175661056,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11501016,
+          "heapTotal": 6176768,
+          "arrayBuffers": 1050,
+          "rss": 176435200,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 10464303,
+          "heapTotal": 6422528,
+          "arrayBuffers": 1050,
+          "rss": 177631232,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9897093,
+          "heapTotal": 6209536,
+          "arrayBuffers": 1050,
+          "rss": 174276608,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9851852,
+          "heapTotal": 6456320,
+          "arrayBuffers": 1050,
+          "rss": 174239744,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9854416,
+          "heapTotal": 6210560,
+          "arrayBuffers": 1050,
+          "rss": 174243840,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9851106,
+          "heapTotal": 6456320,
+          "arrayBuffers": 1050,
+          "rss": 174764032,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9852734,
+          "heapTotal": 6226944,
+          "arrayBuffers": 1050,
+          "rss": 175407104,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9854146,
+          "heapTotal": 6456320,
+          "arrayBuffers": 1050,
+          "rss": 173330432,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9872350,
+          "heapTotal": 6226944,
+          "arrayBuffers": 1050,
+          "rss": 173723648,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9874295,
+          "heapTotal": 6490112,
+          "arrayBuffers": 1050,
+          "rss": 173969408,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9852655,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 173993984,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9856517,
+          "heapTotal": 6522880,
+          "arrayBuffers": 1050,
+          "rss": 174170112,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9863315,
+          "heapTotal": 6277120,
+          "arrayBuffers": 1050,
+          "rss": 173096960,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9862904,
+          "heapTotal": 6539264,
+          "arrayBuffers": 1050,
+          "rss": 173080576,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9863636,
+          "heapTotal": 6293504,
+          "arrayBuffers": 1050,
+          "rss": 172621824,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9864320,
+          "heapTotal": 6539264,
+          "arrayBuffers": 1050,
+          "rss": 173129728,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9924159,
+          "heapTotal": 6260736,
+          "arrayBuffers": 1050,
+          "rss": 175800320,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9927202,
+          "heapTotal": 6522880,
+          "arrayBuffers": 1050,
+          "rss": 178339840,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9904142,
+          "heapTotal": 6293504,
+          "arrayBuffers": 1050,
+          "rss": 178180096,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9906474,
+          "heapTotal": 6572032,
+          "arrayBuffers": 1050,
+          "rss": 178085888,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9904678,
+          "heapTotal": 6309888,
+          "arrayBuffers": 1050,
+          "rss": 177532928,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9868277,
+          "heapTotal": 6572032,
+          "arrayBuffers": 1050,
+          "rss": 175808512,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 13690093,
+          "heapTotal": 9882624,
+          "arrayBuffers": 1050,
+          "rss": 181719040,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11537826,
+          "heapTotal": 6653952,
+          "arrayBuffers": 1050,
+          "rss": 184508416,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9889131,
+          "heapTotal": 6342656,
+          "arrayBuffers": 1050,
+          "rss": 182796288,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9886184,
+          "heapTotal": 6621184,
+          "arrayBuffers": 1050,
+          "rss": 180277248,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9868379,
+          "heapTotal": 6359040,
+          "arrayBuffers": 1050,
+          "rss": 177672192,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9867950,
+          "heapTotal": 6653952,
+          "arrayBuffers": 1050,
+          "rss": 177913856,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9868828,
+          "heapTotal": 6375424,
+          "arrayBuffers": 1050,
+          "rss": 177025024,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9870052,
+          "heapTotal": 6686720,
+          "arrayBuffers": 1050,
+          "rss": 177065984,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9866445,
+          "heapTotal": 6408192,
+          "arrayBuffers": 1050,
+          "rss": 177102848,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9869477,
+          "heapTotal": 6703104,
+          "arrayBuffers": 1050,
+          "rss": 174002176,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9890484,
+          "heapTotal": 6408192,
+          "arrayBuffers": 1050,
+          "rss": 174608384,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9891221,
+          "heapTotal": 6703104,
+          "arrayBuffers": 1050,
+          "rss": 174178304,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9873748,
+          "heapTotal": 6440960,
+          "arrayBuffers": 1050,
+          "rss": 174845952,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9870313,
+          "heapTotal": 6719488,
+          "arrayBuffers": 1050,
+          "rss": 174833664,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9871971,
+          "heapTotal": 6375424,
+          "arrayBuffers": 1050,
+          "rss": 174587904,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9871026,
+          "heapTotal": 6719488,
+          "arrayBuffers": 1050,
+          "rss": 175050752,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9873106,
+          "heapTotal": 6309888,
+          "arrayBuffers": 1050,
+          "rss": 175472640,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9875781,
+          "heapTotal": 6735872,
+          "arrayBuffers": 1050,
+          "rss": 175587328,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9897904,
+          "heapTotal": 6195200,
+          "arrayBuffers": 1050,
+          "rss": 176328704,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9896223,
+          "heapTotal": 6703104,
+          "arrayBuffers": 1050,
+          "rss": 176443392,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9892460,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 179826688,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9922371,
+          "heapTotal": 6719488,
+          "arrayBuffers": 1050,
+          "rss": 180338688,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9924519,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 179404800,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9931669,
+          "heapTotal": 6719488,
+          "arrayBuffers": 1050,
+          "rss": 179675136,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9930979,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 177926144,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9929078,
+          "heapTotal": 6703104,
+          "arrayBuffers": 1050,
+          "rss": 176365568,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9949847,
+          "heapTotal": 6195200,
+          "arrayBuffers": 1050,
+          "rss": 176156672,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9950922,
+          "heapTotal": 6686720,
+          "arrayBuffers": 1050,
+          "rss": 176766976,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9932262,
+          "heapTotal": 6195200,
+          "arrayBuffers": 1050,
+          "rss": 176386048,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9931381,
+          "heapTotal": 6719488,
+          "arrayBuffers": 1050,
+          "rss": 176627712,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9889761,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 173846528,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9893517,
+          "heapTotal": 6735872,
+          "arrayBuffers": 1050,
+          "rss": 174723072,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9891614,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 174886912,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9894355,
+          "heapTotal": 6735872,
+          "arrayBuffers": 1050,
+          "rss": 174559232,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9914638,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 174301184,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9911986,
+          "heapTotal": 6719488,
+          "arrayBuffers": 1050,
+          "rss": 174710784,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9897743,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 175353856,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9893963,
+          "heapTotal": 6735872,
+          "arrayBuffers": 1050,
+          "rss": 175591424,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9904607,
+          "heapTotal": 6195200,
+          "arrayBuffers": 1050,
+          "rss": 176234496,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9921126,
+          "heapTotal": 6735872,
+          "arrayBuffers": 1050,
+          "rss": 174755840,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9925083,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 175476736,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9925572,
+          "heapTotal": 6735872,
+          "arrayBuffers": 1050,
+          "rss": 175652864,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9948162,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 176259072,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9947355,
+          "heapTotal": 6719488,
+          "arrayBuffers": 1050,
+          "rss": 175517696,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9927509,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 175370240,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9925671,
+          "heapTotal": 6735872,
+          "arrayBuffers": 1050,
+          "rss": 173625344,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9927010,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 173043712,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9926027,
+          "heapTotal": 6752256,
+          "arrayBuffers": 1050,
+          "rss": 173883392,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9926748,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 173920256,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9929297,
+          "heapTotal": 6768640,
+          "arrayBuffers": 1050,
+          "rss": 174387200,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9948968,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 174309376,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9950872,
+          "heapTotal": 6719488,
+          "arrayBuffers": 1050,
+          "rss": 174436352,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9925483,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 174219264,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9928347,
+          "heapTotal": 6768640,
+          "arrayBuffers": 1050,
+          "rss": 174866432,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9930565,
+          "heapTotal": 6260736,
+          "arrayBuffers": 1050,
+          "rss": 175583232,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9931043,
+          "heapTotal": 6752256,
+          "arrayBuffers": 1050,
+          "rss": 176312320,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9929926,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 175751168,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9928420,
+          "heapTotal": 6768640,
+          "arrayBuffers": 1050,
+          "rss": 176402432,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9952041,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 176648192,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9949018,
+          "heapTotal": 6768640,
+          "arrayBuffers": 1050,
+          "rss": 175882240,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9931406,
+          "heapTotal": 6260736,
+          "arrayBuffers": 1050,
+          "rss": 175906816,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9932495,
+          "heapTotal": 6785024,
+          "arrayBuffers": 1050,
+          "rss": 175464448,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9928757,
+          "heapTotal": 6260736,
+          "arrayBuffers": 1050,
+          "rss": 175652864,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9927804,
+          "heapTotal": 6785024,
+          "arrayBuffers": 1050,
+          "rss": 175820800,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9752526,
+          "heapTotal": 6226944,
+          "arrayBuffers": 1050,
+          "rss": 176275456,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9543449,
+          "heapTotal": 6784000,
+          "arrayBuffers": 1050,
+          "rss": 177324032,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9537944,
+          "heapTotal": 6259712,
+          "arrayBuffers": 1050,
+          "rss": 174739456,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9539333,
+          "heapTotal": 6800384,
+          "arrayBuffers": 1050,
+          "rss": 175169536,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9507960,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 174833664,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9516959,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 175308800,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9519842,
+          "heapTotal": 6308864,
+          "arrayBuffers": 1050,
+          "rss": 175312896,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9519862,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 175108096,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9519959,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 176033792,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9520891,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 172466176,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9543452,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 175190016,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9545524,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 175558656,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9525354,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 175255552,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9587979,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 176013312,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9587911,
+          "heapTotal": 6308864,
+          "arrayBuffers": 1050,
+          "rss": 176644096,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9585071,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 177274880,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9586953,
+          "heapTotal": 6308864,
+          "arrayBuffers": 1050,
+          "rss": 177676288,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9585760,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 173334528,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9635345,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 176242688,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9636389,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 176328704,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9621054,
+          "heapTotal": 6308864,
+          "arrayBuffers": 1050,
+          "rss": 175640576,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9624073,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 176152576,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9621793,
+          "heapTotal": 6308864,
+          "arrayBuffers": 1050,
+          "rss": 176230400,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9623365,
+          "heapTotal": 6865920,
+          "arrayBuffers": 1050,
+          "rss": 175845376,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9624059,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 176922624,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9621681,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 176812032,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9642725,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 176488448,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9640613,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 176148480,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9624416,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 176275456,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9625370,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 176943104,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9622657,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 177180672,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9623376,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 176947200,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9623628,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 177815552,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9624537,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 178216960,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9645354,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 177455104,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9692900,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 177434624,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9691280,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 177033216,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9722350,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 177475584,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9740042,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 177864704,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9742697,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 178294784,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9738324,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 179200000,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9738008,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 179474432,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9757510,
+          "heapTotal": 6259712,
+          "arrayBuffers": 1050,
+          "rss": 180432896,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9758746,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 178970624,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9735983,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 177987584,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9737029,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 178098176,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9738855,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 178114560,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9736420,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 177586176,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9738401,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 178102272,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9736538,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 178614272,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9758024,
+          "heapTotal": 6259712,
+          "arrayBuffers": 1050,
+          "rss": 179392512,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9758189,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 179695616,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9737065,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 178135040,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9738005,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 178286592,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9737647,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 178114560,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9740622,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 178487296,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9741370,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 178638848,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9746741,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 178155520,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9762783,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 179023872,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9761552,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 179736576,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9743014,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 180031488,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9781375,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 185737216,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9781587,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 183984128,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9780998,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 184287232,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9778194,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 183644160,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9780540,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 184045568,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9801644,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 184180736,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9766035,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 183369728,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9745868,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 184569856,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9742633,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 180477952,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9744609,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 180654080,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9743716,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 180224000,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9744330,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 180383744,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9745616,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 180621312,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9765127,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 181010432,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9764567,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 181436416,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9742507,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 177373184,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9744626,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 179671040,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9745743,
+          "heapTotal": 6308864,
+          "arrayBuffers": 1050,
+          "rss": 179978240,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9743911,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 179716096,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9744154,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 180420608,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9743252,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 180387840,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9764284,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 180948992,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9765780,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 182042624,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9749128,
+          "heapTotal": 6308864,
+          "arrayBuffers": 1050,
+          "rss": 180412416,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9750830,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 180768768,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9752325,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 180498432,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9779248,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 185880576,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9798100,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 186056704,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9799453,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 186912768,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9817620,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 185856000,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9815076,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 185466880,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9797289,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 183107584,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9796725,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 182960128,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9798286,
+          "heapTotal": 6292480,
+          "arrayBuffers": 1050,
+          "rss": 182800384,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9798542,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 181805056,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9795836,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 182009856,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9800900,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 182374400,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9819637,
+          "heapTotal": 6259712,
+          "arrayBuffers": 1050,
+          "rss": 183349248,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9819939,
+          "heapTotal": 6816768,
+          "arrayBuffers": 1050,
+          "rss": 180527104,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9799735,
+          "heapTotal": 6259712,
+          "arrayBuffers": 1050,
+          "rss": 182169600,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9796815,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 182120448,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9800091,
+          "heapTotal": 6259712,
+          "arrayBuffers": 1050,
+          "rss": 181661696,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 11258267,
+          "heapTotal": 8102912,
+          "arrayBuffers": 1086666,
+          "rss": 182157312,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 13809744,
+          "heapTotal": 7580672,
+          "arrayBuffers": 1088010,
+          "rss": 184197120,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 10203643,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 184926208,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9831510,
+          "heapTotal": 6259712,
+          "arrayBuffers": 1050,
+          "rss": 184926208,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9823686,
+          "heapTotal": 6816768,
+          "arrayBuffers": 1050,
+          "rss": 185335808,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9800147,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 185405440,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9802839,
+          "heapTotal": 6849536,
+          "arrayBuffers": 1050,
+          "rss": 182546432,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9804237,
+          "heapTotal": 6276096,
+          "arrayBuffers": 1050,
+          "rss": 182685696,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9804931,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 182243328,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9813003,
+          "heapTotal": 6259712,
+          "arrayBuffers": 1050,
+          "rss": 182730752,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9810497,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 181862400,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9831752,
+          "heapTotal": 6226944,
+          "arrayBuffers": 1050,
+          "rss": 182673408,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9834354,
+          "heapTotal": 6816768,
+          "arrayBuffers": 1050,
+          "rss": 182951936,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9813164,
+          "heapTotal": 6243328,
+          "arrayBuffers": 1050,
+          "rss": 183877632,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9812890,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 182730752,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9810485,
+          "heapTotal": 6243328,
+          "arrayBuffers": 1050,
+          "rss": 182689792,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9813023,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 182267904,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9811005,
+          "heapTotal": 6243328,
+          "arrayBuffers": 1050,
+          "rss": 183652352,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9812381,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 182435840,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9832989,
+          "heapTotal": 6243328,
+          "arrayBuffers": 1050,
+          "rss": 183005184,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9831004,
+          "heapTotal": 6816768,
+          "arrayBuffers": 1050,
+          "rss": 182665216,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9814582,
+          "heapTotal": 6243328,
+          "arrayBuffers": 1050,
+          "rss": 181399552,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9810940,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 182394880,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9812443,
+          "heapTotal": 6243328,
+          "arrayBuffers": 1050,
+          "rss": 182968320,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9813679,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 182722560,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9810407,
+          "heapTotal": 6243328,
+          "arrayBuffers": 1050,
+          "rss": 183558144,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9812773,
+          "heapTotal": 6833152,
+          "arrayBuffers": 1050,
+          "rss": 182476800,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9833122,
+          "heapTotal": 6210560,
+          "arrayBuffers": 1050,
+          "rss": 184430592,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9697029,
+          "heapTotal": 6785024,
+          "arrayBuffers": 1050,
+          "rss": 184352768,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9653314,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 183537664,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9605327,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 180957184,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9602612,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 183640064,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9595932,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 184197120,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9601015,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 183988224,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9602224,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 184152064,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9620337,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 184348672,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9621284,
+          "heapTotal": 6817792,
+          "arrayBuffers": 1050,
+          "rss": 184107008,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9507867,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 184303616,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9509280,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 183984128,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9568406,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 185032704,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9627358,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 184057856,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9624856,
+          "heapTotal": 6260736,
+          "arrayBuffers": 1050,
+          "rss": 184434688,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9626163,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 183918592,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9649183,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 184913920,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9647200,
+          "heapTotal": 6817792,
+          "arrayBuffers": 1050,
+          "rss": 184082432,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9659130,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 184967168,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9659454,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 184610816,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9664451,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 185188352,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9664688,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 185995264,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9662643,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 185511936,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9665751,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 185180160,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9686082,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 184541184,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9683803,
+          "heapTotal": 6817792,
+          "arrayBuffers": 1050,
+          "rss": 183005184,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9668766,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 185475072,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9665137,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 185925632,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9671174,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 186937344,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9668596,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 187850752,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9668156,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 187555840,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9668153,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 186904576,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9687754,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 187658240,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9688202,
+          "heapTotal": 6817792,
+          "arrayBuffers": 1050,
+          "rss": 187252736,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9669400,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 187437056,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9717577,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 186466304,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9745665,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 186187776,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9772325,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 187748352,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9788755,
+          "heapTotal": 6244352,
+          "arrayBuffers": 1050,
+          "rss": 186322944,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9788053,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 186253312,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9808239,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 186122240,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9808162,
+          "heapTotal": 6817792,
+          "arrayBuffers": 1050,
+          "rss": 186642432,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9776083,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 187084800,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9777659,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 187162624,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9776968,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 185847808,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9777320,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 187068416,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9778237,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 186073088,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9776835,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 186781696,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9796327,
+          "heapTotal": 6211584,
+          "arrayBuffers": 1050,
+          "rss": 186998784,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9795336,
+          "heapTotal": 6817792,
+          "arrayBuffers": 1050,
+          "rss": 186695680,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9776623,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 186662912,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9778284,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 187199488,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9775731,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 187682816,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9778056,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 187154432,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9778464,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 187346944,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9779855,
+          "heapTotal": 6834176,
+          "arrayBuffers": 1050,
+          "rss": 186990592,
+          "nativeActiveAllocations": 92
+        },
+        {
+          "heapUsed": 9799984,
+          "heapTotal": 6227968,
+          "arrayBuffers": 1050,
+          "rss": 187662336,
+          "nativeActiveAllocations": 92
+        }
+      ],
+      "queue": {
+        "posted": 0,
+        "started": 0,
+        "completed": 0,
+        "superseded": 0,
+        "postedBytes": 0,
+        "activeHighWater": 0,
+        "pendingJobsHighWater": 0,
+        "pendingBytes": 0,
+        "pendingByteHighWater": 0
+      },
+      "eventLoop": {
+        "p50": 0.062235000001237495,
+        "p95": 98.31838160000116,
+        "p99": 103.96609576000162,
+        "max": 111.49315700000079,
+        "samples": 877
+      },
+      "finalResources": {
+        "buffers": 1,
+        "activeJobs": 0,
+        "pendingJobs": 0,
+        "messageCallbacks": 0,
+        "destroyCallbacks": 0,
+        "hasWorker": true
+      }
+    },
+    "lifecycle": {
+      "phase": "B",
+      "cycles": 100,
+      "warmNativeActiveAllocations": 1,
+      "finalNativeActiveAllocations": 1,
+      "maxNativeActiveAllocations": 1,
+      "warmHeapUsedMedian": 6439563,
+      "finalHeapUsedMedian": 6500125,
+      "lastClientResources": {
+        "buffers": 0,
+        "activeJobs": 0,
+        "pendingJobs": 0,
+        "messageCallbacks": 0,
+        "destroyCallbacks": 0,
+        "hasWorker": false
+      }
+    },
+    "faults": {
+      "phase": "C",
+      "scenarios": [
+        {
+          "name": "C1-update-burst-bound",
+          "afterSettle": {
+            "buffers": 1,
+            "activeJobs": 0,
+            "pendingJobs": 0,
+            "messageCallbacks": 0,
+            "destroyCallbacks": 0,
+            "hasWorker": true
+          },
+          "queue": {
+            "activeHighWater": 1,
+            "pendingJobsHighWater": 1
+          },
+          "finalContentVersion": 201
+        },
+        {
+          "name": "C2-remove-in-flight",
+          "afterSettle": {
+            "buffers": 0,
+            "activeJobs": 0,
+            "pendingJobs": 0,
+            "messageCallbacks": 0,
+            "destroyCallbacks": 0,
+            "hasWorker": true
+          },
+          "queue": {
+            "activeHighWater": 1,
+            "pendingJobsHighWater": 0
+          }
+        },
+        {
+          "name": "C3-destroy-in-flight",
+          "afterSettle": {
+            "buffers": 0,
+            "activeJobs": 0,
+            "pendingJobs": 0,
+            "messageCallbacks": 0,
+            "destroyCallbacks": 0,
+            "hasWorker": false
+          },
+          "queue": {
+            "activeHighWater": 1,
+            "pendingJobsHighWater": 1
+          }
+        },
+        {
+          "name": "C4-coalesce-same-buffer",
+          "afterSettle": {
+            "buffers": 1,
+            "activeJobs": 0,
+            "pendingJobs": 0,
+            "messageCallbacks": 0,
+            "destroyCallbacks": 0,
+            "hasWorker": true
+          },
+          "queue": {
+            "activeHighWater": 1,
+            "pendingJobsHighWater": 1
+          }
+        }
+      ]
+    }
+  },
+  "gates": [
+    {
+      "id": "A1-heap-window-drift",
+      "phase": "A",
+      "pass": true,
+      "value": "lastThirdMedian=9778856 B",
+      "limit": "<= 14120691 B (firstThirdMedian=9926387 + max(5%,4MiB))",
+      "detail": "windows=312"
+    },
+    {
+      "id": "A2-queue-HWM-1-1",
+      "phase": "A",
+      "pass": true,
+      "value": "activeHWM=0, pendingHWM=0",
+      "limit": "active<=1 && pending<=1",
+      "detail": "posted=0, completed=0, superseded=0"
+    },
+    {
+      "id": "A3-pending-bytes-bounded",
+      "phase": "A",
+      "pass": true,
+      "value": "pendingByteHWM=0 B",
+      "limit": "<= 189937 B (window 58865 B + 128KiB)",
+      "detail": "pendingBytes(cuml peak)=0"
+    },
+    {
+      "id": "A4-steady-drains-idle",
+      "phase": "A",
+      "pass": true,
+      "value": "active=0, pending=0",
+      "limit": "active=0 && pending=0",
+      "detail": "buffers=1, callbacks=0, worker=true"
+    },
+    {
+      "id": "B1-native-returns-to-warm-baseline",
+      "phase": "B",
+      "pass": true,
+      "value": "final=1",
+      "limit": "<= 65 (warm=1 + max(64,10%))",
+      "detail": "max=1, cycles=100"
+    },
+    {
+      "id": "B2-lifecycle-heap-window",
+      "phase": "B",
+      "pass": true,
+      "value": "finalMedian=6500125 B",
+      "limit": "<= 10633867 B (warm=6439563)",
+      "detail": "cycles=100"
+    },
+    {
+      "id": "B3-lifecycle-owners-released",
+      "phase": "B",
+      "pass": true,
+      "value": "active=0, pending=0, buffers=0, callbacks=0, worker=false",
+      "limit": "active=0 && pending=0 && buffers=0 && callbacks=0 && !worker",
+      "detail": "terminal client after destroy()"
+    },
+    {
+      "id": "C-C1-update-burst-bound",
+      "phase": "C",
+      "pass": true,
+      "value": "active=0, pending=0, hwm=1/1",
+      "limit": "active=0 && pending=0 && activeHWM<=1 && pendingHWM<=1",
+      "detail": "callbacks=0, worker=true"
+    },
+    {
+      "id": "C-C2-remove-in-flight",
+      "phase": "C",
+      "pass": true,
+      "value": "active=0, pending=0, hwm=1/0",
+      "limit": "active=0 && pending=0 && activeHWM<=1 && pendingHWM<=1",
+      "detail": "callbacks=0, worker=true"
+    },
+    {
+      "id": "C-C3-destroy-in-flight",
+      "phase": "C",
+      "pass": true,
+      "value": "active=0, pending=0, hwm=1/1",
+      "limit": "active=0 && pending=0 && activeHWM<=1 && pendingHWM<=1",
+      "detail": "callbacks=0, worker=false"
+    },
+    {
+      "id": "C-C4-coalesce-same-buffer",
+      "phase": "C",
+      "pass": true,
+      "value": "active=0, pending=0, hwm=1/1",
+      "limit": "active=0 && pending=0 && activeHWM<=1 && pendingHWM<=1",
+      "detail": "callbacks=0, worker=true"
+    }
+  ],
+  "verdict": "PASS"
+}

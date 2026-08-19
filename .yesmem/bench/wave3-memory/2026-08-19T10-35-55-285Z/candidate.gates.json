@@ -1,0 +1,93 @@
+{
+  "gates": [
+    {
+      "id": "A1-heap-window-drift",
+      "phase": "A",
+      "pass": true,
+      "value": "lastThirdMedian=9778856 B",
+      "limit": "<= 14120691 B (firstThirdMedian=9926387 + max(5%,4MiB))",
+      "detail": "windows=312"
+    },
+    {
+      "id": "A2-queue-HWM-1-1",
+      "phase": "A",
+      "pass": true,
+      "value": "activeHWM=0, pendingHWM=0",
+      "limit": "active<=1 && pending<=1",
+      "detail": "posted=0, completed=0, superseded=0"
+    },
+    {
+      "id": "A3-pending-bytes-bounded",
+      "phase": "A",
+      "pass": true,
+      "value": "pendingByteHWM=0 B",
+      "limit": "<= 189937 B (window 58865 B + 128KiB)",
+      "detail": "pendingBytes(cuml peak)=0"
+    },
+    {
+      "id": "A4-steady-drains-idle",
+      "phase": "A",
+      "pass": true,
+      "value": "active=0, pending=0",
+      "limit": "active=0 && pending=0",
+      "detail": "buffers=1, callbacks=0, worker=true"
+    },
+    {
+      "id": "B1-native-returns-to-warm-baseline",
+      "phase": "B",
+      "pass": true,
+      "value": "final=1",
+      "limit": "<= 65 (warm=1 + max(64,10%))",
+      "detail": "max=1, cycles=100"
+    },
+    {
+      "id": "B2-lifecycle-heap-window",
+      "phase": "B",
+      "pass": true,
+      "value": "finalMedian=6500125 B",
+      "limit": "<= 10633867 B (warm=6439563)",
+      "detail": "cycles=100"
+    },
+    {
+      "id": "B3-lifecycle-owners-released",
+      "phase": "B",
+      "pass": true,
+      "value": "active=0, pending=0, buffers=0, callbacks=0, worker=false",
+      "limit": "active=0 && pending=0 && buffers=0 && callbacks=0 && !worker",
+      "detail": "terminal client after destroy()"
+    },
+    {
+      "id": "C-C1-update-burst-bound",
+      "phase": "C",
+      "pass": true,
+      "value": "active=0, pending=0, hwm=1/1",
+      "limit": "active=0 && pending=0 && activeHWM<=1 && pendingHWM<=1",
+      "detail": "callbacks=0, worker=true"
+    },
+    {
+      "id": "C-C2-remove-in-flight",
+      "phase": "C",
+      "pass": true,
+      "value": "active=0, pending=0, hwm=1/0",
+      "limit": "active=0 && pending=0 && activeHWM<=1 && pendingHWM<=1",
+      "detail": "callbacks=0, worker=true"
+    },
+    {
+      "id": "C-C3-destroy-in-flight",
+      "phase": "C",
+      "pass": true,
+      "value": "active=0, pending=0, hwm=1/1",
+      "limit": "active=0 && pending=0 && activeHWM<=1 && pendingHWM<=1",
+      "detail": "callbacks=0, worker=false"
+    },
+    {
+      "id": "C-C4-coalesce-same-buffer",
+      "phase": "C",
+      "pass": true,
+      "value": "active=0, pending=0, hwm=1/1",
+      "limit": "active=0 && pending=0 && activeHWM<=1 && pendingHWM<=1",
+      "detail": "callbacks=0, worker=true"
+    }
+  ],
+  "verdict": "PASS"
+}
