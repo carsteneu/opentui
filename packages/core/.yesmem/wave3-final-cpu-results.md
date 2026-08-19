@@ -127,3 +127,15 @@ nicht gelöst (würde `renderables`/Layout — Loop-D-/Out-of-Scope — berühre
 - Nach allen Diagnoseläufen `ps -C bun` geprüft; keine verwaisten Worker/Bun-Prozesse zurück.
 - Load/Governor protokolliert (Startup-Diagnose: load 6.19/7.69/7.49 → UNCLEAR korrekt).
 - `.yesmem/bench/wave3-final-cpu/` enthält nur Rohdaten/reports, keine `.so`/Heapdumps/Secrets.
+
+## 9. Code Review (Phase 5, 2026-08-19) — merged assessment: With fixes → all applied
+- Stage 1 Self-Review: plan-aligned; worker-exclusion structural; per-arm native enforced on real file SHAs; provenance hardening; digest parity → hard fail; independence of hands clean. No Critical.
+- Stage 2 Cold Review (task() subagent `ses_fe6798fc4ffeF4dx7Lg6MUlLsv`, code-reviewer template): **With fixes**. 0 Critical / 2 Important / 4 Minor.
+- Fixes applied (commit `f28a4986`):
+  - **Important #1** — UNCLEAR load budget was a single start snapshot; now PEAK-sampled continuously across warmups+pairs (both CPU and startup gates).
+  - **Important #2** — startup gate's "familywise" CI was just the plain 95% CI (mislabeled); now Bonferroni-style alpha/6 across 6 comparisons (2 metrics x p50/p95/p99), confidence 99.17% per comparison.
+  - **Minor #4** — commented the classify invariants (allSamplesValid/digestParity guaranteed by buildCpuRows).
+  - **Minor #6** — removed the always-0, misleading `nativeLoadedMs` from the startup probe (+ schema + test).
+  - **Minor #7** — report now states effective CPU comparison count = 4 (2 scenarios x 2 metrics).
+- **Declined with reasoning (#3, #5):** #3 (degrade raced probe to UNCLEAR instead of abort) contradicts the plan's own `classifyCpuGate` which compiles FAIL-on-invalid-sample; kept hard-fail (safe — never fabricates PASS). #5 (RNG reuse) — quantile estimator genuinely differs from the mean-of-log-ratio helper; PRNG duplication accepted as low-risk.
+- Re-verified after fixes: oxfmt conformant, `bun test` cpu+startup+harness = 32 pass / 0 fail.
