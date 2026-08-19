@@ -1124,6 +1124,12 @@ export abstract class Renderable extends BaseRenderable {
     }
   }
 
+  // NOTE: updateFromLayout() caches FFI reads per ctx layout generation. That
+  // invariant assumes every computed-layout change for this node passes through
+  // calculateLayout()/syncExternalLayoutGeneration(), which bump the generation.
+  // Direct calculateLayout()/set*(...) calls on the raw node return through the
+  // normal dirty→calculateLayout pipeline next frame, so the cache stays valid;
+  // only a raw calculateLayout() that never marks dirty would be missed.
   public getLayoutNode(): YogaNode {
     return this.yogaNode
   }

@@ -88,3 +88,37 @@ test("culling stays correct while scrolling (visible rows render, hidden rows el
   expect(counters.renderCommands).toBeGreaterThan(0)
   expect(counters.renderCommands).toBeLessThan(60)
 })
+
+test("real layout mutation escapes the FFI guard (dirty subtree ⇒ reads + fresh geometry)", async () => {
+  const scrollBox = buildCulledScrollBox(300)
+  testRenderer.root.add(scrollBox)
+
+  // Settle into steady state so the guard would be active on the next frame.
+  await renderOnce()
+  await renderOnce()
+  await renderOnce()
+
+  // A new child appended far below the viewport: its layout is unknown until a
+  // real Yoga recalc reads it, so the epoch guard must NOT serve a stale zero.
+  const MARKER = "marker-row-333"
+  scrollBox.add(new TextRenderable(testRenderer, { content: MARKER, height: 1 }))
+  await renderOnce() // dirty-subtree layout pass; marker layout is read via FFI
+
+  const counters = createWave3ScalingCounters()
+  testRenderer.attachWave3ScalingCounters(counters)
+  await renderOnce() // settle follow-up frame
+  testRenderer.attachWave3ScalingCounters(null)
+
+  // Guard must not suppress the mandatory read on a genuinely dirty subtree.
+  expect(counters.updateFromLayoutFfiCalls).toBeGreaterThan(0)
+
+  // Fresh geometry: scroll the marker into view; its content must render.
+  scrollBox.scrollTop = 300
+  await renderOnce()
+  const counter2 = createWave3ScalingCounters()
+  testRenderer.attachWave3ScalingCounters(counter2)
+  await renderOnce()
+  testRenderer.attachWave3ScalingCounters(null)
+  expect(counter2.renderCommands).toBeGreaterThan(0)
+  expect(counter2.renderCommands).toBeLessThan(60) // culling still bounds output
+})
