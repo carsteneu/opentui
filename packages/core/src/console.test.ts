@@ -1,5 +1,5 @@
-import { test, expect, describe, mock, beforeEach } from "bun:test"
-import { TerminalConsole, ConsolePosition } from "./console.js"
+import { test, expect, describe, mock, beforeEach, afterEach } from "bun:test"
+import { capture, TerminalConsole, ConsolePosition } from "./console.js"
 import { MouseEvent } from "./renderer.js"
 import { ManualClock } from "./testing/manual-clock.js"
 
@@ -653,5 +653,109 @@ describe("TerminalConsole", () => {
 
       expect(() => terminalConsole["triggerCopy"]()).not.toThrow()
     })
+  })
+})
+
+describe("Console capture policy refcounting", () => {
+  let createdConsoles: TerminalConsole[]
+  let originalConsole: typeof global.console
+
+  beforeEach(() => {
+    createdConsoles = []
+    originalConsole = global.console
+    capture.claimOutput()
+  })
+
+  afterEach(() => {
+    // Release every activation so later tests see an untouched global console
+    // even when an earlier test failed mid-way.
+    for (const terminalConsole of createdConsoles) {
+      terminalConsole.destroy()
+    }
+    capture.claimOutput()
+  })
+
+  function createConsole(): TerminalConsole {
+    const renderer = {
+      terminalWidth: 100,
+      terminalHeight: 30,
+      width: 100,
+      height: 30,
+      isRunning: false,
+      widthMethod: "cell",
+      requestRender: mock(() => {}),
+      keyInput: {
+        on: mock(() => {}),
+        off: mock(() => {}),
+      },
+    } satisfies MockRenderer
+    const terminalConsole = new TerminalConsole(renderer as any, {
+      position: ConsolePosition.BOTTOM,
+      sizePercent: 30,
+    })
+    createdConsoles.push(terminalConsole)
+    return terminalConsole
+  }
+
+  test("destroying one of two active consoles keeps the capture policy for the other", () => {
+    const first = createConsole()
+    const second = createConsole()
+
+    first.activate()
+    second.activate()
+    expect(global.console).not.toBe(originalConsole)
+
+    first.destroy()
+    // The second overlay still owns the global console capture: log calls keep
+    // being routed to the OpenTUI console cache instead of the original console.
+    expect(global.console).not.toBe(originalConsole)
+    const retainedToken = "still-captured-after-first-destroy"
+    global.console.log(retainedToken)
+    expect(second.getCachedLogs()).toContain(retainedToken)
+
+    second.destroy()
+    // Only after the last owner releases the policy is the console restored.
+    expect(global.console).toBe(originalConsole)
+  })
+
+  test("released consoles no longer route log calls into the cache", () => {
+    const first = createConsole()
+    const second = createConsole()
+
+    first.activate()
+    second.activate()
+    second.destroy()
+    first.destroy()
+    expect(global.console).toBe(originalConsole)
+
+    const releasedToken = "after-full-release"
+    global.console.log(releasedToken)
+    expect(first.getCachedLogs()).not.toContain(releasedToken)
+  })
+
+  test("repeated activation by the same console is idempotent", () => {
+    const terminalConsole = createConsole()
+
+    terminalConsole.activate()
+    const capturedConsole = global.console
+    terminalConsole.activate()
+    expect(global.console).toBe(capturedConsole)
+
+    terminalConsole.deactivate()
+    terminalConsole.deactivate()
+    expect(global.console).toBe(originalConsole)
+  })
+
+  test("deactivating a non-activated console is a no-op", () => {
+    const terminalConsole = createConsole()
+
+    terminalConsole.activate()
+    terminalConsole.deactivate()
+    expect(global.console).toBe(originalConsole)
+
+    // An extra release beyond the activation count must neither restore a
+    // foreign console nor throw.
+    terminalConsole.deactivate()
+    expect(global.console).toBe(originalConsole)
   })
 })
