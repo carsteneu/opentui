@@ -83,6 +83,7 @@ async function main(): Promise<void> {
   const ctorEnd = atMs(marks, "opentui.wave5.ctorEnd")
   const frameEnd = atMs(marks, "opentui.wave5.frameEnd")
   const coreBound = atMs(marks, "opentui.coreBound")
+  const preCoreBind = atMs(marks, "opentui.preCoreBind")
   const nativeLoaded = atMs(marks, "opentui.nativeLoaded")
   const fullBound = atMs(marks, "opentui.fullBound")
   const firstJsRender = atMs(marks, "opentui.firstJsRender")
@@ -99,8 +100,8 @@ async function main(): Promise<void> {
     // Segment durations in ms, all derived from the shared mark clock.
     importMs: delta(marks, "opentui.wave5.importEnd", "opentui.wave5.start"),
     coreBindMs:
-      coreBound !== null && nativeLoaded !== null && beforeResolve !== null
-        ? nativeLoaded - coreBound
+      nativeLoaded !== null && preCoreBind !== null
+        ? nativeLoaded - preCoreBind
         : nativeLoaded !== null && beforeResolve !== null
           ? nativeLoaded - beforeResolve
           : null,

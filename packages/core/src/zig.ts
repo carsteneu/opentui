@@ -1865,11 +1865,9 @@ export type OpentuiSymbolName = keyof typeof opentuiSymbolDefs
 // (packages/core/.yesmem/bench/wave5-core-symbols.txt) plus a defensive buffer.
 // Filled once the trace lands (M1); empty keeps the staged library fully lazy.
 export const opentuiCoreSymbols: readonly OpentuiSymbolName[] = [
-  "addToCurrentHitGridClipped",
   "addToHitGrid",
   "bufferClear",
   "bufferDrawTextBufferView",
-  "clearCurrentHitGrid",
   "createEventSink",
   "createNativeRenderable",
   "createRenderer",
@@ -1881,12 +1879,9 @@ export const opentuiCoreSymbols: readonly OpentuiSymbolName[] = [
   "getCurrentBuffer",
   "getNextBuffer",
   "hitGridClearScissorRects",
-  "hitGridPopScissorRect",
-  "hitGridPushScissorRect",
   "imageRetainIccCache",
   "nativeRenderableAttachYogaNode",
   "nativeRenderableSetMeasureTarget",
-  "renderPartial",
   "renderRetained",
   "resetSplitScrollback",
   "resizeRenderer",
@@ -1997,6 +1992,7 @@ function createStagedSymbolLibrary(resolvedLibPath: string) {
   const eagerKeys: readonly OpentuiSymbolName[] =
     traceActive || opentuiCoreSymbols.length === 0 ? allKeys : opentuiCoreSymbols
 
+  mark("opentui.preCoreBind")
   const primary = dlopen(resolvedLibPath, pickSymbolDefs(eagerKeys))
   const target: Record<string, (...args: any[]) => any> = {}
   for (const key of eagerKeys) {

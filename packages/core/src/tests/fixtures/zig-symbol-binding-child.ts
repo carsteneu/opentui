@@ -133,6 +133,34 @@ async function main(): Promise<void> {
     return
   }
 
+  if (mode === "perf") {
+    // Post-full-bind hot-path overhead: the proxy must degenerate to a plain
+    // property lookup, so repeated calls cost the same as direct FFI wrappers.
+    const lib = resolveRenderLib() as unknown as LibWithSymbols
+    const symbols = lib.opentui.symbols
+    lib.opentui.__opentuiWave5StagedControl?.scheduleFullBind()
+    await new Promise<void>((resolveCallback) => setTimeout(resolveCallback, 200))
+    if (!markNames().includes("opentui.fullBound")) throw new Error("fullBind did not complete in perf mode")
+    const n = 200_000
+    const callable = symbols.yogaSetMeasureCallback as (...args: any[]) => unknown
+    const eager = dlopen(libPath, { yogaSetMeasureCallback: { args: ["ptr"], returns: "void" } }).symbols
+      .yogaSetMeasureCallback
+    // warm
+    for (let k = 0; k < 1_000; k++) callable(null)
+    for (let k = 0; k < 1_000; k++) (eager as (...args: any[]) => unknown)(null)
+    const t0 = performance.now()
+    for (let k = 0; k < n; k++) callable(null)
+    const t1 = performance.now()
+    for (let k = 0; k < n; k++) (eager as (...args: any[]) => unknown)(null)
+    const t2 = performance.now()
+    result({
+      proxyNsPerCall: ((t1 - t0) / n) * 1e6,
+      directNsPerCall: ((t2 - t1) / n) * 1e6,
+      overheadNsPerCall: ((t1 - t0 - (t2 - t1)) / n) * 1e6,
+    })
+    return
+  }
+
   throw new Error(`unknown mode ${mode}`)
 }
 

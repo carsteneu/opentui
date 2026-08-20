@@ -71,6 +71,17 @@ describe("wave5 staged binding", () => {
   )
 
   test(
+    "#5 post-full-bind proxy is pass-through (no per-call overhead)",
+    { skip: requiresNative },
+    async () => {
+      const out = await runChild("perf", nativeLib!)
+      expect(out.overheadNsPerCall as number).toBeGreaterThan(-5)
+      expect(out.overheadNsPerCall as number).toBeLessThan(50)
+    },
+    30_000,
+  )
+
+  test(
     "#4 dispose/destroy is idempotent and close blocks further lazy bind",
     { skip: requiresNative },
     async () => {

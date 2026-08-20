@@ -2,24 +2,23 @@
 
 Derived from the committed M1 first-frame access trace
 (wave5-symbol-access-trace.json, run 2 of 3; all three runs agree on the 51
-pre-commit accesses). CORE = pre-commit (ctor + first native frame) symbols
-missing from any run ∪ 5-symbol defensive buffer for the ScrollBox/partial
-first-frame path (renderPartial + hit-grid scissor helpers).
+pre-commit accesses). CORE = exactly the pre-commit (ctor + first native frame)
+symbols present in every trace run. Any other symbol is DEFERRED: lazy-bound by
+the proxy on first use and pre-bound in the background right after the first
+native commit.
 
 Provenance:
   date:        2026-08-20
   native-sha:  553180957522fcdf2558e899e6d97562555fff238d68d62861a563040008f5cd
   bun:         1.3.14
   trace-runs:  3 (identical pre-commit access sets)
-  core-size:   56  (51 traced + 5 defensive)
+  core-size:   51
 
 The source of truth is the exported `opentuiCoreSymbols` array in zig.ts; this
 file is the committed fixture the binding tests assert against.
-addToCurrentHitGridClipped
 addToHitGrid
 bufferClear
 bufferDrawTextBufferView
-clearCurrentHitGrid
 createEventSink
 createNativeRenderable
 createRenderer
@@ -31,12 +30,9 @@ getBufferWidth
 getCurrentBuffer
 getNextBuffer
 hitGridClearScissorRects
-hitGridPopScissorRect
-hitGridPushScissorRect
 imageRetainIccCache
 nativeRenderableAttachYogaNode
 nativeRenderableSetMeasureTarget
-renderPartial
 renderRetained
 resetSplitScrollback
 resizeRenderer
