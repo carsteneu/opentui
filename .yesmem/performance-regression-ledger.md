@@ -857,6 +857,46 @@ Offene Abweichung und Owner: keine
 Rohdatenpfad: packages/core/.yesmem/bench/wave6-import-graph.md (im Merge)
 ```
 
+### 11.6 Wave-7-Abnahme 2026-08-20 (Upstream-Sync v0.5.5)
+
+```text
+Datum/Run-ID: 2026-08-20 / wave7-upstream-sync
+Candidate: fastpatch 3651d3c1 (Merge origin/main v0.5.5) + 474a7d8d (fmt + Snapshot) — gepusht (fork)
+Vergleichsbasis: 45a8f3b7 (pre-Merge) UND origin/main fdf893d2
+
+Upstream-Umfang: 19 Commits, v0.5.4+v0.5.5 — Zig-Quellen nach packages/native (#1391),
+  Zig-Deps gevendort (#1386, 279 Dateien), Embedded-Terminal-Renderable (#1340, 16 neue
+  FFI-Symbole), FFI-Buffer-Typen ptr→buffer (#1394, 35 Deskriptoren), destroyRenderer+flushInput,
+  OTUI_USE_CONSOLE-Env-Gate, Sixel/Kitty/OSC-52-Fixes, Docs.
+
+Konfliktlösung (Koordinator-Handarbeit, 6+3 Dateien):
+- zig.ts: Wave-5-Staged-Binding behalten; opentuiSymbolDefs = 411 Entries
+    (395 unsere inkl. renderRetained/renderPartial/textBufferAppendStyledText/rendererHasActiveImageState
+    — MERGE-BASE HATTE DIESE NIE, upstream 'fehlten' sie nur deshalb —
+    + 16 embeddedTerminal upstream, + 35 Deskriptor-Swaps zu buffer-Typen)
+- console.ts: R-07-Refcount UND upstream Env-Gate kombiniert (Gate vor Zähler-Exit)
+- Beide Testseiten behalten (unser Strand-Test + upstream Env-Gate-Test) — 71/0
+- package.json/.gitignore/.oxfmtrc: upstream-Layout übernommen, wave3-Gates + .yesmem-Ignores erhalten
+- Snapshot-Update: +EmbeddedTerminalRenderable (einziger legitimer Surface-Delta)
+
+Verifikation (alles selbst gelaufen):
+  build:lib grün (dts) · build:native grün (zig 0.16, neue .so 7c7cdd15 in packages/native/lib/,
+    alle 3 Symbolfamilien via nm verifiziert) · test:js 5725/0 (219 Dateien) ·
+  Fokussuite binding/entrypoints/console 82/0 · oxfmt/oxlint grün nach 474a7d8d ·
+  Startup-Gate gepaart pre-Merge vs. merged (n=12): TTFMF −1,48 % [−18,79/+20,92, CI inkl. 0],
+    Import +3,81 % [inkl. 0] — KEIN Merge-Regress; Wave-5-Staging funktioniert auf neuem
+    Native (Probe ttfm ~106-114 ms, correct, Load ~4-5).
+GOTCHA dokumentiert: python-Konfliktlöse-Script zerstörte zuerst die Symboltabelle (nur 16/411
+  Entries) — Rettung über 'git checkout -m' Re-Konfliktierung + Neuauflösung; Tabellen-Verifikation
+  (Entry-Count/Dupes) ist bei skriptgesteuerten Merges PFLICHT nach jedem Schritt.
+
+Gesamturteil: PASS — upstream v0.5.5 vollständig integriert, alle Wellen-Features und -Perf gehalten
+Offene Abweichung und Owner: keine; CPU-Gate-A/B gegen pre-Merge unter heutiger Last nicht
+  aussagekräfig (paired Startup als Beweis geführt); R-08-Rest/R-09 unverändert
+Rohdatenpfad: packages/core/.yesmem/bench/wave7-merge-startup-verify/
+```
+
+
 
 
 ## 12. Evidenzindex
