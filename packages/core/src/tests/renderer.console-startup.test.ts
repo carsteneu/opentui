@@ -181,30 +181,30 @@ test("CliRenderer consoleMode disabled restores the original console", async () 
 
   expect(global.console).not.toBe(originalConsole)
 
-    renderer.consoleMode = "disabled"
+  renderer.consoleMode = "disabled"
 
-    expect(global.console).toBe(originalConsole)
+  expect(global.console).toBe(originalConsole)
+})
+
+test("CliRenderer re-setting consoleMode to console-overlay does not strand the captured console", async () => {
+  process.env.OTUI_USE_CONSOLE = "true"
+  clearEnvCache()
+
+  const originalConsole = global.console
+
+  const result = await createTestRenderer({
+    consoleMode: "console-overlay",
   })
 
-  test("CliRenderer re-setting consoleMode to console-overlay does not strand the captured console", async () => {
-    process.env.OTUI_USE_CONSOLE = "true"
-    clearEnvCache()
+  renderer = result.renderer
 
-    const originalConsole = global.console
+  renderer.consoleMode = "console-overlay"
+  renderer.consoleMode = "disabled"
 
-    const result = await createTestRenderer({
-      consoleMode: "console-overlay",
-    })
+  expect(global.console).toBe(originalConsole)
+})
 
-    renderer = result.renderer
-
-    renderer.consoleMode = "console-overlay"
-    renderer.consoleMode = "disabled"
-
-    expect(global.console).toBe(originalConsole)
-  })
-
-  test("CliRenderer clamps split footer height to terminal height at startup", async () => {
+test("CliRenderer clamps split footer height to terminal height at startup", async () => {
   const result = await createTestRenderer({
     width: 40,
     height: 5,

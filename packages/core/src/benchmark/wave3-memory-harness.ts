@@ -152,12 +152,7 @@ interface CodeRig {
   syntaxStyle: SyntaxStyle
 }
 
-function newCodeRig(
-  client: TreeSitterClient,
-  width: number,
-  height: number,
-  filetype: string,
-): Promise<CodeRig> {
+function newCodeRig(client: TreeSitterClient, width: number, height: number, filetype: string): Promise<CodeRig> {
   const setupPromise = createTestRenderer({ width, height })
   const syntaxStyle = SyntaxStyle.fromStyles({
     keyword: { fg: "#ff0000" },
@@ -387,8 +382,12 @@ export async function runPhaseBLifecycle(
     warmNativeActiveAllocations,
     finalNativeActiveAllocations,
     maxNativeActiveAllocations,
-    warmHeapUsedMedian: median([...heapUsedPerCycle].slice(0, Math.max(1, Math.floor(heapUsedPerCycle.length / 3))).sort((a, b) => a - b)),
-    finalHeapUsedMedian: median([...heapUsedPerCycle].slice(-Math.max(1, Math.floor(heapUsedPerCycle.length / 3))).sort((a, b) => a - b)),
+    warmHeapUsedMedian: median(
+      [...heapUsedPerCycle].slice(0, Math.max(1, Math.floor(heapUsedPerCycle.length / 3))).sort((a, b) => a - b),
+    ),
+    finalHeapUsedMedian: median(
+      [...heapUsedPerCycle].slice(-Math.max(1, Math.floor(heapUsedPerCycle.length / 3))).sort((a, b) => a - b),
+    ),
     lastClientResources,
   }
 }
@@ -401,7 +400,10 @@ export interface PhaseCOptions {
   supersedeBurst?: number
 }
 
-async function freshClientResources(client: TreeSitterClient, waitMs: number): Promise<FaultScenarioResult["afterSettle"]> {
+async function freshClientResources(
+  client: TreeSitterClient,
+  waitMs: number,
+): Promise<FaultScenarioResult["afterSettle"]> {
   await new Promise((resolve) => setTimeout(resolve, waitMs))
   const r = snapshotClientResources(client)
   return {
@@ -504,7 +506,10 @@ export async function runPhaseCFaults(
       await createBuffer(client, bufferId)
       const first = updateContent(client, bufferId, "let same = 1", 2)
       await first
-      const bursts = [updateContent(client, bufferId, "let same = 2", 3), updateContent(client, bufferId, "let same = 3", 4)]
+      const bursts = [
+        updateContent(client, bufferId, "let same = 2", 3),
+        updateContent(client, bufferId, "let same = 3", 4),
+      ]
       await Promise.all(bursts.map((p) => p.catch(() => undefined)))
       await waitForIdle(client, 5000)
       scenarios.push({
@@ -572,8 +577,14 @@ export function evaluateMemoryGates(samples: MemorySamplesByPhase): GateResult[]
   {
     const windows = samples.steady.windows
     const third = Math.max(1, Math.floor(windows.length / 3))
-    const first = windows.slice(0, third).map((w) => w.heapUsed).sort((a, b) => a - b)
-    const last = windows.slice(-third).map((w) => w.heapUsed).sort((a, b) => a - b)
+    const first = windows
+      .slice(0, third)
+      .map((w) => w.heapUsed)
+      .sort((a, b) => a - b)
+    const last = windows
+      .slice(-third)
+      .map((w) => w.heapUsed)
+      .sort((a, b) => a - b)
     const medFirst = median(first)
     const medLast = median(last)
     const limit = medFirst + Math.max(0.05 * medFirst, 4 * MB)
@@ -661,7 +672,8 @@ export function evaluateMemoryGates(samples: MemorySamplesByPhase): GateResult[]
   // B3: after full destroy all owned resources are released.
   {
     const r = samples.lifecycle.lastClientResources
-    const pass = r.activeJobs === 0 && r.pendingJobs === 0 && r.buffers === 0 && r.messageCallbacks === 0 && !r.hasWorker
+    const pass =
+      r.activeJobs === 0 && r.pendingJobs === 0 && r.buffers === 0 && r.messageCallbacks === 0 && !r.hasWorker
     gates.push({
       id: "B3-lifecycle-owners-released",
       phase: "B",

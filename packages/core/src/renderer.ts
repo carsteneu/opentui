@@ -1799,28 +1799,28 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
   }
 
-    public set consoleMode(mode: ConsoleMode) {
-      if (mode === "console-overlay") {
-        if (this._useConsole) {
-          return
-        }
-        const terminalConsole = this.materializeConsole()
-        if (!terminalConsole) {
-          throw new Error(
-            "Console overlay is not installed. Import @opentui/core or @opentui/core/console before enabling it.",
-          )
-        }
-        this._useConsole = true
-        terminalConsole.activate()
+  public set consoleMode(mode: ConsoleMode) {
+    if (mode === "console-overlay") {
+      if (this._useConsole) {
         return
       }
-
-      if (!this._useConsole) {
-        return
+      const terminalConsole = this.materializeConsole()
+      if (!terminalConsole) {
+        throw new Error(
+          "Console overlay is not installed. Import @opentui/core or @opentui/core/console before enabling it.",
+        )
       }
-      this._useConsole = false
-      this._console?.deactivate()
+      this._useConsole = true
+      terminalConsole.activate()
+      return
     }
+
+    if (!this._useConsole) {
+      return
+    }
+    this._useConsole = false
+    this._console?.deactivate()
+  }
 
   public get isRunning(): boolean {
     return this._isRunning
