@@ -1946,11 +1946,14 @@ function wrapDebugSymbol(name: string, value: (...args: any[]) => any): (...args
   let wrapped: (...args: any[]) => any = value
   if (env.OTUI_DEBUG_FFI && globalFFILogPath) {
     const logPath = globalFFILogPath
+    // Keep string args (e.g. titles) from forging debug-log lines.
+    const escapeLog = (value: unknown): string =>
+      String(value).replaceAll("\n", "\\n").replaceAll("\r", "\\r").replaceAll("\t", "\\t")
     const original = wrapped
     wrapped = (...args) => {
-      writeFileSync(logPath, `${name}(${args.map((arg) => String(arg)).join(", ")})\n`, { flag: "a" })
+      writeFileSync(logPath, `${name}(${args.map(escapeLog).join(", ")})\n`, { flag: "a" })
       const result = original(...args)
-      writeFileSync(logPath, `${name} returned: ${String(result)}\n`, { flag: "a" })
+      writeFileSync(logPath, `${name} returned: ${escapeLog(result)}\n`, { flag: "a" })
       return result
     }
   }
