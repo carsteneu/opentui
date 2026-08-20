@@ -167,12 +167,13 @@ run `bun packages/core/scripts/wave3-clean-gate-cpu.ts --baseline-root=<fastpatc
 
 ## Round 3 — chunked full-bind (2026-08-20 14:49, second verification round)
 
-Coordinator 2nd verify (working build host; CORE 78 in place, diff `d70f4b9e`): cold-1000
+Coordinator 2nd verify (`packages/core/.yesmem/bench/wave5-cpu-ab2-verify/`, baseline 13dc7193
+vs candidate 271fd0bb = CORE 78 in place, 10 paired, per-arm natives): cold-1000
 `updateToStyledCommit +27.71 % CI [+11.11, +50.55]` — CI still excludes 0; warm now neutral
-(−0.87 %, was +13.4 %, so the CORE-78 streaming additions DID fix warm). Native exonerated
-(candidate code + baseline native shows the same regression). Stage decomposition
-(cold-1000): candidate `733 ms = workerWait 615 + main 115` vs baseline `431 = workerWait 328
-+ main ~103` → **+287 ms attributed to the worker-wait window**.
+(−0.87 %, was +13.4 %, so the CORE-78 streaming additions DID fix warm); workerWait p50
+baseline 138.7 → candidate 180.0 ms. Native exonerated (candidate code + baseline native shows
+the same regression; stage decomposition: candidate 733 ms = workerWait 615 + main 115 vs
+baseline 431 = workerWait 328 + main ~103 → the +287 ms sits in the worker-wait window).
 
 **Independent root-cause evidence (this sandbox, `wave5-stream-trace.ts --staged`):**
 - `inWindowDeferredBounds = []` — zero main-thread trap-misses in the measured window (CORE 78
@@ -183,8 +184,7 @@ Coordinator 2nd verify (working build host; CORE 78 in place, diff `d70f4b9e`): 
   `workerWait` gap, not worker-owned zig traps (`parser.worker.ts` imports no zig/staged path).
   This matches the coordinator's fix directive in effect (A: independent of render; B: chunk it).
 
-**Fix (JS-only, no CORE growth; commit `wave5-round3` = the chunked-full-bind commit on
-`yesloop/wave5-startup-binding`):**
+**Fix (JS-only, no CORE growth; commit `78859ef5` on `yesloop/wave5-startup-binding`):**
 - **B — time-sliced full-bind:** `scheduleFullBind()` now drives `runFullBindSlices()` which
   binds the deferred table in chunks of `FULL_BIND_SLICE = 40` symbols per `dlopen`, yielding to
   the event loop (`setTimeout(0)`) between slices so queued worker/generation messages get
