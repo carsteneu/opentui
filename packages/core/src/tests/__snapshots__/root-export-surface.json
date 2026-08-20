@@ -41,6 +41,7 @@
   "EditBufferRenderable",
   "EditBufferRenderableEvents",
   "EditorView",
+  "EmbeddedTerminalRenderable",
   "ExtmarksController",
   "FlamesEffect",
   "FrameBuffer",
