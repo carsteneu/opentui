@@ -79,17 +79,57 @@ embeddedTerminal-Familie und die Kern-Render-Familie.
 
 ## 6. Verifikationskette (vollständig, in dieser Reihenfolge)
 
+Alle Befehle ab `packages/core/` (außer test:js — root).
+
 1. `bun run build:lib` (dts) — grün
 2. `bun run build:native` — grün, nm-Check (§5)
-3. `bun run test:js` — voll, erwartet 5.725+/0 (Zahl wächst mit upstream-Tests)
-4. Fokussuite binding/entrypoints/console — grün (82/0 Stand v0.5.5)
+3. `bun run test:js` (root) — voll, erwartet 5.725+/0 (Zahl wächst mit upstream-Tests)
+4. Fokussuite binding/entrypoints/console — grün (Stand v0.5.5: 82/0):
+   ```bash
+   bun test src/tests/zig-symbol-binding.test.ts \
+             src/tests/package-entrypoints.test.ts \
+             src/tests/entrypoint-import-graph.test.ts \
+             src/tests/renderer.console-startup.test.ts
+   ```
 5. oxfmt + oxlint — grün (sonst nachbessern, das ist ok)
-6. Root-Export-Snapshot: nur legitime neue upstream-Exporte als Delta
-   (v0.5.5: +EmbeddedTerminalRenderable). Snapshot-Datei aktualisieren,
-   Delta in der Commit-Message begründen.
-7. Startup-Gate GEPAAART pre-Merge vs. merged (n=12 reicht als
+6. Root-Export-Snapshot: `src/tests/__snapshots__/root-export-surface.json`
+   — nur legitime neue upstream-Exporte als Delta (v0.5.5: +EmbeddedTerminalRenderable).
+   Snapshot-Datei aktualisieren, Delta in der Commit-Message begründen.
+7. Startup-Gate GEPAART pre-Merge vs. merged (n=12 reicht als
    Regress-Beweis): TTFMF-Delta mit CI, CI darf 0 einschließen; Load
    protokollieren. (Formale n=30 bleibt R-03-parked.)
+
+## 6a. Werkzeug-Index (Pfade)
+
+**Gates / Mess-Skripte** (packages/core, via package.json-Aliase):
+- `bun run bench:wave3:startup-gate` → scripts/wave3-startup-gate.ts
+  (gepaartes Startup-A/B, Bootstrap-CI; verwendet in Schritt 7)
+- `bun run bench:wave3:cpu-gate` → scripts/wave3-clean-gate-cpu.ts
+  (gepaartes Streaming-CPU-A/B cold/warm)
+- `bun run bench:wave3:memory:ab` → scripts/wave3-memory-ab.ts
+  (Eventloop-p99; VOR formaler Nutzung Load-Guard lesen — Ledger-Warnung)
+- `bun scripts/wave5-startup-breakdown.ts --native-path=<abs .so>`
+  (Startup-Zerlegung Import/Core-Bind/TTFMF; Native-Pfad angeben)
+- `bun scripts/wave5-stream-trace.ts` (Trace-Modus: Symbol-Zugriffe
+  der primären Workloads → CORE-Abdeckungs-Check)
+
+**Dokumente:**
+- `.yesmem/performance-regression-ledger.md` — Abnahmen §11.1–11.6,
+  Risiko-Register R-01…R-09, GOTCHAs (Mess-Arm-Hardlinks, Load-Pollution)
+- `PERFORMANCE.md` (Repo-Root, EN, öffentlich) — Wellen-Report mit
+  Headline-Zahlen; nur bei neuen Gates aktualisieren
+- `.yesmem/upstream-merge-playbook.md` — dieses Dokument
+- Rohdaten/Evidence: `.yesmem/bench/` (root) und
+  `packages/core/.yesmem/bench/` — pro Run: raw.ndjson, report.md,
+  summary.json; Provenanz (Revs, nativeSha256, Load) steckt im NDJSON-Header
+
+**Verifikations-Ziele:**
+- Symboltabelle: packages/core/src/zig.ts (opentuiSymbolDefs, 411 Entries)
+- Staged-Binding-Struktur: createStagedSymbolLibrary in zig.ts
+  (Tests: src/tests/zig-symbol-binding.test.ts)
+- Entry-Split: src/renderer-entry.ts / src/zig-entry.ts + obige
+  Entrypoint-Tests
+- Export-Surface: src/tests/__snapshots__/root-export-surface.json
 
 ## 7. Publish-Hygiene (seit Scrub 2026-08-20)
 
