@@ -928,7 +928,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private pendingExternalOutputMode: ExternalOutputMode | null = null
   private realStdoutWrite: (chunk: any, encoding?: any, callback?: any) => boolean
 
-  private _useConsole: boolean = true
+  private _useConsole: boolean = false
   private sigwinchHandler: () => void = (() => {
     const width = this.stdout.columns || 80
     const height = this.stdout.rows || 24
