@@ -2,7 +2,7 @@
 
 - agent: agent-20260820-03 (yesloop wave5-startup-binding)
 - branch/worktree: `wave5-startup-binding`
-- commits: `4e5d950f` (staged FFI machinery + M1 trace), `3782c17b` (CORE trim 51 + measurement fix + perf test)
+- commits: `4e5d950f` (staged FFI machinery + M1 trace), `3782c17b` (CORE trim 51 + measurement fix + perf test), `d70f4b9e` (CORE 55→78 code-streaming working set — CPU-gate finding fix)
 - date: 2026-08-20 13:47 UTC
 - runtime: bun 1.3.14, node v24.3.0 (probe), zig 0.16.0 (local native build), system zig 0.15.2 (unused)
 - native: `packages/core/src/zig/lib/x86_64-linux/libopentui.so` (built in-worktree), sha256 `553180957522fcdf2558e899e6d97562555fff238d68d62861a563040008f5cd`, full symbol set (renderRetained + textBufferAppendStyledText present, 1809 exports)
