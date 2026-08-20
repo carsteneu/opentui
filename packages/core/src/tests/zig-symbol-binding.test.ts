@@ -20,18 +20,34 @@ const BENCH_DIR = join(PACKAGE_ROOT, ".yesmem", "bench")
 const FIXTURES_DIR = join(import.meta.dir, "fixtures")
 
 describe("wave5 staged binding", () => {
-  test("#1 CORE set covers the committed first-frame access trace", () => {
-    const trace = JSON.parse(readFileSync(join(BENCH_DIR, "wave5-symbol-access-trace.json"), "utf8")) as {
-      firstNativeCommitAtMs: number
-      accesses: Array<{ name: string; atMs: number }>
-    }
-    const tracedBeforeCommit = new Set(
-      trace.accesses.filter((a) => a.atMs <= trace.firstNativeCommitAtMs).map((a) => a.name),
-    )
+  test("#1 CORE set covers the committed first-frame + streaming access traces", () => {
+    const readTrace = (file: string, preCommitOnly = false) =>
+      JSON.parse(readFileSync(join(BENCH_DIR, file), "utf8")) as {
+        firstNativeCommitAtMs?: number
+        accesses: Array<{ name: string; atMs: number }>
+      }
+    // TextRenderable start: only the pre-first-native-commit accesses.
+    const textTrace = readTrace("wave5-symbol-access-trace.json")
+    // CodeRenderable cold-1000 + warm-1000-append100: the full cold scenario
+    // through the measured styled commit. Symbols the primary workload uses
+    // between the first native commit and the background full-bind pay a
+    // per-access trap-miss dlopen (wave5-cpu-gate finding), so the whole
+    // streaming working set must be eager CORE, not just the pre-commit slice.
+    const streamTrace = readTrace("wave5-symbol-access-trace-stream.json")
+    const streamWarmTrace = readTrace("wave5-symbol-access-trace-stream-warm.json")
+
+    const tracedNeeded = new Set<string>([
+      ...textTrace.accesses.filter((a) => a.atMs <= (textTrace.firstNativeCommitAtMs ?? Infinity)).map((a) => a.name),
+      ...streamTrace.accesses.map((a) => a.name),
+      ...streamWarmTrace.accesses.map((a) => a.name),
+    ])
 
     expect(opentuiCoreSymbols.length).toBeGreaterThan(0)
-    const missing = [...tracedBeforeCommit].filter((name) => !opentuiCoreSymbols.includes(name as never))
+    const missing = [...tracedNeeded].filter((name) => !opentuiCoreSymbols.includes(name as never))
     expect(missing).toEqual([])
+    // Escalation threshold from the plan: CORE must stay bounded so the eager
+    // dlopen does not reintroduce the pre-split startup cost.
+    expect(opentuiCoreSymbols.length).toBeLessThanOrEqual(120)
   }, 20_000)
 
   const nativeLib = findNativeLibrary()

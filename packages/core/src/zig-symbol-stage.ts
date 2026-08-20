@@ -4,18 +4,33 @@
 // zig.ts) does not surface FFI-staging mechanics as public API. zig.ts imports
 // from here; the binding tests do the same.
 //
-// CORE = the 51 symbols the FFIRenderLib ctor + first native frame touch
-// (committed M1 access trace, packages/core/.yesmem/bench/wave5-symbol-access-
-// trace.json) plus the 4 render-commit trigger symbols (render,
-// renderPartial, repaintSplitFooter, commitSplitFooterSnapshot): a real
-// interactive first commit calls render()/renderPartial(), so the trigger path
-// that should stay fast must be eager, not trapped on the critical path. All
-// other symbols are DEFERRED: lazy-bound through the proxy on first use and
+// CORE = the union of the committed M1 access traces covering the primary
+// OpenTUI workloads:
+//   - the FFIRenderLib ctor + first native frame (51 symbols,
+//     wave5-symbol-access-trace.json),
+//   - the 4 render-commit trigger symbols (render, renderPartial,
+//     repaintSplitFooter, commitSplitFooterSnapshot): a real interactive first
+//     commit calls render()/renderPartial(), so the trigger path must be eager,
+//     not trapped on the critical path,
+//   - the cold code-streaming path (CodeRenderable cold-1000,
+//     wave5-symbol-access-trace-stream.json): symbols the primary workload
+//     touches between the first native commit and the background full-bind;
+//     each would otherwise pay an individual trap-miss dlopen inside the
+//     measured CPU window (wave5-cpu-ab finding),
+//   - the warm append path (CodeRenderable warm-1000-append100,
+//     wave5-symbol-access-trace-stream-warm.json).
+// All other symbols are DEFERRED: lazy-bound through the proxy on first use and
 // pre-bound in full when the first commit fires.
 export const opentuiCoreSymbols: readonly string[] = [
   "addToHitGrid",
   "bufferClear",
   "bufferDrawTextBufferView",
+  "bufferGetAttributesPtr",
+  "bufferGetBgPtr",
+  "bufferGetCharPtr",
+  "bufferGetFgPtr",
+  "bufferGetRealCharSize",
+  "bufferWriteResolvedChars",
   "commitSplitFooterSnapshot",
   "createEventSink",
   "createNativeRenderable",
@@ -23,11 +38,20 @@ export const opentuiCoreSymbols: readonly string[] = [
   "createSyntaxStyle",
   "createTextBuffer",
   "createTextBufferView",
+  "destroyEventSink",
+  "destroyNativeRenderable",
+  "destroyRenderer",
+  "destroySyntaxStyle",
+  "destroyTextBuffer",
+  "destroyTextBufferView",
   "getBufferHeight",
   "getBufferWidth",
   "getCurrentBuffer",
+  "getCursorState",
+  "getHitGridDirty",
   "getNextBuffer",
   "hitGridClearScissorRects",
+  "imageReleaseIccCache",
   "imageRetainIccCache",
   "nativeRenderableAttachYogaNode",
   "nativeRenderableSetMeasureTarget",
@@ -43,6 +67,8 @@ export const opentuiCoreSymbols: readonly string[] = [
   "setRenderOffset",
   "setTerminalEnvVar",
   "setUseThread",
+  "syntaxStyleRegister",
+  "textBufferAppendStyledText",
   "textBufferGetByteSize",
   "textBufferGetLength",
   "textBufferSetDefaultAttributes",
@@ -50,22 +76,28 @@ export const opentuiCoreSymbols: readonly string[] = [
   "textBufferSetDefaultFg",
   "textBufferSetStyledText",
   "textBufferSetSyntaxStyle",
+  "textBufferViewGetLogicalLineInfoDirect",
   "textBufferViewSetFirstLineOffset",
   "textBufferViewSetTruncate",
   "textBufferViewSetViewport",
   "textBufferViewSetWrapMode",
   "textBufferViewSetWrapWidth",
+  "updateStats",
   "yogaNodeCalculateLayout",
   "yogaNodeCreateForOpenTUI",
   "yogaNodeFree",
   "yogaNodeGetComputedLayout",
+  "yogaNodeGetHasNewLayout",
   "yogaNodeInsertChild",
   "yogaNodeIsDirty",
   "yogaNodeMarkDirty",
+  "yogaNodeRemoveChild",
   "yogaNodeSetHasNewLayout",
   "yogaNodeStyleSetEnum",
   "yogaNodeStyleSetFloat",
   "yogaNodeStyleSetValue",
   "yogaNodeUnsetDirtiedFunc",
   "yogaNodeUnsetMeasureFunc",
+  "yogaSetDirtiedCallback",
+  "yogaSetMeasureCallback",
 ]

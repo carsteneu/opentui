@@ -24,6 +24,13 @@ function markNames(): string[] {
   return getTelemetrySnapshot().marks.map((m) => m.name)
 }
 
+// A symbol that stays DEFERRED under the current CORE set (not in
+// opentuiCoreSymbols): no args, void return, so both the trapped wrapper and a
+// direct eager dlopen can be invoked safely with an identical observable
+// result.
+const DEFERRED_TRAP = "imageTestFailIccProfileCopyAllocationOnce"
+const DEFERRED_TRAP_DEF = { args: [] as string[], returns: "void" }
+
 async function main(): Promise<void> {
   setTelemetryEnabled(true)
   const mode = process.argv[2]
@@ -33,23 +40,22 @@ async function main(): Promise<void> {
 
   if (mode === "trap") {
     const symbols = (resolveRenderLib() as unknown as LibWithSymbols).opentui.symbols
-    const trapped = symbols.yogaSetMeasureCallback
-    const cached = symbols.yogaSetMeasureCallback
+    const trapped = symbols[DEFERRED_TRAP]
+    const cached = symbols[DEFERRED_TRAP]
     // Eager reference: direct single-symbol dlopen of the same native; both
     // must produce the same observable call result.
-    const eager = dlopen(libPath, { yogaSetMeasureCallback: { args: ["ptr"], returns: "void" } }).symbols
-      .yogaSetMeasureCallback
+    const eager = dlopen(libPath, { [DEFERRED_TRAP]: DEFERRED_TRAP_DEF }).symbols[DEFERRED_TRAP]
     let trappedResult: unknown = "no-call"
     let eagerResult: unknown = "no-call"
     let trappedThrew = ""
     let eagerThrew = ""
     try {
-      trappedResult = (trapped as (...args: any[]) => unknown)(null)
+      trappedResult = (trapped as (...args: any[]) => unknown)()
     } catch (error) {
       trappedThrew = error instanceof Error ? error.message : String(error)
     }
     try {
-      eagerResult = (eager as (...args: any[]) => unknown)(null)
+      eagerResult = (eager as (...args: any[]) => unknown)()
     } catch (error) {
       eagerThrew = error instanceof Error ? error.message : String(error)
     }
@@ -62,7 +68,7 @@ async function main(): Promise<void> {
       trappedThrew,
       eagerThrew,
       resultEqual: typeof trappedResult === typeof eagerResult,
-      deferredMarked: marks.includes("opentui.deferredBound.yogaSetMeasureCallback"),
+      deferredMarked: marks.includes(`opentui.deferredBound.${DEFERRED_TRAP}`),
     })
     return
   }
@@ -71,7 +77,7 @@ async function main(): Promise<void> {
     const lib = resolveRenderLib() as unknown as LibWithSymbols
     const symbols = lib.opentui.symbols
     const control = lib.opentui.__opentuiWave5StagedControl
-    const f1 = symbols.yogaSetMeasureCallback
+    const f1 = symbols[DEFERRED_TRAP]
     control?.scheduleFullBind()
     await new Promise<void>((resolveCallback) => setTimeout(resolveCallback, 200))
     const marks = markNames()
@@ -80,15 +86,14 @@ async function main(): Promise<void> {
     let trappedCallThrew = ""
     let trappedCallResult: unknown = "no-call"
     try {
-      trappedCallResult = (f1 as (...args: any[]) => unknown)(null)
+      trappedCallResult = (f1 as (...args: any[]) => unknown)()
     } catch (error) {
       trappedCallThrew = error instanceof Error ? error.message : String(error)
     }
     result({
-      boundViaTrap:
-        typeof f1 === "function" && markNames().some((n) => n === "opentui.deferredBound.yogaSetMeasureCallback"),
+      boundViaTrap: typeof f1 === "function" && markNames().some((n) => n === `opentui.deferredBound.${DEFERRED_TRAP}`),
       fullBoundMarked: marks.includes("opentui.fullBound"),
-      sameIdentityAfterFullBind: symbols.yogaSetMeasureCallback === f1,
+      sameIdentityAfterFullBind: symbols[DEFERRED_TRAP] === f1,
       neverAccessedIsFunction: typeof symbols.setDebugOverlay === "function",
       neverAccessedTrapped: marks.some((n) => n === "opentui.deferredBound.setDebugOverlay"),
       fullyBoundStillFunctional: typeof symbols.yogaSetDirtiedCallback === "function",
@@ -114,7 +119,7 @@ async function main(): Promise<void> {
       originalDestroyEventSink(...args)
     }
     // Pre-dispose deferred access must resolve lazily.
-    const preDispose = symbols.yogaSetDirtiedCallback
+    const preDispose = symbols[DEFERRED_TRAP]
     let firstOk = true
     let secondOk = true
     try {
@@ -127,7 +132,7 @@ async function main(): Promise<void> {
     } catch {
       secondOk = false
     }
-    const alreadyBoundAfterClose = symbols.yogaSetDirtiedCallback === preDispose
+    const alreadyBoundAfterClose = symbols[DEFERRED_TRAP] === preDispose
     // A never-bound deferred key after close must NOT trigger a new dlopen.
     const afterCloseUnbound = symbols.setDebugOverlay
     const marks = markNames()

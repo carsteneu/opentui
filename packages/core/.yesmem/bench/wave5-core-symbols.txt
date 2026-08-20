@@ -1,23 +1,35 @@
 # Wave-5 CORE symbol set (staged FFI binding)
 
-CORE = the 51 symbols the FFIRenderLib ctor + first native frame touch
-(committed M1 access trace, wave5-symbol-access-trace.json, run 2 of 3; all
-three runs agree on the 51 pre-commit accesses) plus the 4 render-commit
-trigger symbols (render, renderPartial, repaintSplitFooter,
-commitSplitFooterSnapshot): a real interactive first commit calls render()/
-renderPartial(), so the trigger path stays eager. Total 55.
+CORE = the union of the committed M1 access traces covering the primary
+OpenTUI workloads (source of truth: opentuiCoreSymbols in
+src/zig-symbol-stage.ts):
 
-Any other symbol is DEFERRED: lazy-bound by the proxy on first use and pre-bound
-in the background right after the first native commit.
+  - 51 symbols the FFIRenderLib ctor + first native frame touch
+    (wave5-symbol-access-trace.json),
+  - 4 render-commit trigger symbols (render, renderPartial,
+    repaintSplitFooter, commitSplitFooterSnapshot) -> trigger path eager,
+  - cold code-streaming path, CodeRenderable cold-1000
+    (wave5-symbol-access-trace-stream.json): symbols used between first native
+    commit and background full-bind (wave5-cpu-ab finding),
+  - warm append path, CodeRenderable warm-1000-append100
+    (wave5-symbol-access-trace-stream-warm.json).
 
-Source of truth: exported opentuiCoreSymbols in src/zig-symbol-stage.ts (kept
-out of the package barrel so staging mechanics are not public API); the binding
-tests assert it covers this trace. FFI table total: 376 symbols.
+Total 78 symbols. Any other symbol is DEFERRED: lazy-bound by the proxy on
+first use and pre-bound in the background right after the first native commit.
 
-Provenance: date 2026-08-20, native-sha 553180957522fcdf2558e899e6d97562555fff238d68d62861a563040008f5cd, bun 1.3.14, trace-runs 3 (identical pre-commit access sets).
+Provenance: date 2026-08-20 (amended), native-sha
+553180957522fcdf2558e899e6d97562555fff238d68d62861a563040008f5cd, bun 1.3.14,
+trace fixtures: text (pre-commit) + cold-1000 + warm-1000-append100.
+FFI table total: 376 symbols.
 addToHitGrid
 bufferClear
 bufferDrawTextBufferView
+bufferGetAttributesPtr
+bufferGetBgPtr
+bufferGetCharPtr
+bufferGetFgPtr
+bufferGetRealCharSize
+bufferWriteResolvedChars
 commitSplitFooterSnapshot
 createEventSink
 createNativeRenderable
@@ -25,11 +37,20 @@ createRenderer
 createSyntaxStyle
 createTextBuffer
 createTextBufferView
+destroyEventSink
+destroyNativeRenderable
+destroyRenderer
+destroySyntaxStyle
+destroyTextBuffer
+destroyTextBufferView
 getBufferHeight
 getBufferWidth
 getCurrentBuffer
+getCursorState
+getHitGridDirty
 getNextBuffer
 hitGridClearScissorRects
+imageReleaseIccCache
 imageRetainIccCache
 nativeRenderableAttachYogaNode
 nativeRenderableSetMeasureTarget
@@ -45,6 +66,8 @@ setLogCallback
 setRenderOffset
 setTerminalEnvVar
 setUseThread
+syntaxStyleRegister
+textBufferAppendStyledText
 textBufferGetByteSize
 textBufferGetLength
 textBufferSetDefaultAttributes
@@ -52,21 +75,27 @@ textBufferSetDefaultBg
 textBufferSetDefaultFg
 textBufferSetStyledText
 textBufferSetSyntaxStyle
+textBufferViewGetLogicalLineInfoDirect
 textBufferViewSetFirstLineOffset
 textBufferViewSetTruncate
 textBufferViewSetViewport
 textBufferViewSetWrapMode
 textBufferViewSetWrapWidth
+updateStats
 yogaNodeCalculateLayout
 yogaNodeCreateForOpenTUI
 yogaNodeFree
 yogaNodeGetComputedLayout
+yogaNodeGetHasNewLayout
 yogaNodeInsertChild
 yogaNodeIsDirty
 yogaNodeMarkDirty
+yogaNodeRemoveChild
 yogaNodeSetHasNewLayout
 yogaNodeStyleSetEnum
 yogaNodeStyleSetFloat
 yogaNodeStyleSetValue
 yogaNodeUnsetDirtiedFunc
 yogaNodeUnsetMeasureFunc
+yogaSetDirtiedCallback
+yogaSetMeasureCallback
