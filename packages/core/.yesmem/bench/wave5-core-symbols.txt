@@ -1,0 +1,73 @@
+# Wave-5 CORE symbol set (staged FFI binding)
+
+Derived from the committed M1 first-frame access trace
+(wave5-symbol-access-trace.json, run 2 of 3; all three runs agree on the 51
+pre-commit accesses). CORE = pre-commit (ctor + first native frame) symbols
+missing from any run ∪ 5-symbol defensive buffer for the ScrollBox/partial
+first-frame path (renderPartial + hit-grid scissor helpers).
+
+Provenance:
+  date:        2026-08-20
+  native-sha:  553180957522fcdf2558e899e6d97562555fff238d68d62861a563040008f5cd
+  bun:         1.3.14
+  trace-runs:  3 (identical pre-commit access sets)
+  core-size:   56  (51 traced + 5 defensive)
+
+The source of truth is the exported `opentuiCoreSymbols` array in zig.ts; this
+file is the committed fixture the binding tests assert against.
+addToCurrentHitGridClipped
+addToHitGrid
+bufferClear
+bufferDrawTextBufferView
+clearCurrentHitGrid
+createEventSink
+createNativeRenderable
+createRenderer
+createSyntaxStyle
+createTextBuffer
+createTextBufferView
+getBufferHeight
+getBufferWidth
+getCurrentBuffer
+getNextBuffer
+hitGridClearScissorRects
+hitGridPopScissorRect
+hitGridPushScissorRect
+imageRetainIccCache
+nativeRenderableAttachYogaNode
+nativeRenderableSetMeasureTarget
+renderPartial
+renderRetained
+resetSplitScrollback
+resizeRenderer
+setClearOnShutdown
+setKittyKeyboardFlags
+setLogCallback
+setRenderOffset
+setTerminalEnvVar
+setUseThread
+textBufferGetByteSize
+textBufferGetLength
+textBufferSetDefaultAttributes
+textBufferSetDefaultBg
+textBufferSetDefaultFg
+textBufferSetStyledText
+textBufferSetSyntaxStyle
+textBufferViewSetFirstLineOffset
+textBufferViewSetTruncate
+textBufferViewSetViewport
+textBufferViewSetWrapMode
+textBufferViewSetWrapWidth
+yogaNodeCalculateLayout
+yogaNodeCreateForOpenTUI
+yogaNodeFree
+yogaNodeGetComputedLayout
+yogaNodeInsertChild
+yogaNodeIsDirty
+yogaNodeMarkDirty
+yogaNodeSetHasNewLayout
+yogaNodeStyleSetEnum
+yogaNodeStyleSetFloat
+yogaNodeStyleSetValue
+yogaNodeUnsetDirtiedFunc
+yogaNodeUnsetMeasureFunc

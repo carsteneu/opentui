@@ -6,6 +6,7 @@ import {
   ptr,
   toPointer,
   type FFICallbackInstance,
+  type FFIFunction,
   type Pointer,
   usesBunFFI,
 } from "./platform/ffi.js"
@@ -280,6 +281,1819 @@ function optionalRgbaPtr(value: RGBA | null | undefined): Pointer | null {
   return value ? rgbaPtr(value) : null
 }
 
+const opentuiSymbolDefs = {
+  // Logging
+  setLogCallback: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  // Event bus
+  createEventSink: {
+    args: ["ptr"],
+    returns: "u32",
+  },
+  destroyEventSink: {
+    args: ["u32"],
+    returns: "void",
+  },
+  createNativeRenderable: {
+    args: [],
+    returns: "u32",
+  },
+  destroyNativeRenderable: {
+    args: ["u32"],
+    returns: "void",
+  },
+  nativeRenderableAttachYogaNode: {
+    args: ["u32", "ptr"],
+    returns: "bool",
+  },
+  nativeRenderableSetMeasureTarget: {
+    args: ["u32", "u32", "u32"],
+    returns: "bool",
+  },
+  // Renderer management
+  createRenderer: {
+    args: ["u32", "u32", "u8", "u8", "ptr"],
+    returns: "u32",
+  },
+  setTerminalEnvVar: {
+    args: ["u32", "ptr", "u32", "ptr", "u32"],
+    returns: "bool",
+  },
+  destroyRenderer: {
+    args: ["u32"],
+    returns: "void",
+  },
+  setUseThread: {
+    args: ["u32", "bool"],
+    returns: "void",
+  },
+  setClearOnShutdown: {
+    args: ["u32", "bool"],
+    returns: "void",
+  },
+  setBackgroundColor: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  setRenderOffset: {
+    args: ["u32", "u32"],
+    returns: "void",
+  },
+  resetSplitScrollback: {
+    args: ["u32", "u32", "u32"],
+    returns: "u32",
+  },
+  syncSplitScrollback: {
+    args: ["u32", "u32"],
+    returns: "u32",
+  },
+  getSplitOutputOffset: {
+    args: ["u32", "u32"],
+    returns: "u32",
+  },
+  setPendingSplitFooterTransition: {
+    args: ["u32", "u8", "u32", "u32", "u32", "u32", "u32"],
+    returns: "void",
+  },
+  clearPendingSplitFooterTransition: {
+    args: ["u32"],
+    returns: "void",
+  },
+  updateStats: {
+    args: ["u32", "f64", "u32", "f64"],
+    returns: "void",
+  },
+  updateMemoryStats: {
+    args: ["u32", "u32", "u32", "u32"],
+    returns: "void",
+  },
+  getRenderStats: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  render: {
+    args: ["u32", "bool"],
+    returns: "u8",
+  },
+  renderRetained: {
+    args: ["u32", "bool"],
+    returns: "u8",
+  },
+  renderPartial: {
+    args: ["u32", "u32", "u32", "u32", "u32"],
+    returns: "u8",
+  },
+  rendererHasActiveImageState: {
+    args: ["u32"],
+    returns: "u8",
+  },
+  repaintSplitFooter: {
+    args: ["u32", "u32", "bool"],
+    returns: "u64",
+  },
+  // Single FFI entrypoint for split commit append. beginFrame/finalizeFrame let
+  // native code decide whether this call is a standalone commit or part of a
+  // larger batched frame envelope.
+  commitSplitFooterSnapshot: {
+    args: ["u32", "u32", "u32", "bool", "bool", "u32", "bool", "bool", "bool"],
+    returns: "u64",
+  },
+  getNextBuffer: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  getCurrentBuffer: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  rendererSetPaletteState: {
+    args: ["u32", "ptr", "u32", "ptr", "ptr", "u32"],
+    returns: "void",
+  },
+
+  queryPixelResolution: {
+    args: ["u32"],
+    returns: "void",
+  },
+  queryThemeColors: {
+    args: ["u32"],
+    returns: "void",
+  },
+
+  createOptimizedBuffer: {
+    args: ["u32", "u32", "bool", "u8", "ptr", "u32"],
+    returns: "u32",
+  },
+  destroyOptimizedBuffer: {
+    args: ["u32"],
+    returns: "void",
+  },
+
+  drawFrameBuffer: {
+    args: ["u32", "i32", "i32", "u32", "u32", "u32", "u32", "u32"],
+    returns: "void",
+  },
+  getBufferWidth: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  getBufferHeight: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  bufferClear: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  bufferGetCharPtr: {
+    args: ["u32"],
+    returns: "ptr",
+  },
+  bufferGetFgPtr: {
+    args: ["u32"],
+    returns: "ptr",
+  },
+  bufferGetBgPtr: {
+    args: ["u32"],
+    returns: "ptr",
+  },
+  bufferGetAttributesPtr: {
+    args: ["u32"],
+    returns: "ptr",
+  },
+  bufferGetRespectAlpha: {
+    args: ["u32"],
+    returns: "bool",
+  },
+  bufferSetRespectAlpha: {
+    args: ["u32", "bool"],
+    returns: "void",
+  },
+  bufferGetId: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  bufferGetRealCharSize: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  bufferWriteResolvedChars: {
+    args: ["u32", "ptr", "u32", "bool"],
+    returns: "u32",
+  },
+
+  bufferDrawText: {
+    args: ["u32", "ptr", "u32", "u32", "u32", "ptr", "ptr", "u32"],
+    returns: "void",
+  },
+  bufferSetCellWithAlphaBlending: {
+    args: ["u32", "u32", "u32", "u32", "ptr", "ptr", "u32"],
+    returns: "void",
+  },
+  bufferSetCell: {
+    args: ["u32", "u32", "u32", "u32", "ptr", "ptr", "u32"],
+    returns: "void",
+  },
+  bufferFillRect: {
+    args: ["u32", "u32", "u32", "u32", "u32", "ptr"],
+    returns: "void",
+  },
+  bufferColorMatrix: {
+    args: ["u32", "ptr", "ptr", "u32", "f32", "u8"],
+    returns: "void",
+  },
+  bufferColorMatrixUniform: {
+    args: ["u32", "ptr", "f32", "u8"],
+    returns: "void",
+  },
+  bufferResize: {
+    args: ["u32", "u32", "u32"],
+    returns: "void",
+  },
+
+  // Link API
+  linkAlloc: {
+    args: ["ptr", "u32"],
+    returns: "u32",
+  },
+  linkGetUrl: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  attributesWithLink: {
+    args: ["u32", "u32"],
+    returns: "u32",
+  },
+  attributesGetLinkId: {
+    args: ["u32"],
+    returns: "u32",
+  },
+
+  resizeRenderer: {
+    args: ["u32", "u32", "u32"],
+    returns: "void",
+  },
+
+  // Cursor functions (now renderer-scoped)
+  setCursorPosition: {
+    args: ["u32", "i32", "i32", "bool"],
+    returns: "void",
+  },
+  setCursorColor: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  getCursorState: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+
+  // Cursor and mouse pointer style (combined)
+  setCursorStyleOptions: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+
+  // Debug overlay
+  setDebugOverlay: {
+    args: ["u32", "bool", "u8"],
+    returns: "void",
+  },
+
+  // Terminal control
+  clearTerminal: {
+    args: ["u32"],
+    returns: "void",
+  },
+  setTerminalTitle: {
+    args: ["u32", "ptr", "u32"],
+    returns: "void",
+  },
+  copyToClipboardOSC52: {
+    args: ["u32", "u8", "ptr", "u32"],
+    returns: "bool",
+  },
+  clearClipboardOSC52: {
+    args: ["u32", "u8"],
+    returns: "bool",
+  },
+  clipboardServiceCreate: {
+    args: ["u32", "u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  clipboardServiceBeginShutdown: {
+    args: ["u32"],
+    returns: "u8",
+  },
+  clipboardServicePollShutdown: {
+    args: ["u32"],
+    returns: "u8",
+  },
+  clipboardServiceDestroy: {
+    args: ["u32"],
+    returns: "u8",
+  },
+  clipboardServiceDrain: {
+    args: ["u32"],
+    returns: "u8",
+  },
+  clipboardReadOperationStart: {
+    args: ["u32", "ptr", "u32", "u8", "u32", "u32", "u32", "u32", "ptr"],
+    returns: "u8",
+  },
+  clipboardWriteOperationStart: {
+    args: ["u32", "ptr", "u32", "u8", "u32", "ptr"],
+    returns: "u8",
+  },
+  clipboardClearOperationStart: {
+    args: ["u32", "u8", "u32", "ptr"],
+    returns: "u8",
+  },
+  clipboardOperationPoll: {
+    args: ["u32"],
+    returns: "u8",
+  },
+  clipboardOperationCancel: {
+    args: ["u32"],
+    returns: "u8",
+  },
+  clipboardOperationResultMimeLength: {
+    args: ["u32", "ptr"],
+    returns: "u8",
+  },
+  clipboardOperationResultMimeCopy: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u8",
+  },
+  clipboardOperationResultDataLength: {
+    args: ["u32", "ptr"],
+    returns: "u8",
+  },
+  clipboardOperationResultDataCopy: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u8",
+  },
+  clipboardOperationResultErrorCode: {
+    args: ["u32", "ptr"],
+    returns: "u8",
+  },
+  clipboardOperationResultDiagnosticLength: {
+    args: ["u32", "ptr"],
+    returns: "u8",
+  },
+  clipboardOperationResultDiagnosticCopy: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u8",
+  },
+  clipboardOperationDestroy: {
+    args: ["u32"],
+    returns: "u8",
+  },
+  triggerNotification: {
+    args: ["u32", "ptr", "u32", "ptr", "u32"],
+    returns: "bool",
+  },
+
+  bufferDrawSuperSampleBuffer: {
+    args: ["u32", "u32", "u32", "ptr", "u32", "u8", "u32"],
+    returns: "void",
+  },
+  bufferDrawImage: {
+    args: ["u32", "u32", "ptr"],
+    returns: "u8",
+  },
+  bufferDrawPackedBuffer: {
+    args: ["u32", "ptr", "u32", "u32", "u32", "u32", "u32"],
+    returns: "void",
+  },
+  bufferDrawGrayscaleBuffer: {
+    args: ["u32", "i32", "i32", "ptr", "u32", "u32", "ptr", "ptr"],
+    returns: "void",
+  },
+  bufferDrawGrayscaleBufferSupersampled: {
+    args: ["u32", "i32", "i32", "ptr", "u32", "u32", "ptr", "ptr"],
+    returns: "void",
+  },
+  bufferDrawGrid: {
+    args: ["u32", "ptr", "ptr", "ptr", "ptr", "u32", "ptr", "u32", "ptr"],
+    returns: "void",
+  },
+  bufferDrawBox: {
+    args: ["u32", "i32", "i32", "u32", "u32", "ptr", "u32", "ptr", "ptr", "ptr", "ptr", "u32", "ptr", "u32"],
+    returns: "void",
+  },
+  bufferPushScissorRect: {
+    args: ["u32", "i32", "i32", "u32", "u32"],
+    returns: "void",
+  },
+  bufferPopScissorRect: {
+    args: ["u32"],
+    returns: "void",
+  },
+  bufferClearScissorRects: {
+    args: ["u32"],
+    returns: "void",
+  },
+  bufferPushOpacity: {
+    args: ["u32", "f32"],
+    returns: "void",
+  },
+  bufferPopOpacity: {
+    args: ["u32"],
+    returns: "void",
+  },
+  bufferGetCurrentOpacity: {
+    args: ["u32"],
+    returns: "f32",
+  },
+  bufferClearOpacity: {
+    args: ["u32"],
+    returns: "void",
+  },
+
+  addToHitGrid: {
+    args: ["u32", "i32", "i32", "u32", "u32", "u32"],
+    returns: "void",
+  },
+  clearCurrentHitGrid: {
+    args: ["u32"],
+    returns: "void",
+  },
+  hitGridPushScissorRect: {
+    args: ["u32", "i32", "i32", "u32", "u32"],
+    returns: "void",
+  },
+  hitGridPopScissorRect: {
+    args: ["u32"],
+    returns: "void",
+  },
+  hitGridClearScissorRects: {
+    args: ["u32"],
+    returns: "void",
+  },
+  addToCurrentHitGridClipped: {
+    args: ["u32", "i32", "i32", "u32", "u32", "u32"],
+    returns: "void",
+  },
+  checkHit: {
+    args: ["u32", "u32", "u32"],
+    returns: "u32",
+  },
+  getHitGridDirty: {
+    args: ["u32"],
+    returns: "bool",
+  },
+  dumpHitGrid: {
+    args: ["u32"],
+    returns: "void",
+  },
+  dumpBuffers: {
+    args: ["u32", "i64"],
+    returns: "void",
+  },
+  dumpOutputBuffer: {
+    args: ["u32", "i64"],
+    returns: "void",
+  },
+  restoreTerminalModes: {
+    args: ["u32"],
+    returns: "void",
+  },
+  enableMouse: {
+    args: ["u32", "bool"],
+    returns: "void",
+  },
+  disableMouse: {
+    args: ["u32"],
+    returns: "void",
+  },
+  enableKittyKeyboard: {
+    args: ["u32", "u8"],
+    returns: "void",
+  },
+  disableKittyKeyboard: {
+    args: ["u32"],
+    returns: "void",
+  },
+  setKittyKeyboardFlags: {
+    args: ["u32", "u8"],
+    returns: "void",
+  },
+  getKittyKeyboardFlags: {
+    args: ["u32"],
+    returns: "u8",
+  },
+  setupTerminal: {
+    args: ["u32", "bool"],
+    returns: "void",
+  },
+  suspendRenderer: {
+    args: ["u32"],
+    returns: "void",
+  },
+  resumeRenderer: {
+    args: ["u32"],
+    returns: "void",
+  },
+  writeOut: {
+    args: ["u32", "ptr", "u32"],
+    returns: "void",
+  },
+
+  // TextBuffer functions
+  createTextBuffer: {
+    args: ["u8"],
+    returns: "u32",
+  },
+  destroyTextBuffer: {
+    args: ["u32"],
+    returns: "void",
+  },
+  textBufferGetLength: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  textBufferGetByteSize: {
+    args: ["u32"],
+    returns: "u32",
+  },
+
+  textBufferReset: {
+    args: ["u32"],
+    returns: "void",
+  },
+  textBufferClear: {
+    args: ["u32"],
+    returns: "void",
+  },
+  textBufferSetDefaultFg: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  textBufferSetDefaultBg: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  textBufferSetDefaultAttributes: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  textBufferResetDefaults: {
+    args: ["u32"],
+    returns: "void",
+  },
+  textBufferGetTabWidth: {
+    args: ["u32"],
+    returns: "u8",
+  },
+  textBufferSetTabWidth: {
+    args: ["u32", "u8"],
+    returns: "void",
+  },
+  textBufferRegisterMemBuffer: {
+    args: ["u32", "ptr", "u32", "bool"],
+    returns: "u16",
+  },
+  textBufferReplaceMemBuffer: {
+    args: ["u32", "u8", "ptr", "u32", "bool"],
+    returns: "bool",
+  },
+  textBufferClearMemRegistry: {
+    args: ["u32"],
+    returns: "void",
+  },
+  textBufferSetTextFromMem: {
+    args: ["u32", "u8"],
+    returns: "void",
+  },
+  textBufferAppend: {
+    args: ["u32", "ptr", "u32"],
+    returns: "void",
+  },
+  textBufferAppendFromMemId: {
+    args: ["u32", "u8"],
+    returns: "void",
+  },
+  textBufferLoadFile: {
+    args: ["u32", "ptr", "u32"],
+    returns: "bool",
+  },
+  textBufferSetStyledText: {
+    args: ["u32", "ptr", "u32"],
+    returns: "void",
+  },
+  textBufferAppendStyledText: {
+    args: ["u32", "ptr", "u32"],
+    returns: "bool",
+  },
+  textBufferGetLineCount: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  textBufferGetPlainText: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  textBufferAddHighlightByCharRange: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  textBufferAddHighlight: {
+    args: ["u32", "u32", "ptr"],
+    returns: "void",
+  },
+  textBufferRemoveHighlightsByRef: {
+    args: ["u32", "u16"],
+    returns: "void",
+  },
+  textBufferClearLineHighlights: {
+    args: ["u32", "u32"],
+    returns: "void",
+  },
+  textBufferClearAllHighlights: {
+    args: ["u32"],
+    returns: "void",
+  },
+  textBufferSetSyntaxStyle: {
+    args: ["u32", "u32"],
+    returns: "bool",
+  },
+  textBufferGetLineHighlightsPtr: {
+    args: ["u32", "u32", "ptr"],
+    returns: "ptr",
+  },
+  textBufferFreeLineHighlights: {
+    args: ["ptr", "u32"],
+    returns: "void",
+  },
+  textBufferGetHighlightCount: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  textBufferGetTextRange: {
+    args: ["u32", "u32", "u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  textBufferGetTextRangeByCoords: {
+    args: ["u32", "u32", "u32", "u32", "u32", "ptr", "u32"],
+    returns: "u32",
+  },
+
+  // TextBufferView functions
+  createTextBufferView: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  destroyTextBufferView: {
+    args: ["u32"],
+    returns: "void",
+  },
+  textBufferViewSetSelection: {
+    args: ["u32", "u32", "u32", "ptr", "ptr"],
+    returns: "void",
+  },
+  textBufferViewResetSelection: {
+    args: ["u32"],
+    returns: "void",
+  },
+  textBufferViewGetSelectionInfo: {
+    args: ["u32"],
+    returns: "u64",
+  },
+  textBufferViewSetLocalSelection: {
+    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr"],
+    returns: "bool",
+  },
+  textBufferViewUpdateSelection: {
+    args: ["u32", "u32", "ptr", "ptr"],
+    returns: "void",
+  },
+  textBufferViewUpdateLocalSelection: {
+    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr"],
+    returns: "bool",
+  },
+  textBufferViewResetLocalSelection: {
+    args: ["u32"],
+    returns: "void",
+  },
+  textBufferViewSetWrapWidth: {
+    args: ["u32", "u32"],
+    returns: "void",
+  },
+  textBufferViewSetWrapMode: {
+    args: ["u32", "u8"],
+    returns: "void",
+  },
+  textBufferViewSetFirstLineOffset: {
+    args: ["u32", "u32"],
+    returns: "void",
+  },
+  textBufferViewSetViewportSize: {
+    args: ["u32", "u32", "u32"],
+    returns: "void",
+  },
+  textBufferViewSetViewport: {
+    args: ["u32", "u32", "u32", "u32", "u32"],
+    returns: "void",
+  },
+  textBufferViewGetVirtualLineCount: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  textBufferViewGetLineInfoDirect: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  textBufferViewGetLogicalLineInfoDirect: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  textBufferViewGetSelectedText: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  textBufferViewGetPlainText: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  textBufferViewSetTabIndicator: {
+    args: ["u32", "u32"],
+    returns: "void",
+  },
+  textBufferViewSetTabIndicatorColor: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  textBufferViewSetTruncate: {
+    args: ["u32", "bool"],
+    returns: "void",
+  },
+  textBufferViewMeasureForDimensions: {
+    args: ["u32", "u32", "u32", "ptr"],
+    returns: "bool",
+  },
+  bufferDrawTextBufferView: {
+    args: ["u32", "u32", "i32", "i32"],
+    returns: "void",
+  },
+  bufferDrawEditorView: {
+    args: ["u32", "u32", "i32", "i32"],
+    returns: "void",
+  },
+
+  // EditorView functions
+  createEditorView: {
+    args: ["u32", "u32", "u32"],
+    returns: "u32",
+  },
+  destroyEditorView: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editorViewSetViewportSize: {
+    args: ["u32", "u32", "u32"],
+    returns: "void",
+  },
+  editorViewSetViewport: {
+    args: ["u32", "u32", "u32", "u32", "u32", "bool"],
+    returns: "void",
+  },
+  editorViewGetViewport: {
+    args: ["u32", "ptr", "ptr", "ptr", "ptr"],
+    returns: "void",
+  },
+  editorViewSetScrollMargin: {
+    args: ["u32", "f32"],
+    returns: "void",
+  },
+  editorViewSetWrapMode: {
+    args: ["u32", "u8"],
+    returns: "void",
+  },
+  editorViewGetVirtualLineCount: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  editorViewGetTotalVirtualLineCount: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  editorViewGetTextBufferView: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  editorViewGetLineInfoDirect: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  editorViewGetLogicalLineInfoDirect: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+
+  // EditBuffer functions
+  createEditBuffer: {
+    args: ["u8", "u32"],
+    returns: "u32",
+  },
+  destroyEditBuffer: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferSetText: {
+    args: ["u32", "ptr", "u32"],
+    returns: "void",
+  },
+  editBufferSetTextFromMem: {
+    args: ["u32", "u8"],
+    returns: "void",
+  },
+  editBufferReplaceText: {
+    args: ["u32", "ptr", "u32"],
+    returns: "void",
+  },
+  editBufferReplaceTextFromMem: {
+    args: ["u32", "u8"],
+    returns: "void",
+  },
+  editBufferGetText: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  editBufferInsertChar: {
+    args: ["u32", "ptr", "u32"],
+    returns: "void",
+  },
+  editBufferInsertText: {
+    args: ["u32", "ptr", "u32"],
+    returns: "void",
+  },
+  editBufferDeleteChar: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferDeleteCharBackward: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferDeleteRange: {
+    args: ["u32", "u32", "u32", "u32", "u32"],
+    returns: "void",
+  },
+  editBufferNewLine: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferDeleteLine: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferMoveCursorLeft: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferMoveCursorRight: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferMoveCursorUp: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferMoveCursorDown: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferGotoLine: {
+    args: ["u32", "u32"],
+    returns: "void",
+  },
+  editBufferSetCursor: {
+    args: ["u32", "u32", "u32"],
+    returns: "void",
+  },
+  editBufferSetCursorToLineCol: {
+    args: ["u32", "u32", "u32"],
+    returns: "void",
+  },
+  editBufferSetCursorByOffset: {
+    args: ["u32", "u32"],
+    returns: "void",
+  },
+  editBufferGetCursorPosition: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  editBufferGetId: {
+    args: ["u32"],
+    returns: "u16",
+  },
+  editBufferGetTextBuffer: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  editBufferDebugLogRope: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferUndo: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  editBufferRedo: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  editBufferCanUndo: {
+    args: ["u32"],
+    returns: "bool",
+  },
+  editBufferCanRedo: {
+    args: ["u32"],
+    returns: "bool",
+  },
+  editBufferClearHistory: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferClear: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editBufferGetNextWordBoundary: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  editBufferGetPrevWordBoundary: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  editBufferGetEOL: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  editBufferOffsetToPosition: {
+    args: ["u32", "u32", "ptr"],
+    returns: "bool",
+  },
+  editBufferPositionToOffset: {
+    args: ["u32", "u32", "u32"],
+    returns: "u32",
+  },
+  editBufferGetLineStartOffset: {
+    args: ["u32", "u32"],
+    returns: "u32",
+  },
+  editBufferGetTextRange: {
+    args: ["u32", "u32", "u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  editBufferGetTextRangeByCoords: {
+    args: ["u32", "u32", "u32", "u32", "u32", "ptr", "u32"],
+    returns: "u32",
+  },
+
+  // EditorView selection and editing methods
+  editorViewSetSelection: {
+    args: ["u32", "u32", "u32", "ptr", "ptr"],
+    returns: "void",
+  },
+  editorViewResetSelection: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editorViewGetSelection: {
+    args: ["u32"],
+    returns: "u64",
+  },
+  editorViewSetLocalSelection: {
+    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr", "bool", "bool"],
+    returns: "bool",
+  },
+  editorViewUpdateSelection: {
+    args: ["u32", "u32", "ptr", "ptr"],
+    returns: "void",
+  },
+  editorViewUpdateLocalSelection: {
+    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr", "bool", "bool"],
+    returns: "bool",
+  },
+  editorViewResetLocalSelection: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editorViewGetSelectedTextBytes: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  editorViewGetCursor: {
+    args: ["u32", "ptr", "ptr"],
+    returns: "void",
+  },
+  editorViewGetText: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u32",
+  },
+
+  // EditorView VisualCursor methods
+  editorViewGetVisualCursor: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+
+  editorViewMoveUpVisual: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editorViewMoveDownVisual: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editorViewDeleteSelectedText: {
+    args: ["u32"],
+    returns: "void",
+  },
+  editorViewSetCursorByOffset: {
+    args: ["u32", "u32"],
+    returns: "void",
+  },
+  editorViewGetNextWordBoundary: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  editorViewGetPrevWordBoundary: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  editorViewGetEOL: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  editorViewGetVisualSOL: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  editorViewGetVisualEOL: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  editorViewSetPlaceholderStyledText: {
+    args: ["u32", "ptr", "u32"],
+    returns: "void",
+  },
+  editorViewSetTabIndicator: {
+    args: ["u32", "u32"],
+    returns: "void",
+  },
+  editorViewSetTabIndicatorColor: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+
+  getArenaAllocatedBytes: {
+    args: [],
+    returns: "u64",
+  },
+  getBuildOptions: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  getAllocatorStats: {
+    args: ["ptr"],
+    returns: "void",
+  },
+
+  // SyntaxStyle functions
+  createSyntaxStyle: {
+    args: [],
+    returns: "u32",
+  },
+  destroySyntaxStyle: {
+    args: ["u32"],
+    returns: "void",
+  },
+  syntaxStyleRegister: {
+    args: ["u32", "ptr", "u32", "ptr", "ptr", "u32"],
+    returns: "u32",
+  },
+  syntaxStyleResolveByName: {
+    args: ["u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  syntaxStyleGetStyleCount: {
+    args: ["u32"],
+    returns: "u32",
+  },
+
+  imageInfo: { args: ["ptr", "u32", "ptr"], returns: "u32" },
+  imageRetainIccCache: { args: [], returns: "void" },
+  imageReleaseIccCache: { args: [], returns: "void" },
+  imageTestFailIccProfileCopyAllocationOnce: { args: [], returns: "void" },
+  imageDecode: { args: ["ptr", "u32", "ptr"], returns: "u32" },
+  imageCreateFromRgba: { args: ["ptr", "u64", "u32", "u32", "u32", "ptr"], returns: "u32" },
+  imageDestroy: { args: ["u32"], returns: "void" },
+  imageRetain: { args: ["u32", "ptr"], returns: "u32" },
+  imageGetInfo: { args: ["u32", "ptr"], returns: "u32" },
+  imageMaterialize: { args: ["u32"], returns: "u32" },
+  imageEnsureEncodedPng: { args: ["u32"], returns: "u32" },
+  imageGetPixelsPtr: { args: ["u32"], returns: "ptr" },
+  imageClone: { args: ["u32", "ptr"], returns: "u32" },
+  imageCopyPixels: { args: ["u32", "ptr", "u64", "u32", "u8"], returns: "u32" },
+  imageResize: { args: ["u32", "u32", "u32", "u32", "ptr"], returns: "u32" },
+  imageExtract: { args: ["u32", "u32", "u32", "u32", "u32", "ptr"], returns: "u32" },
+  imageExtend: { args: ["u32", "u32", "u32", "u32", "u32", "ptr", "ptr"], returns: "u32" },
+  imageTransform: { args: ["u32", "u32", "ptr"], returns: "u32" },
+  imageComposite: { args: ["u32", "u32", "i32", "i32", "u32", "u8", "ptr"], returns: "u32" },
+
+  // Terminal capability functions
+  getTerminalCapabilities: {
+    args: ["u32", "ptr"],
+    returns: "void",
+  },
+  processCapabilityResponse: {
+    args: ["u32", "ptr", "u32"],
+    returns: "void",
+  },
+
+  // Unicode encoding API
+  encodeUnicode: {
+    args: ["ptr", "u32", "ptr", "ptr", "u8"],
+    returns: "bool",
+  },
+  freeUnicode: {
+    args: ["ptr", "u32"],
+    returns: "void",
+  },
+  bufferDrawChar: {
+    args: ["u32", "u32", "u32", "u32", "ptr", "ptr", "u32"],
+    returns: "void",
+  },
+
+  // Yoga layout
+  yogaConfigCreate: {
+    args: [],
+    returns: "ptr",
+  },
+  yogaConfigFree: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  yogaConfigSetUseWebDefaults: {
+    args: ["ptr", "bool"],
+    returns: "void",
+  },
+  yogaConfigGetUseWebDefaults: {
+    args: ["ptr"],
+    returns: "bool",
+  },
+  yogaConfigSetPointScaleFactor: {
+    args: ["ptr", "f32"],
+    returns: "void",
+  },
+  yogaConfigGetPointScaleFactor: {
+    args: ["ptr"],
+    returns: "f32",
+  },
+  yogaConfigSetErrata: {
+    args: ["ptr", "u32"],
+    returns: "void",
+  },
+  yogaConfigGetErrata: {
+    args: ["ptr"],
+    returns: "u32",
+  },
+  yogaConfigSetExperimentalFeatureEnabled: {
+    args: ["ptr", "u32", "bool"],
+    returns: "void",
+  },
+  yogaConfigIsExperimentalFeatureEnabled: {
+    args: ["ptr", "u32"],
+    returns: "bool",
+  },
+  yogaNodeCreate: {
+    args: [],
+    returns: "ptr",
+  },
+  yogaNodeCreateForOpenTUI: {
+    args: [],
+    returns: "ptr",
+  },
+  yogaNodeCreateWithConfig: {
+    args: ["ptr"],
+    returns: "ptr",
+  },
+  yogaNodeFree: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  yogaNodeFreeRecursive: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  yogaNodeReset: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  yogaNodeCopyStyle: {
+    args: ["ptr", "ptr"],
+    returns: "void",
+  },
+  yogaNodeInsertChild: {
+    args: ["ptr", "ptr", "u32"],
+    returns: "void",
+  },
+  yogaNodeRemoveChild: {
+    args: ["ptr", "ptr"],
+    returns: "void",
+  },
+  yogaNodeRemoveAllChildren: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  yogaNodeGetChild: {
+    args: ["ptr", "u32"],
+    returns: "ptr",
+  },
+  yogaNodeGetChildCount: {
+    args: ["ptr"],
+    returns: "u32",
+  },
+  yogaNodeGetParent: {
+    args: ["ptr"],
+    returns: "ptr",
+  },
+  yogaNodeCalculateLayout: {
+    args: ["ptr", "f32", "f32", "u32"],
+    returns: "void",
+  },
+  yogaNodeIsDirty: {
+    args: ["ptr"],
+    returns: "bool",
+  },
+  yogaNodeMarkDirty: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  yogaNodeGetHasNewLayout: {
+    args: ["ptr"],
+    returns: "bool",
+  },
+  yogaNodeSetHasNewLayout: {
+    args: ["ptr", "bool"],
+    returns: "void",
+  },
+  yogaNodeSetIsReferenceBaseline: {
+    args: ["ptr", "bool"],
+    returns: "void",
+  },
+  yogaNodeIsReferenceBaseline: {
+    args: ["ptr"],
+    returns: "bool",
+  },
+  yogaNodeSetAlwaysFormsContainingBlock: {
+    args: ["ptr", "bool"],
+    returns: "void",
+  },
+  yogaNodeGetAlwaysFormsContainingBlock: {
+    args: ["ptr"],
+    returns: "bool",
+  },
+  yogaNodeGetComputedLayout: {
+    args: ["ptr", "ptr"],
+    returns: "void",
+  },
+  yogaNodeLayoutGetEdge: {
+    args: ["ptr", "u32", "u32"],
+    returns: "f32",
+  },
+  yogaNodeStyleSetEnum: {
+    args: ["ptr", "u32", "u32"],
+    returns: "void",
+  },
+  yogaNodeStyleGetEnum: {
+    args: ["ptr", "u32"],
+    returns: "u32",
+  },
+  yogaNodeStyleSetFloat: {
+    args: ["ptr", "u32", "f32"],
+    returns: "void",
+  },
+  yogaNodeStyleGetFloat: {
+    args: ["ptr", "u32"],
+    returns: "f32",
+  },
+  yogaNodeStyleSetBorder: {
+    args: ["ptr", "u32", "f32"],
+    returns: "void",
+  },
+  yogaNodeStyleGetBorder: {
+    args: ["ptr", "u32"],
+    returns: "f32",
+  },
+  yogaNodeStyleSetValue: {
+    args: ["ptr", "u32", "u32", "u32", "f32"],
+    returns: "void",
+  },
+  yogaNodeStyleGetValue: {
+    args: ["ptr", "u32", "u32"],
+    returns: "u64",
+  },
+  yogaNodeSetMeasureFunc: {
+    args: ["ptr", "bool"],
+    returns: "void",
+  },
+  yogaNodeUnsetMeasureFunc: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  yogaNodeHasMeasureFunc: {
+    args: ["ptr"],
+    returns: "bool",
+  },
+  yogaNodeSetDirtiedFunc: {
+    args: ["ptr", "bool"],
+    returns: "void",
+  },
+  yogaNodeUnsetDirtiedFunc: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  yogaStoreMeasureResult: {
+    args: ["f32", "f32"],
+    returns: "void",
+  },
+  yogaSetMeasureCallback: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  yogaSetDirtiedCallback: {
+    args: ["ptr"],
+    returns: "void",
+  },
+
+  // Audio
+  createAudioEngine: {
+    args: ["ptr"],
+    returns: "u32",
+  },
+  destroyAudioEngine: {
+    args: ["u32"],
+    returns: "void",
+  },
+  audioRefreshPlaybackDevices: {
+    args: ["u32"],
+    returns: "i32",
+  },
+  audioGetPlaybackDeviceCount: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  audioGetPlaybackDeviceName: {
+    args: ["u32", "u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  audioIsPlaybackDeviceDefault: {
+    args: ["u32", "u32"],
+    returns: "bool",
+  },
+  audioSelectPlaybackDevice: {
+    args: ["u32", "u32"],
+    returns: "i32",
+  },
+  audioClearPlaybackDeviceSelection: {
+    args: ["u32"],
+    returns: "void",
+  },
+  audioRefreshCaptureDevices: {
+    args: ["u32"],
+    returns: "i32",
+  },
+  audioGetCaptureDeviceCount: {
+    args: ["u32"],
+    returns: "u32",
+  },
+  audioGetCaptureDeviceName: {
+    args: ["u32", "u32", "ptr", "u32"],
+    returns: "u32",
+  },
+  audioIsCaptureDeviceDefault: {
+    args: ["u32", "u32"],
+    returns: "bool",
+  },
+  audioSelectCaptureDevice: {
+    args: ["u32", "u32"],
+    returns: "i32",
+  },
+  audioClearCaptureDeviceSelection: {
+    args: ["u32"],
+    returns: "void",
+  },
+  audioStartCapture: {
+    args: ["u32", "ptr", "u32", "u32"],
+    returns: "i32",
+  },
+  audioStopCapture: {
+    args: ["u32"],
+    returns: "i32",
+  },
+  audioIsCaptureRunning: {
+    args: ["u32"],
+    returns: "bool",
+  },
+  audioReadCapture: {
+    args: ["u32", "ptr", "u32", "u32", "ptr"],
+    returns: "i32",
+  },
+  audioGetCaptureStats: {
+    args: ["u32", "ptr"],
+    returns: "i32",
+  },
+  audioStart: {
+    args: ["u32", "ptr"],
+    returns: "i32",
+  },
+  audioStartMixer: {
+    args: ["u32"],
+    returns: "i32",
+  },
+  audioStop: {
+    args: ["u32"],
+    returns: "i32",
+  },
+  audioCreateStream: {
+    args: ["u32", "ptr", "ptr"],
+    returns: "i32",
+  },
+  audioWriteStream: {
+    args: ["u32", "u32", "ptr", "u32"],
+    returns: "i32",
+  },
+  audioEndStream: {
+    args: ["u32", "u32"],
+    returns: "i32",
+  },
+  audioRestartStream: {
+    args: ["u32", "u32"],
+    returns: "i32",
+  },
+  audioSetStreamVolume: {
+    args: ["u32", "u32", "f32"],
+    returns: "i32",
+  },
+  audioSetStreamPan: {
+    args: ["u32", "u32", "f32"],
+    returns: "i32",
+  },
+  audioSetStreamGroup: {
+    args: ["u32", "u32", "u32"],
+    returns: "i32",
+  },
+  audioGetStreamStats: {
+    args: ["u32", "u32", "ptr"],
+    returns: "i32",
+  },
+  audioCloseStream: {
+    args: ["u32", "u32", "u32", "ptr"],
+    returns: "i32",
+  },
+  audioLoad: {
+    args: ["u32", "ptr", "u32", "ptr"],
+    returns: "i32",
+  },
+  audioUnload: {
+    args: ["u32", "u32"],
+    returns: "i32",
+  },
+  audioPlay: {
+    args: ["u32", "u32", "ptr", "ptr"],
+    returns: "i32",
+  },
+  audioStopVoice: {
+    args: ["u32", "u32"],
+    returns: "i32",
+  },
+  audioSetVoiceGroup: {
+    args: ["u32", "u32", "u32"],
+    returns: "i32",
+  },
+  audioCreateGroup: {
+    args: ["u32", "ptr", "u32", "ptr"],
+    returns: "i32",
+  },
+  audioSetGroupVolume: {
+    args: ["u32", "u32", "f32"],
+    returns: "i32",
+  },
+  audioSetMasterVolume: {
+    args: ["u32", "f32"],
+    returns: "i32",
+  },
+  audioMixToBuffer: {
+    args: ["u32", "ptr", "u32", "u8"],
+    returns: "i32",
+  },
+  audioEnableTap: {
+    args: ["u32", "bool", "u32"],
+    returns: "i32",
+  },
+  audioReadTap: {
+    args: ["u32", "ptr", "u32", "u8", "ptr"],
+    returns: "i32",
+  },
+  audioGetStats: {
+    args: ["u32", "ptr"],
+    returns: "i32",
+  },
+
+  // NativeSpanFeed
+  createNativeSpanFeed: {
+    args: ["ptr"],
+    returns: "ptr",
+  },
+  attachNativeSpanFeed: {
+    args: ["ptr"],
+    returns: "i32",
+  },
+  destroyNativeSpanFeed: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  streamWrite: {
+    args: ["ptr", "ptr", "u32"],
+    returns: "i32",
+  },
+  streamCommit: {
+    args: ["ptr"],
+    returns: "i32",
+  },
+  streamDrainSpans: {
+    args: ["ptr", "ptr", "u32"],
+    returns: "u32",
+  },
+  streamClose: {
+    args: ["ptr"],
+    returns: "i32",
+  },
+  streamReserve: {
+    args: ["ptr", "u32", "ptr"],
+    returns: "i32",
+  },
+  streamCommitReserved: {
+    args: ["ptr", "u32"],
+    returns: "i32",
+  },
+  streamSetOptions: {
+    args: ["ptr", "ptr"],
+    returns: "i32",
+  },
+  streamGetStats: {
+    args: ["ptr", "ptr"],
+    returns: "i32",
+  },
+  streamSetCallback: {
+    args: ["ptr", "ptr"],
+    returns: "void",
+  },
+} as const
+
+export type OpentuiSymbolName = keyof typeof opentuiSymbolDefs
+
+// CORE = everything the FFIRenderLib ctor plus the first native frame touch,
+// derived from the committed M1 first-frame trace
+// (packages/core/.yesmem/bench/wave5-core-symbols.txt) plus a defensive buffer.
+// Filled once the trace lands (M1); empty keeps the staged library fully lazy.
+export const opentuiCoreSymbols: readonly OpentuiSymbolName[] = [
+  "addToCurrentHitGridClipped",
+  "addToHitGrid",
+  "bufferClear",
+  "bufferDrawTextBufferView",
+  "clearCurrentHitGrid",
+  "createEventSink",
+  "createNativeRenderable",
+  "createRenderer",
+  "createSyntaxStyle",
+  "createTextBuffer",
+  "createTextBufferView",
+  "getBufferHeight",
+  "getBufferWidth",
+  "getCurrentBuffer",
+  "getNextBuffer",
+  "hitGridClearScissorRects",
+  "hitGridPopScissorRect",
+  "hitGridPushScissorRect",
+  "imageRetainIccCache",
+  "nativeRenderableAttachYogaNode",
+  "nativeRenderableSetMeasureTarget",
+  "renderPartial",
+  "renderRetained",
+  "resetSplitScrollback",
+  "resizeRenderer",
+  "setClearOnShutdown",
+  "setKittyKeyboardFlags",
+  "setLogCallback",
+  "setRenderOffset",
+  "setTerminalEnvVar",
+  "setUseThread",
+  "textBufferGetByteSize",
+  "textBufferGetLength",
+  "textBufferSetDefaultAttributes",
+  "textBufferSetDefaultBg",
+  "textBufferSetDefaultFg",
+  "textBufferSetStyledText",
+  "textBufferSetSyntaxStyle",
+  "textBufferViewSetFirstLineOffset",
+  "textBufferViewSetTruncate",
+  "textBufferViewSetViewport",
+  "textBufferViewSetWrapMode",
+  "textBufferViewSetWrapWidth",
+  "yogaNodeCalculateLayout",
+  "yogaNodeCreateForOpenTUI",
+  "yogaNodeFree",
+  "yogaNodeGetComputedLayout",
+  "yogaNodeInsertChild",
+  "yogaNodeIsDirty",
+  "yogaNodeMarkDirty",
+  "yogaNodeSetHasNewLayout",
+  "yogaNodeStyleSetEnum",
+  "yogaNodeStyleSetFloat",
+  "yogaNodeStyleSetValue",
+  "yogaNodeUnsetDirtiedFunc",
+  "yogaNodeUnsetMeasureFunc",
+]
+
+const opentuiDeferredKeys = (Object.keys(opentuiSymbolDefs) as unknown as OpentuiSymbolName[]).filter(
+  (key) => !opentuiCoreSymbols.includes(key),
+)
+
+const WAVE5_STAGED_CONTROL = "__opentuiWave5StagedControl"
+
+interface Wave5StagedControl {
+  scheduleFullBind(): void
+  markClosed(): void
+}
+
+function pickSymbolDefs(keys: readonly string[]): Record<string, FFIFunction> {
+  const defs = opentuiSymbolDefs as Record<string, FFIFunction>
+  const out: Record<string, FFIFunction> = {}
+  for (const key of keys) out[key] = defs[key]
+  return out
+}
+
+// Per-symbol debug/trace wrap for lazily bound symbols; convertToDebugSymbols
+// can only wrap symbols present at construction.
+function wrapDebugSymbol(name: string, value: (...args: any[]) => any): (...args: any[]) => any {
+  if (env.OTUI_TRACE_FFI) {
+    globalTraceSymbols = globalTraceSymbols ?? {}
+    globalTraceSymbols[name] = globalTraceSymbols[name] ?? []
+  }
+  let wrapped: (...args: any[]) => any = value
+  if (env.OTUI_DEBUG_FFI && globalFFILogPath) {
+    const logPath = globalFFILogPath
+    const original = wrapped
+    wrapped = (...args) => {
+      writeFileSync(logPath, `${name}(${args.map((arg) => String(arg)).join(", ")})\n`, { flag: "a" })
+      const result = original(...args)
+      writeFileSync(logPath, `${name} returned: ${String(result)}\n`, { flag: "a" })
+      return result
+    }
+  }
+  if (env.OTUI_TRACE_FFI) {
+    const original = wrapped
+    wrapped = (...args) => {
+      const start = performance.now()
+      const result = original(...args)
+      globalTraceSymbols![name]!.push(performance.now() - start)
+      return result
+    }
+  }
+  return wrapped
+}
+
+// Wave-5 staged binding: dlopen the CORE table eagerly and expose symbols
+// through a proxy that binds DEFERRED symbols on first use (trap-miss -> exact
+// re-dlopen of the same path + descriptor, cached so wrapper identity is stable
+// across accesses). After the first native commit the remaining table is bound
+// in the background and the proxy becomes pass-through. Callbacks and close
+// stay on the primary library handle. In trace mode (OTUI_WAVE5_TRACE_SYMBOLS)
+// the full table is bound eagerly, matching the pre-split baseline, while every
+// first property access is recorded as a telemetry mark so the CORE set can be
+// derived from an instrumented first frame.
+function createStagedSymbolLibrary(resolvedLibPath: string) {
+  const debugActive = Boolean(env.OTUI_DEBUG_FFI || env.OTUI_TRACE_FFI)
+  const traceActive = Boolean(process.env.OTUI_WAVE5_TRACE_SYMBOLS)
+
+  if (debugActive) {
+    // Registers the FFI trace exit handler and initializes the debug-log path
+    // once; per-symbol wrapping happens in wrapDebugSymbol as symbols bind.
+    convertToDebugSymbols({})
+  }
+
+  const allKeys = Object.keys(opentuiSymbolDefs) as unknown as OpentuiSymbolName[]
+  // An empty CORE table means the staged split is not configured yet (or
+  // misconfigured): bind the full table eagerly, matching the pre-split
+  // behavior, so the library is always correct.
+  const eagerKeys: readonly OpentuiSymbolName[] =
+    traceActive || opentuiCoreSymbols.length === 0 ? allKeys : opentuiCoreSymbols
+
+  const primary = dlopen(resolvedLibPath, pickSymbolDefs(eagerKeys))
+  const target: Record<string, (...args: any[]) => any> = {}
+  for (const key of eagerKeys) {
+    target[key] = debugActive ? wrapDebugSymbol(key, primary.symbols[key]) : primary.symbols[key]
+  }
+  if (!traceActive) mark("opentui.coreBound")
+
+  const state = {
+    closed: false,
+    fullyBound: false,
+    fullBindScheduled: false,
+    extraHandles: [] as Array<{ close(): void }>,
+  }
+  const traced = new Set<string>()
+
+  const symbols = new Proxy(target, {
+    get(object, property) {
+      if (typeof property !== "string") return (object as unknown as Record<PropertyKey, unknown>)[property]
+      if (!(property in opentuiSymbolDefs)) return object[property]
+      if (traceActive && !traced.has(property)) {
+        traced.add(property)
+        mark(`opentui.symbolAccess.${property}`)
+        return object[property]
+      }
+      if (property in object || state.closed) {
+        return object[property]
+      }
+      // DEFERRED first use: bind this exact symbol (same path + descriptor).
+      const extra = dlopen(resolvedLibPath, pickSymbolDefs([property]))
+      state.extraHandles.push(extra)
+      const fn = extra.symbols[property]
+      object[property] = debugActive ? wrapDebugSymbol(property, fn) : fn
+      mark(`opentui.deferredBound.${property}`)
+      return object[property]
+    },
+  })
+
+  function scheduleFullBind() {
+    if (state.closed || state.fullyBound || state.fullBindScheduled) return
+    state.fullBindScheduled = true
+    setTimeout(() => {
+      if (state.closed || state.fullyBound) {
+        state.fullBindScheduled = false
+        return
+      }
+      try {
+        const extra = dlopen(resolvedLibPath, pickSymbolDefs(opentuiDeferredKeys))
+        let anyBound = false
+        for (const key of opentuiDeferredKeys) {
+          if (!(key in target)) {
+            target[key] = debugActive ? wrapDebugSymbol(key, extra.symbols[key]) : extra.symbols[key]
+            anyBound = true
+          }
+        }
+        state.fullyBound = true
+        if (anyBound) mark("opentui.fullBound")
+        for (const handle of state.extraHandles) {
+          try {
+            handle.close()
+          } catch {
+            // best-effort handle cleanup
+          }
+        }
+        state.extraHandles = []
+      } catch {
+        // A DEFERRED symbol absent from the actual native keeps the lazy proxy
+        // active; its first use throws exactly like the old eager table.
+        state.fullBindScheduled = false
+      }
+    }, 0)
+  }
+
+  function close() {
+    if (state.closed) return
+    state.closed = true
+    for (const handle of state.extraHandles) {
+      try {
+        handle.close()
+      } catch {
+        // best-effort handle cleanup
+      }
+    }
+    state.extraHandles = []
+    primary.close()
+  }
+
+  const library = {
+    ...primary,
+    symbols,
+    close,
+  }
+  Object.defineProperty(library, WAVE5_STAGED_CONTROL, {
+    value: { scheduleFullBind, markClosed: () => (state.closed = true) },
+  })
+  return library
+}
+
 function getOpenTUILib(libPath?: string) {
   const resolvedLibPath = libPath || targetLibPath
   if (!resolvedLibPath) {
@@ -289,1591 +2103,21 @@ function getOpenTUILib(libPath?: string) {
     )
   }
 
-  const rawSymbols = dlopen(resolvedLibPath, {
-    // Logging
-    setLogCallback: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    // Event bus
-    createEventSink: {
-      args: ["ptr"],
-      returns: "u32",
-    },
-    destroyEventSink: {
-      args: ["u32"],
-      returns: "void",
-    },
-    createNativeRenderable: {
-      args: [],
-      returns: "u32",
-    },
-    destroyNativeRenderable: {
-      args: ["u32"],
-      returns: "void",
-    },
-    nativeRenderableAttachYogaNode: {
-      args: ["u32", "ptr"],
-      returns: "bool",
-    },
-    nativeRenderableSetMeasureTarget: {
-      args: ["u32", "u32", "u32"],
-      returns: "bool",
-    },
-    // Renderer management
-    createRenderer: {
-      args: ["u32", "u32", "u8", "u8", "ptr"],
-      returns: "u32",
-    },
-    setTerminalEnvVar: {
-      args: ["u32", "ptr", "u32", "ptr", "u32"],
-      returns: "bool",
-    },
-    destroyRenderer: {
-      args: ["u32"],
-      returns: "void",
-    },
-    setUseThread: {
-      args: ["u32", "bool"],
-      returns: "void",
-    },
-    setClearOnShutdown: {
-      args: ["u32", "bool"],
-      returns: "void",
-    },
-    setBackgroundColor: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    setRenderOffset: {
-      args: ["u32", "u32"],
-      returns: "void",
-    },
-    resetSplitScrollback: {
-      args: ["u32", "u32", "u32"],
-      returns: "u32",
-    },
-    syncSplitScrollback: {
-      args: ["u32", "u32"],
-      returns: "u32",
-    },
-    getSplitOutputOffset: {
-      args: ["u32", "u32"],
-      returns: "u32",
-    },
-    setPendingSplitFooterTransition: {
-      args: ["u32", "u8", "u32", "u32", "u32", "u32", "u32"],
-      returns: "void",
-    },
-    clearPendingSplitFooterTransition: {
-      args: ["u32"],
-      returns: "void",
-    },
-    updateStats: {
-      args: ["u32", "f64", "u32", "f64"],
-      returns: "void",
-    },
-    updateMemoryStats: {
-      args: ["u32", "u32", "u32", "u32"],
-      returns: "void",
-    },
-    getRenderStats: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    render: {
-      args: ["u32", "bool"],
-      returns: "u8",
-    },
-    renderRetained: {
-      args: ["u32", "bool"],
-      returns: "u8",
-    },
-    renderPartial: {
-      args: ["u32", "u32", "u32", "u32", "u32"],
-      returns: "u8",
-    },
-    rendererHasActiveImageState: {
-      args: ["u32"],
-      returns: "u8",
-    },
-    repaintSplitFooter: {
-      args: ["u32", "u32", "bool"],
-      returns: "u64",
-    },
-    // Single FFI entrypoint for split commit append. beginFrame/finalizeFrame let
-    // native code decide whether this call is a standalone commit or part of a
-    // larger batched frame envelope.
-    commitSplitFooterSnapshot: {
-      args: ["u32", "u32", "u32", "bool", "bool", "u32", "bool", "bool", "bool"],
-      returns: "u64",
-    },
-    getNextBuffer: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    getCurrentBuffer: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    rendererSetPaletteState: {
-      args: ["u32", "ptr", "u32", "ptr", "ptr", "u32"],
-      returns: "void",
-    },
-
-    queryPixelResolution: {
-      args: ["u32"],
-      returns: "void",
-    },
-    queryThemeColors: {
-      args: ["u32"],
-      returns: "void",
-    },
-
-    createOptimizedBuffer: {
-      args: ["u32", "u32", "bool", "u8", "ptr", "u32"],
-      returns: "u32",
-    },
-    destroyOptimizedBuffer: {
-      args: ["u32"],
-      returns: "void",
-    },
-
-    drawFrameBuffer: {
-      args: ["u32", "i32", "i32", "u32", "u32", "u32", "u32", "u32"],
-      returns: "void",
-    },
-    getBufferWidth: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    getBufferHeight: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    bufferClear: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    bufferGetCharPtr: {
-      args: ["u32"],
-      returns: "ptr",
-    },
-    bufferGetFgPtr: {
-      args: ["u32"],
-      returns: "ptr",
-    },
-    bufferGetBgPtr: {
-      args: ["u32"],
-      returns: "ptr",
-    },
-    bufferGetAttributesPtr: {
-      args: ["u32"],
-      returns: "ptr",
-    },
-    bufferGetRespectAlpha: {
-      args: ["u32"],
-      returns: "bool",
-    },
-    bufferSetRespectAlpha: {
-      args: ["u32", "bool"],
-      returns: "void",
-    },
-    bufferGetId: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    bufferGetRealCharSize: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    bufferWriteResolvedChars: {
-      args: ["u32", "ptr", "u32", "bool"],
-      returns: "u32",
-    },
-
-    bufferDrawText: {
-      args: ["u32", "ptr", "u32", "u32", "u32", "ptr", "ptr", "u32"],
-      returns: "void",
-    },
-    bufferSetCellWithAlphaBlending: {
-      args: ["u32", "u32", "u32", "u32", "ptr", "ptr", "u32"],
-      returns: "void",
-    },
-    bufferSetCell: {
-      args: ["u32", "u32", "u32", "u32", "ptr", "ptr", "u32"],
-      returns: "void",
-    },
-    bufferFillRect: {
-      args: ["u32", "u32", "u32", "u32", "u32", "ptr"],
-      returns: "void",
-    },
-    bufferColorMatrix: {
-      args: ["u32", "ptr", "ptr", "u32", "f32", "u8"],
-      returns: "void",
-    },
-    bufferColorMatrixUniform: {
-      args: ["u32", "ptr", "f32", "u8"],
-      returns: "void",
-    },
-    bufferResize: {
-      args: ["u32", "u32", "u32"],
-      returns: "void",
-    },
-
-    // Link API
-    linkAlloc: {
-      args: ["ptr", "u32"],
-      returns: "u32",
-    },
-    linkGetUrl: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    attributesWithLink: {
-      args: ["u32", "u32"],
-      returns: "u32",
-    },
-    attributesGetLinkId: {
-      args: ["u32"],
-      returns: "u32",
-    },
-
-    resizeRenderer: {
-      args: ["u32", "u32", "u32"],
-      returns: "void",
-    },
-
-    // Cursor functions (now renderer-scoped)
-    setCursorPosition: {
-      args: ["u32", "i32", "i32", "bool"],
-      returns: "void",
-    },
-    setCursorColor: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    getCursorState: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-
-    // Cursor and mouse pointer style (combined)
-    setCursorStyleOptions: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-
-    // Debug overlay
-    setDebugOverlay: {
-      args: ["u32", "bool", "u8"],
-      returns: "void",
-    },
-
-    // Terminal control
-    clearTerminal: {
-      args: ["u32"],
-      returns: "void",
-    },
-    setTerminalTitle: {
-      args: ["u32", "ptr", "u32"],
-      returns: "void",
-    },
-    copyToClipboardOSC52: {
-      args: ["u32", "u8", "ptr", "u32"],
-      returns: "bool",
-    },
-    clearClipboardOSC52: {
-      args: ["u32", "u8"],
-      returns: "bool",
-    },
-    clipboardServiceCreate: {
-      args: ["u32", "u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    clipboardServiceBeginShutdown: {
-      args: ["u32"],
-      returns: "u8",
-    },
-    clipboardServicePollShutdown: {
-      args: ["u32"],
-      returns: "u8",
-    },
-    clipboardServiceDestroy: {
-      args: ["u32"],
-      returns: "u8",
-    },
-    clipboardServiceDrain: {
-      args: ["u32"],
-      returns: "u8",
-    },
-    clipboardReadOperationStart: {
-      args: ["u32", "ptr", "u32", "u8", "u32", "u32", "u32", "u32", "ptr"],
-      returns: "u8",
-    },
-    clipboardWriteOperationStart: {
-      args: ["u32", "ptr", "u32", "u8", "u32", "ptr"],
-      returns: "u8",
-    },
-    clipboardClearOperationStart: {
-      args: ["u32", "u8", "u32", "ptr"],
-      returns: "u8",
-    },
-    clipboardOperationPoll: {
-      args: ["u32"],
-      returns: "u8",
-    },
-    clipboardOperationCancel: {
-      args: ["u32"],
-      returns: "u8",
-    },
-    clipboardOperationResultMimeLength: {
-      args: ["u32", "ptr"],
-      returns: "u8",
-    },
-    clipboardOperationResultMimeCopy: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u8",
-    },
-    clipboardOperationResultDataLength: {
-      args: ["u32", "ptr"],
-      returns: "u8",
-    },
-    clipboardOperationResultDataCopy: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u8",
-    },
-    clipboardOperationResultErrorCode: {
-      args: ["u32", "ptr"],
-      returns: "u8",
-    },
-    clipboardOperationResultDiagnosticLength: {
-      args: ["u32", "ptr"],
-      returns: "u8",
-    },
-    clipboardOperationResultDiagnosticCopy: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u8",
-    },
-    clipboardOperationDestroy: {
-      args: ["u32"],
-      returns: "u8",
-    },
-    triggerNotification: {
-      args: ["u32", "ptr", "u32", "ptr", "u32"],
-      returns: "bool",
-    },
-
-    bufferDrawSuperSampleBuffer: {
-      args: ["u32", "u32", "u32", "ptr", "u32", "u8", "u32"],
-      returns: "void",
-    },
-    bufferDrawImage: {
-      args: ["u32", "u32", "ptr"],
-      returns: "u8",
-    },
-    bufferDrawPackedBuffer: {
-      args: ["u32", "ptr", "u32", "u32", "u32", "u32", "u32"],
-      returns: "void",
-    },
-    bufferDrawGrayscaleBuffer: {
-      args: ["u32", "i32", "i32", "ptr", "u32", "u32", "ptr", "ptr"],
-      returns: "void",
-    },
-    bufferDrawGrayscaleBufferSupersampled: {
-      args: ["u32", "i32", "i32", "ptr", "u32", "u32", "ptr", "ptr"],
-      returns: "void",
-    },
-    bufferDrawGrid: {
-      args: ["u32", "ptr", "ptr", "ptr", "ptr", "u32", "ptr", "u32", "ptr"],
-      returns: "void",
-    },
-    bufferDrawBox: {
-      args: ["u32", "i32", "i32", "u32", "u32", "ptr", "u32", "ptr", "ptr", "ptr", "ptr", "u32", "ptr", "u32"],
-      returns: "void",
-    },
-    bufferPushScissorRect: {
-      args: ["u32", "i32", "i32", "u32", "u32"],
-      returns: "void",
-    },
-    bufferPopScissorRect: {
-      args: ["u32"],
-      returns: "void",
-    },
-    bufferClearScissorRects: {
-      args: ["u32"],
-      returns: "void",
-    },
-    bufferPushOpacity: {
-      args: ["u32", "f32"],
-      returns: "void",
-    },
-    bufferPopOpacity: {
-      args: ["u32"],
-      returns: "void",
-    },
-    bufferGetCurrentOpacity: {
-      args: ["u32"],
-      returns: "f32",
-    },
-    bufferClearOpacity: {
-      args: ["u32"],
-      returns: "void",
-    },
-
-    addToHitGrid: {
-      args: ["u32", "i32", "i32", "u32", "u32", "u32"],
-      returns: "void",
-    },
-    clearCurrentHitGrid: {
-      args: ["u32"],
-      returns: "void",
-    },
-    hitGridPushScissorRect: {
-      args: ["u32", "i32", "i32", "u32", "u32"],
-      returns: "void",
-    },
-    hitGridPopScissorRect: {
-      args: ["u32"],
-      returns: "void",
-    },
-    hitGridClearScissorRects: {
-      args: ["u32"],
-      returns: "void",
-    },
-    addToCurrentHitGridClipped: {
-      args: ["u32", "i32", "i32", "u32", "u32", "u32"],
-      returns: "void",
-    },
-    checkHit: {
-      args: ["u32", "u32", "u32"],
-      returns: "u32",
-    },
-    getHitGridDirty: {
-      args: ["u32"],
-      returns: "bool",
-    },
-    dumpHitGrid: {
-      args: ["u32"],
-      returns: "void",
-    },
-    dumpBuffers: {
-      args: ["u32", "i64"],
-      returns: "void",
-    },
-    dumpOutputBuffer: {
-      args: ["u32", "i64"],
-      returns: "void",
-    },
-    restoreTerminalModes: {
-      args: ["u32"],
-      returns: "void",
-    },
-    enableMouse: {
-      args: ["u32", "bool"],
-      returns: "void",
-    },
-    disableMouse: {
-      args: ["u32"],
-      returns: "void",
-    },
-    enableKittyKeyboard: {
-      args: ["u32", "u8"],
-      returns: "void",
-    },
-    disableKittyKeyboard: {
-      args: ["u32"],
-      returns: "void",
-    },
-    setKittyKeyboardFlags: {
-      args: ["u32", "u8"],
-      returns: "void",
-    },
-    getKittyKeyboardFlags: {
-      args: ["u32"],
-      returns: "u8",
-    },
-    setupTerminal: {
-      args: ["u32", "bool"],
-      returns: "void",
-    },
-    suspendRenderer: {
-      args: ["u32"],
-      returns: "void",
-    },
-    resumeRenderer: {
-      args: ["u32"],
-      returns: "void",
-    },
-    writeOut: {
-      args: ["u32", "ptr", "u32"],
-      returns: "void",
-    },
-
-    // TextBuffer functions
-    createTextBuffer: {
-      args: ["u8"],
-      returns: "u32",
-    },
-    destroyTextBuffer: {
-      args: ["u32"],
-      returns: "void",
-    },
-    textBufferGetLength: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    textBufferGetByteSize: {
-      args: ["u32"],
-      returns: "u32",
-    },
-
-    textBufferReset: {
-      args: ["u32"],
-      returns: "void",
-    },
-    textBufferClear: {
-      args: ["u32"],
-      returns: "void",
-    },
-    textBufferSetDefaultFg: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    textBufferSetDefaultBg: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    textBufferSetDefaultAttributes: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    textBufferResetDefaults: {
-      args: ["u32"],
-      returns: "void",
-    },
-    textBufferGetTabWidth: {
-      args: ["u32"],
-      returns: "u8",
-    },
-    textBufferSetTabWidth: {
-      args: ["u32", "u8"],
-      returns: "void",
-    },
-    textBufferRegisterMemBuffer: {
-      args: ["u32", "ptr", "u32", "bool"],
-      returns: "u16",
-    },
-    textBufferReplaceMemBuffer: {
-      args: ["u32", "u8", "ptr", "u32", "bool"],
-      returns: "bool",
-    },
-    textBufferClearMemRegistry: {
-      args: ["u32"],
-      returns: "void",
-    },
-    textBufferSetTextFromMem: {
-      args: ["u32", "u8"],
-      returns: "void",
-    },
-    textBufferAppend: {
-      args: ["u32", "ptr", "u32"],
-      returns: "void",
-    },
-    textBufferAppendFromMemId: {
-      args: ["u32", "u8"],
-      returns: "void",
-    },
-    textBufferLoadFile: {
-      args: ["u32", "ptr", "u32"],
-      returns: "bool",
-    },
-    textBufferSetStyledText: {
-      args: ["u32", "ptr", "u32"],
-      returns: "void",
-    },
-    textBufferAppendStyledText: {
-      args: ["u32", "ptr", "u32"],
-      returns: "bool",
-    },
-    textBufferGetLineCount: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    textBufferGetPlainText: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    textBufferAddHighlightByCharRange: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    textBufferAddHighlight: {
-      args: ["u32", "u32", "ptr"],
-      returns: "void",
-    },
-    textBufferRemoveHighlightsByRef: {
-      args: ["u32", "u16"],
-      returns: "void",
-    },
-    textBufferClearLineHighlights: {
-      args: ["u32", "u32"],
-      returns: "void",
-    },
-    textBufferClearAllHighlights: {
-      args: ["u32"],
-      returns: "void",
-    },
-    textBufferSetSyntaxStyle: {
-      args: ["u32", "u32"],
-      returns: "bool",
-    },
-    textBufferGetLineHighlightsPtr: {
-      args: ["u32", "u32", "ptr"],
-      returns: "ptr",
-    },
-    textBufferFreeLineHighlights: {
-      args: ["ptr", "u32"],
-      returns: "void",
-    },
-    textBufferGetHighlightCount: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    textBufferGetTextRange: {
-      args: ["u32", "u32", "u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    textBufferGetTextRangeByCoords: {
-      args: ["u32", "u32", "u32", "u32", "u32", "ptr", "u32"],
-      returns: "u32",
-    },
-
-    // TextBufferView functions
-    createTextBufferView: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    destroyTextBufferView: {
-      args: ["u32"],
-      returns: "void",
-    },
-    textBufferViewSetSelection: {
-      args: ["u32", "u32", "u32", "ptr", "ptr"],
-      returns: "void",
-    },
-    textBufferViewResetSelection: {
-      args: ["u32"],
-      returns: "void",
-    },
-    textBufferViewGetSelectionInfo: {
-      args: ["u32"],
-      returns: "u64",
-    },
-    textBufferViewSetLocalSelection: {
-      args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr"],
-      returns: "bool",
-    },
-    textBufferViewUpdateSelection: {
-      args: ["u32", "u32", "ptr", "ptr"],
-      returns: "void",
-    },
-    textBufferViewUpdateLocalSelection: {
-      args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr"],
-      returns: "bool",
-    },
-    textBufferViewResetLocalSelection: {
-      args: ["u32"],
-      returns: "void",
-    },
-    textBufferViewSetWrapWidth: {
-      args: ["u32", "u32"],
-      returns: "void",
-    },
-    textBufferViewSetWrapMode: {
-      args: ["u32", "u8"],
-      returns: "void",
-    },
-    textBufferViewSetFirstLineOffset: {
-      args: ["u32", "u32"],
-      returns: "void",
-    },
-    textBufferViewSetViewportSize: {
-      args: ["u32", "u32", "u32"],
-      returns: "void",
-    },
-    textBufferViewSetViewport: {
-      args: ["u32", "u32", "u32", "u32", "u32"],
-      returns: "void",
-    },
-    textBufferViewGetVirtualLineCount: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    textBufferViewGetLineInfoDirect: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    textBufferViewGetLogicalLineInfoDirect: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    textBufferViewGetSelectedText: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    textBufferViewGetPlainText: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    textBufferViewSetTabIndicator: {
-      args: ["u32", "u32"],
-      returns: "void",
-    },
-    textBufferViewSetTabIndicatorColor: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    textBufferViewSetTruncate: {
-      args: ["u32", "bool"],
-      returns: "void",
-    },
-    textBufferViewMeasureForDimensions: {
-      args: ["u32", "u32", "u32", "ptr"],
-      returns: "bool",
-    },
-    bufferDrawTextBufferView: {
-      args: ["u32", "u32", "i32", "i32"],
-      returns: "void",
-    },
-    bufferDrawEditorView: {
-      args: ["u32", "u32", "i32", "i32"],
-      returns: "void",
-    },
-
-    // EditorView functions
-    createEditorView: {
-      args: ["u32", "u32", "u32"],
-      returns: "u32",
-    },
-    destroyEditorView: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editorViewSetViewportSize: {
-      args: ["u32", "u32", "u32"],
-      returns: "void",
-    },
-    editorViewSetViewport: {
-      args: ["u32", "u32", "u32", "u32", "u32", "bool"],
-      returns: "void",
-    },
-    editorViewGetViewport: {
-      args: ["u32", "ptr", "ptr", "ptr", "ptr"],
-      returns: "void",
-    },
-    editorViewSetScrollMargin: {
-      args: ["u32", "f32"],
-      returns: "void",
-    },
-    editorViewSetWrapMode: {
-      args: ["u32", "u8"],
-      returns: "void",
-    },
-    editorViewGetVirtualLineCount: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    editorViewGetTotalVirtualLineCount: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    editorViewGetTextBufferView: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    editorViewGetLineInfoDirect: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    editorViewGetLogicalLineInfoDirect: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-
-    // EditBuffer functions
-    createEditBuffer: {
-      args: ["u8", "u32"],
-      returns: "u32",
-    },
-    destroyEditBuffer: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferSetText: {
-      args: ["u32", "ptr", "u32"],
-      returns: "void",
-    },
-    editBufferSetTextFromMem: {
-      args: ["u32", "u8"],
-      returns: "void",
-    },
-    editBufferReplaceText: {
-      args: ["u32", "ptr", "u32"],
-      returns: "void",
-    },
-    editBufferReplaceTextFromMem: {
-      args: ["u32", "u8"],
-      returns: "void",
-    },
-    editBufferGetText: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    editBufferInsertChar: {
-      args: ["u32", "ptr", "u32"],
-      returns: "void",
-    },
-    editBufferInsertText: {
-      args: ["u32", "ptr", "u32"],
-      returns: "void",
-    },
-    editBufferDeleteChar: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferDeleteCharBackward: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferDeleteRange: {
-      args: ["u32", "u32", "u32", "u32", "u32"],
-      returns: "void",
-    },
-    editBufferNewLine: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferDeleteLine: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferMoveCursorLeft: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferMoveCursorRight: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferMoveCursorUp: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferMoveCursorDown: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferGotoLine: {
-      args: ["u32", "u32"],
-      returns: "void",
-    },
-    editBufferSetCursor: {
-      args: ["u32", "u32", "u32"],
-      returns: "void",
-    },
-    editBufferSetCursorToLineCol: {
-      args: ["u32", "u32", "u32"],
-      returns: "void",
-    },
-    editBufferSetCursorByOffset: {
-      args: ["u32", "u32"],
-      returns: "void",
-    },
-    editBufferGetCursorPosition: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    editBufferGetId: {
-      args: ["u32"],
-      returns: "u16",
-    },
-    editBufferGetTextBuffer: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    editBufferDebugLogRope: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferUndo: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    editBufferRedo: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    editBufferCanUndo: {
-      args: ["u32"],
-      returns: "bool",
-    },
-    editBufferCanRedo: {
-      args: ["u32"],
-      returns: "bool",
-    },
-    editBufferClearHistory: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferClear: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editBufferGetNextWordBoundary: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    editBufferGetPrevWordBoundary: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    editBufferGetEOL: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    editBufferOffsetToPosition: {
-      args: ["u32", "u32", "ptr"],
-      returns: "bool",
-    },
-    editBufferPositionToOffset: {
-      args: ["u32", "u32", "u32"],
-      returns: "u32",
-    },
-    editBufferGetLineStartOffset: {
-      args: ["u32", "u32"],
-      returns: "u32",
-    },
-    editBufferGetTextRange: {
-      args: ["u32", "u32", "u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    editBufferGetTextRangeByCoords: {
-      args: ["u32", "u32", "u32", "u32", "u32", "ptr", "u32"],
-      returns: "u32",
-    },
-
-    // EditorView selection and editing methods
-    editorViewSetSelection: {
-      args: ["u32", "u32", "u32", "ptr", "ptr"],
-      returns: "void",
-    },
-    editorViewResetSelection: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editorViewGetSelection: {
-      args: ["u32"],
-      returns: "u64",
-    },
-    editorViewSetLocalSelection: {
-      args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr", "bool", "bool"],
-      returns: "bool",
-    },
-    editorViewUpdateSelection: {
-      args: ["u32", "u32", "ptr", "ptr"],
-      returns: "void",
-    },
-    editorViewUpdateLocalSelection: {
-      args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr", "bool", "bool"],
-      returns: "bool",
-    },
-    editorViewResetLocalSelection: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editorViewGetSelectedTextBytes: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    editorViewGetCursor: {
-      args: ["u32", "ptr", "ptr"],
-      returns: "void",
-    },
-    editorViewGetText: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u32",
-    },
-
-    // EditorView VisualCursor methods
-    editorViewGetVisualCursor: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-
-    editorViewMoveUpVisual: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editorViewMoveDownVisual: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editorViewDeleteSelectedText: {
-      args: ["u32"],
-      returns: "void",
-    },
-    editorViewSetCursorByOffset: {
-      args: ["u32", "u32"],
-      returns: "void",
-    },
-    editorViewGetNextWordBoundary: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    editorViewGetPrevWordBoundary: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    editorViewGetEOL: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    editorViewGetVisualSOL: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    editorViewGetVisualEOL: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    editorViewSetPlaceholderStyledText: {
-      args: ["u32", "ptr", "u32"],
-      returns: "void",
-    },
-    editorViewSetTabIndicator: {
-      args: ["u32", "u32"],
-      returns: "void",
-    },
-    editorViewSetTabIndicatorColor: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-
-    getArenaAllocatedBytes: {
-      args: [],
-      returns: "u64",
-    },
-    getBuildOptions: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    getAllocatorStats: {
-      args: ["ptr"],
-      returns: "void",
-    },
-
-    // SyntaxStyle functions
-    createSyntaxStyle: {
-      args: [],
-      returns: "u32",
-    },
-    destroySyntaxStyle: {
-      args: ["u32"],
-      returns: "void",
-    },
-    syntaxStyleRegister: {
-      args: ["u32", "ptr", "u32", "ptr", "ptr", "u32"],
-      returns: "u32",
-    },
-    syntaxStyleResolveByName: {
-      args: ["u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    syntaxStyleGetStyleCount: {
-      args: ["u32"],
-      returns: "u32",
-    },
-
-    imageInfo: { args: ["ptr", "u32", "ptr"], returns: "u32" },
-    imageRetainIccCache: { args: [], returns: "void" },
-    imageReleaseIccCache: { args: [], returns: "void" },
-    imageTestFailIccProfileCopyAllocationOnce: { args: [], returns: "void" },
-    imageDecode: { args: ["ptr", "u32", "ptr"], returns: "u32" },
-    imageCreateFromRgba: { args: ["ptr", "u64", "u32", "u32", "u32", "ptr"], returns: "u32" },
-    imageDestroy: { args: ["u32"], returns: "void" },
-    imageRetain: { args: ["u32", "ptr"], returns: "u32" },
-    imageGetInfo: { args: ["u32", "ptr"], returns: "u32" },
-    imageMaterialize: { args: ["u32"], returns: "u32" },
-    imageEnsureEncodedPng: { args: ["u32"], returns: "u32" },
-    imageGetPixelsPtr: { args: ["u32"], returns: "ptr" },
-    imageClone: { args: ["u32", "ptr"], returns: "u32" },
-    imageCopyPixels: { args: ["u32", "ptr", "u64", "u32", "u8"], returns: "u32" },
-    imageResize: { args: ["u32", "u32", "u32", "u32", "ptr"], returns: "u32" },
-    imageExtract: { args: ["u32", "u32", "u32", "u32", "u32", "ptr"], returns: "u32" },
-    imageExtend: { args: ["u32", "u32", "u32", "u32", "u32", "ptr", "ptr"], returns: "u32" },
-    imageTransform: { args: ["u32", "u32", "ptr"], returns: "u32" },
-    imageComposite: { args: ["u32", "u32", "i32", "i32", "u32", "u8", "ptr"], returns: "u32" },
-
-    // Terminal capability functions
-    getTerminalCapabilities: {
-      args: ["u32", "ptr"],
-      returns: "void",
-    },
-    processCapabilityResponse: {
-      args: ["u32", "ptr", "u32"],
-      returns: "void",
-    },
-
-    // Unicode encoding API
-    encodeUnicode: {
-      args: ["ptr", "u32", "ptr", "ptr", "u8"],
-      returns: "bool",
-    },
-    freeUnicode: {
-      args: ["ptr", "u32"],
-      returns: "void",
-    },
-    bufferDrawChar: {
-      args: ["u32", "u32", "u32", "u32", "ptr", "ptr", "u32"],
-      returns: "void",
-    },
-
-    // Yoga layout
-    yogaConfigCreate: {
-      args: [],
-      returns: "ptr",
-    },
-    yogaConfigFree: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    yogaConfigSetUseWebDefaults: {
-      args: ["ptr", "bool"],
-      returns: "void",
-    },
-    yogaConfigGetUseWebDefaults: {
-      args: ["ptr"],
-      returns: "bool",
-    },
-    yogaConfigSetPointScaleFactor: {
-      args: ["ptr", "f32"],
-      returns: "void",
-    },
-    yogaConfigGetPointScaleFactor: {
-      args: ["ptr"],
-      returns: "f32",
-    },
-    yogaConfigSetErrata: {
-      args: ["ptr", "u32"],
-      returns: "void",
-    },
-    yogaConfigGetErrata: {
-      args: ["ptr"],
-      returns: "u32",
-    },
-    yogaConfigSetExperimentalFeatureEnabled: {
-      args: ["ptr", "u32", "bool"],
-      returns: "void",
-    },
-    yogaConfigIsExperimentalFeatureEnabled: {
-      args: ["ptr", "u32"],
-      returns: "bool",
-    },
-    yogaNodeCreate: {
-      args: [],
-      returns: "ptr",
-    },
-    yogaNodeCreateForOpenTUI: {
-      args: [],
-      returns: "ptr",
-    },
-    yogaNodeCreateWithConfig: {
-      args: ["ptr"],
-      returns: "ptr",
-    },
-    yogaNodeFree: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    yogaNodeFreeRecursive: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    yogaNodeReset: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    yogaNodeCopyStyle: {
-      args: ["ptr", "ptr"],
-      returns: "void",
-    },
-    yogaNodeInsertChild: {
-      args: ["ptr", "ptr", "u32"],
-      returns: "void",
-    },
-    yogaNodeRemoveChild: {
-      args: ["ptr", "ptr"],
-      returns: "void",
-    },
-    yogaNodeRemoveAllChildren: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    yogaNodeGetChild: {
-      args: ["ptr", "u32"],
-      returns: "ptr",
-    },
-    yogaNodeGetChildCount: {
-      args: ["ptr"],
-      returns: "u32",
-    },
-    yogaNodeGetParent: {
-      args: ["ptr"],
-      returns: "ptr",
-    },
-    yogaNodeCalculateLayout: {
-      args: ["ptr", "f32", "f32", "u32"],
-      returns: "void",
-    },
-    yogaNodeIsDirty: {
-      args: ["ptr"],
-      returns: "bool",
-    },
-    yogaNodeMarkDirty: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    yogaNodeGetHasNewLayout: {
-      args: ["ptr"],
-      returns: "bool",
-    },
-    yogaNodeSetHasNewLayout: {
-      args: ["ptr", "bool"],
-      returns: "void",
-    },
-    yogaNodeSetIsReferenceBaseline: {
-      args: ["ptr", "bool"],
-      returns: "void",
-    },
-    yogaNodeIsReferenceBaseline: {
-      args: ["ptr"],
-      returns: "bool",
-    },
-    yogaNodeSetAlwaysFormsContainingBlock: {
-      args: ["ptr", "bool"],
-      returns: "void",
-    },
-    yogaNodeGetAlwaysFormsContainingBlock: {
-      args: ["ptr"],
-      returns: "bool",
-    },
-    yogaNodeGetComputedLayout: {
-      args: ["ptr", "ptr"],
-      returns: "void",
-    },
-    yogaNodeLayoutGetEdge: {
-      args: ["ptr", "u32", "u32"],
-      returns: "f32",
-    },
-    yogaNodeStyleSetEnum: {
-      args: ["ptr", "u32", "u32"],
-      returns: "void",
-    },
-    yogaNodeStyleGetEnum: {
-      args: ["ptr", "u32"],
-      returns: "u32",
-    },
-    yogaNodeStyleSetFloat: {
-      args: ["ptr", "u32", "f32"],
-      returns: "void",
-    },
-    yogaNodeStyleGetFloat: {
-      args: ["ptr", "u32"],
-      returns: "f32",
-    },
-    yogaNodeStyleSetBorder: {
-      args: ["ptr", "u32", "f32"],
-      returns: "void",
-    },
-    yogaNodeStyleGetBorder: {
-      args: ["ptr", "u32"],
-      returns: "f32",
-    },
-    yogaNodeStyleSetValue: {
-      args: ["ptr", "u32", "u32", "u32", "f32"],
-      returns: "void",
-    },
-    yogaNodeStyleGetValue: {
-      args: ["ptr", "u32", "u32"],
-      returns: "u64",
-    },
-    yogaNodeSetMeasureFunc: {
-      args: ["ptr", "bool"],
-      returns: "void",
-    },
-    yogaNodeUnsetMeasureFunc: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    yogaNodeHasMeasureFunc: {
-      args: ["ptr"],
-      returns: "bool",
-    },
-    yogaNodeSetDirtiedFunc: {
-      args: ["ptr", "bool"],
-      returns: "void",
-    },
-    yogaNodeUnsetDirtiedFunc: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    yogaStoreMeasureResult: {
-      args: ["f32", "f32"],
-      returns: "void",
-    },
-    yogaSetMeasureCallback: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    yogaSetDirtiedCallback: {
-      args: ["ptr"],
-      returns: "void",
-    },
-
-    // Audio
-    createAudioEngine: {
-      args: ["ptr"],
-      returns: "u32",
-    },
-    destroyAudioEngine: {
-      args: ["u32"],
-      returns: "void",
-    },
-    audioRefreshPlaybackDevices: {
-      args: ["u32"],
-      returns: "i32",
-    },
-    audioGetPlaybackDeviceCount: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    audioGetPlaybackDeviceName: {
-      args: ["u32", "u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    audioIsPlaybackDeviceDefault: {
-      args: ["u32", "u32"],
-      returns: "bool",
-    },
-    audioSelectPlaybackDevice: {
-      args: ["u32", "u32"],
-      returns: "i32",
-    },
-    audioClearPlaybackDeviceSelection: {
-      args: ["u32"],
-      returns: "void",
-    },
-    audioRefreshCaptureDevices: {
-      args: ["u32"],
-      returns: "i32",
-    },
-    audioGetCaptureDeviceCount: {
-      args: ["u32"],
-      returns: "u32",
-    },
-    audioGetCaptureDeviceName: {
-      args: ["u32", "u32", "ptr", "u32"],
-      returns: "u32",
-    },
-    audioIsCaptureDeviceDefault: {
-      args: ["u32", "u32"],
-      returns: "bool",
-    },
-    audioSelectCaptureDevice: {
-      args: ["u32", "u32"],
-      returns: "i32",
-    },
-    audioClearCaptureDeviceSelection: {
-      args: ["u32"],
-      returns: "void",
-    },
-    audioStartCapture: {
-      args: ["u32", "ptr", "u32", "u32"],
-      returns: "i32",
-    },
-    audioStopCapture: {
-      args: ["u32"],
-      returns: "i32",
-    },
-    audioIsCaptureRunning: {
-      args: ["u32"],
-      returns: "bool",
-    },
-    audioReadCapture: {
-      args: ["u32", "ptr", "u32", "u32", "ptr"],
-      returns: "i32",
-    },
-    audioGetCaptureStats: {
-      args: ["u32", "ptr"],
-      returns: "i32",
-    },
-    audioStart: {
-      args: ["u32", "ptr"],
-      returns: "i32",
-    },
-    audioStartMixer: {
-      args: ["u32"],
-      returns: "i32",
-    },
-    audioStop: {
-      args: ["u32"],
-      returns: "i32",
-    },
-    audioCreateStream: {
-      args: ["u32", "ptr", "ptr"],
-      returns: "i32",
-    },
-    audioWriteStream: {
-      args: ["u32", "u32", "ptr", "u32"],
-      returns: "i32",
-    },
-    audioEndStream: {
-      args: ["u32", "u32"],
-      returns: "i32",
-    },
-    audioRestartStream: {
-      args: ["u32", "u32"],
-      returns: "i32",
-    },
-    audioSetStreamVolume: {
-      args: ["u32", "u32", "f32"],
-      returns: "i32",
-    },
-    audioSetStreamPan: {
-      args: ["u32", "u32", "f32"],
-      returns: "i32",
-    },
-    audioSetStreamGroup: {
-      args: ["u32", "u32", "u32"],
-      returns: "i32",
-    },
-    audioGetStreamStats: {
-      args: ["u32", "u32", "ptr"],
-      returns: "i32",
-    },
-    audioCloseStream: {
-      args: ["u32", "u32", "u32", "ptr"],
-      returns: "i32",
-    },
-    audioLoad: {
-      args: ["u32", "ptr", "u32", "ptr"],
-      returns: "i32",
-    },
-    audioUnload: {
-      args: ["u32", "u32"],
-      returns: "i32",
-    },
-    audioPlay: {
-      args: ["u32", "u32", "ptr", "ptr"],
-      returns: "i32",
-    },
-    audioStopVoice: {
-      args: ["u32", "u32"],
-      returns: "i32",
-    },
-    audioSetVoiceGroup: {
-      args: ["u32", "u32", "u32"],
-      returns: "i32",
-    },
-    audioCreateGroup: {
-      args: ["u32", "ptr", "u32", "ptr"],
-      returns: "i32",
-    },
-    audioSetGroupVolume: {
-      args: ["u32", "u32", "f32"],
-      returns: "i32",
-    },
-    audioSetMasterVolume: {
-      args: ["u32", "f32"],
-      returns: "i32",
-    },
-    audioMixToBuffer: {
-      args: ["u32", "ptr", "u32", "u8"],
-      returns: "i32",
-    },
-    audioEnableTap: {
-      args: ["u32", "bool", "u32"],
-      returns: "i32",
-    },
-    audioReadTap: {
-      args: ["u32", "ptr", "u32", "u8", "ptr"],
-      returns: "i32",
-    },
-    audioGetStats: {
-      args: ["u32", "ptr"],
-      returns: "i32",
-    },
-
-    // NativeSpanFeed
-    createNativeSpanFeed: {
-      args: ["ptr"],
-      returns: "ptr",
-    },
-    attachNativeSpanFeed: {
-      args: ["ptr"],
-      returns: "i32",
-    },
-    destroyNativeSpanFeed: {
-      args: ["ptr"],
-      returns: "void",
-    },
-    streamWrite: {
-      args: ["ptr", "ptr", "u32"],
-      returns: "i32",
-    },
-    streamCommit: {
-      args: ["ptr"],
-      returns: "i32",
-    },
-    streamDrainSpans: {
-      args: ["ptr", "ptr", "u32"],
-      returns: "u32",
-    },
-    streamClose: {
-      args: ["ptr"],
-      returns: "i32",
-    },
-    streamReserve: {
-      args: ["ptr", "u32", "ptr"],
-      returns: "i32",
-    },
-    streamCommitReserved: {
-      args: ["ptr", "u32"],
-      returns: "i32",
-    },
-    streamSetOptions: {
-      args: ["ptr", "ptr"],
-      returns: "i32",
-    },
-    streamGetStats: {
-      args: ["ptr", "ptr"],
-      returns: "i32",
-    },
-    streamSetCallback: {
-      args: ["ptr", "ptr"],
-      returns: "void",
-    },
-  })
-
-  if (env.OTUI_DEBUG_FFI || env.OTUI_TRACE_FFI) {
-    return {
-      ...rawSymbols,
-      symbols: convertToDebugSymbols(rawSymbols.symbols),
+  // Node keeps the original single eager dlopen: cold Node start is out of
+  // scope for Wave-5 and the portability seam must not change. The Bun path
+  // stages CORE eager / DEFERRED lazy with background full-bind.
+  if (!usesBunFFI) {
+    const rawSymbols = dlopen(resolvedLibPath, opentuiSymbolDefs)
+    if (env.OTUI_DEBUG_FFI || env.OTUI_TRACE_FFI) {
+      return {
+        ...rawSymbols,
+        symbols: convertToDebugSymbols(rawSymbols.symbols),
+      }
     }
+    return rawSymbols
   }
 
-  return rawSymbols
+  return createStagedSymbolLibrary(resolvedLibPath)
 }
 
 function convertToDebugSymbols<T extends Record<string, any>>(symbols: T): T {
@@ -3783,12 +4027,23 @@ class FFIRenderLib implements RenderLib {
     this.opentui.symbols.setCursorStyleOptions(renderer, buffer)
   }
 
+  private maybeScheduleFullBind(): void {
+    const control = (this.opentui as unknown as { [key: string]: unknown })[WAVE5_STAGED_CONTROL] as
+      | Wave5StagedControl
+      | undefined
+    control?.scheduleFullBind()
+  }
+
   public render(renderer: Pointer, force: boolean, retain: boolean = false): number {
+    // First native commit: kick off the background full-bind so the symbols
+    // proxy degenerates to pass-through after the frame is already out.
+    this.maybeScheduleFullBind()
     if (retain) return this.opentui.symbols.renderRetained(renderer, ffiBool(force))
     return this.opentui.symbols.render(renderer, ffiBool(force))
   }
 
   public renderPartial(renderer: Pointer, x: number, y: number, width: number, height: number): number {
+    this.maybeScheduleFullBind()
     return this.opentui.symbols.renderPartial(renderer, x, y, width, height)
   }
 
@@ -3809,6 +4064,7 @@ class FFIRenderLib implements RenderLib {
     pinnedRenderOffset: number,
     force: boolean,
   ): NativeRenderOperationResult {
+    this.maybeScheduleFullBind()
     return this.unpackRenderOperationResult(
       this.opentui.symbols.repaintSplitFooter(renderer, pinnedRenderOffset, ffiBool(force)),
     )
@@ -3825,6 +4081,7 @@ class FFIRenderLib implements RenderLib {
     beginFrame: boolean = true,
     finalizeFrame: boolean = true,
   ): NativeRenderOperationResult {
+    this.maybeScheduleFullBind()
     return this.unpackRenderOperationResult(
       this.opentui.symbols.commitSplitFooterSnapshot(
         renderer,
