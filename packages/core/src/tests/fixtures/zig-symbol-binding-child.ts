@@ -9,7 +9,7 @@ type LibWithSymbols = {
   opentui: {
     symbols: Record<string, (...args: any[]) => any>
     close(): void
-    __opentuiWave5StagedControl?: { scheduleFullBind(): void; markClosed(): void }
+    __opentuiWave5StagedControl?: { scheduleFullBind(): void }
   }
   dispose(): void
 }
@@ -75,6 +75,15 @@ async function main(): Promise<void> {
     control?.scheduleFullBind()
     await new Promise<void>((resolveCallback) => setTimeout(resolveCallback, 200))
     const marks = markNames()
+    // The trap-bound wrapper must stay CALLABLE after the full-bind ran (its
+    // dlopen handle is kept open until library close; closing it would SIGILL).
+    let trappedCallThrew = ""
+    let trappedCallResult: unknown = "no-call"
+    try {
+      trappedCallResult = (f1 as (...args: any[]) => unknown)(null)
+    } catch (error) {
+      trappedCallThrew = error instanceof Error ? error.message : String(error)
+    }
     result({
       boundViaTrap:
         typeof f1 === "function" && markNames().some((n) => n === "opentui.deferredBound.yogaSetMeasureCallback"),
@@ -83,6 +92,8 @@ async function main(): Promise<void> {
       neverAccessedIsFunction: typeof symbols.setDebugOverlay === "function",
       neverAccessedTrapped: marks.some((n) => n === "opentui.deferredBound.setDebugOverlay"),
       fullyBoundStillFunctional: typeof symbols.yogaSetDirtiedCallback === "function",
+      trappedCallableAfterFullBind: trappedCallThrew === "" && typeof trappedCallResult === "undefined",
+      trappedCallThrew,
     })
     return
   }
@@ -134,24 +145,24 @@ async function main(): Promise<void> {
   }
 
   if (mode === "perf") {
-    // Post-full-bind hot-path overhead: the proxy must degenerate to a plain
-    // property lookup, so repeated calls cost the same as direct FFI wrappers.
+    // Post-full-bind hot-path overhead: the proxy degenerate to a plain
+    // property lookup, measured PER ACCESS by resolving the symbol inside the
+    // timed loop, so the proxy's get trap participates in every iteration.
     const lib = resolveRenderLib() as unknown as LibWithSymbols
     const symbols = lib.opentui.symbols
     lib.opentui.__opentuiWave5StagedControl?.scheduleFullBind()
     await new Promise<void>((resolveCallback) => setTimeout(resolveCallback, 200))
     if (!markNames().includes("opentui.fullBound")) throw new Error("fullBind did not complete in perf mode")
     const n = 200_000
-    const callable = symbols.yogaSetMeasureCallback as (...args: any[]) => unknown
     const eager = dlopen(libPath, { yogaSetMeasureCallback: { args: ["ptr"], returns: "void" } }).symbols
-      .yogaSetMeasureCallback
-    // warm
-    for (let k = 0; k < 1_000; k++) callable(null)
-    for (let k = 0; k < 1_000; k++) (eager as (...args: any[]) => unknown)(null)
+      .yogaSetMeasureCallback as (...args: any[]) => unknown
+    // warm (proxy per-access path + direct baseline)
+    for (let k = 0; k < 1_000; k++) (symbols.yogaSetMeasureCallback as (...args: any[]) => unknown)(null)
+    for (let k = 0; k < 1_000; k++) eager(null)
     const t0 = performance.now()
-    for (let k = 0; k < n; k++) callable(null)
+    for (let k = 0; k < n; k++) (symbols.yogaSetMeasureCallback as (...args: any[]) => unknown)(null)
     const t1 = performance.now()
-    for (let k = 0; k < n; k++) (eager as (...args: any[]) => unknown)(null)
+    for (let k = 0; k < n; k++) eager(null)
     const t2 = performance.now()
     result({
       proxyNsPerCall: ((t1 - t0) / n) * 1e6,

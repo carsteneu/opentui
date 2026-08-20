@@ -12,6 +12,7 @@ import {
 } from "./platform/ffi.js"
 import { writeFile } from "./platform/runtime.js"
 import { mark } from "./telemetry.js"
+import { opentuiCoreSymbols } from "./zig-symbol-stage.js"
 import { existsSync, writeFileSync } from "fs"
 import { EventEmitter } from "events"
 import {
@@ -1858,65 +1859,7 @@ const opentuiSymbolDefs = {
   },
 } as const
 
-export type OpentuiSymbolName = keyof typeof opentuiSymbolDefs
-
-// CORE = everything the FFIRenderLib ctor plus the first native frame touch,
-// derived from the committed M1 first-frame trace
-// (packages/core/.yesmem/bench/wave5-core-symbols.txt) plus a defensive buffer.
-// Filled once the trace lands (M1); empty keeps the staged library fully lazy.
-export const opentuiCoreSymbols: readonly OpentuiSymbolName[] = [
-  "addToHitGrid",
-  "bufferClear",
-  "bufferDrawTextBufferView",
-  "createEventSink",
-  "createNativeRenderable",
-  "createRenderer",
-  "createSyntaxStyle",
-  "createTextBuffer",
-  "createTextBufferView",
-  "getBufferHeight",
-  "getBufferWidth",
-  "getCurrentBuffer",
-  "getNextBuffer",
-  "hitGridClearScissorRects",
-  "imageRetainIccCache",
-  "nativeRenderableAttachYogaNode",
-  "nativeRenderableSetMeasureTarget",
-  "renderRetained",
-  "resetSplitScrollback",
-  "resizeRenderer",
-  "setClearOnShutdown",
-  "setKittyKeyboardFlags",
-  "setLogCallback",
-  "setRenderOffset",
-  "setTerminalEnvVar",
-  "setUseThread",
-  "textBufferGetByteSize",
-  "textBufferGetLength",
-  "textBufferSetDefaultAttributes",
-  "textBufferSetDefaultBg",
-  "textBufferSetDefaultFg",
-  "textBufferSetStyledText",
-  "textBufferSetSyntaxStyle",
-  "textBufferViewSetFirstLineOffset",
-  "textBufferViewSetTruncate",
-  "textBufferViewSetViewport",
-  "textBufferViewSetWrapMode",
-  "textBufferViewSetWrapWidth",
-  "yogaNodeCalculateLayout",
-  "yogaNodeCreateForOpenTUI",
-  "yogaNodeFree",
-  "yogaNodeGetComputedLayout",
-  "yogaNodeInsertChild",
-  "yogaNodeIsDirty",
-  "yogaNodeMarkDirty",
-  "yogaNodeSetHasNewLayout",
-  "yogaNodeStyleSetEnum",
-  "yogaNodeStyleSetFloat",
-  "yogaNodeStyleSetValue",
-  "yogaNodeUnsetDirtiedFunc",
-  "yogaNodeUnsetMeasureFunc",
-]
+type OpentuiSymbolName = keyof typeof opentuiSymbolDefs
 
 const opentuiDeferredKeys = (Object.keys(opentuiSymbolDefs) as unknown as OpentuiSymbolName[]).filter(
   (key) => !opentuiCoreSymbols.includes(key),
@@ -1926,7 +1869,6 @@ const WAVE5_STAGED_CONTROL = "__opentuiWave5StagedControl"
 
 interface Wave5StagedControl {
   scheduleFullBind(): void
-  markClosed(): void
 }
 
 function pickSymbolDefs(keys: readonly string[]): Record<string, FFIFunction> {
@@ -1992,7 +1934,7 @@ function createStagedSymbolLibrary(resolvedLibPath: string) {
   // An empty CORE table means the staged split is not configured yet (or
   // misconfigured): bind the full table eagerly, matching the pre-split
   // behavior, so the library is always correct.
-  const eagerKeys: readonly OpentuiSymbolName[] =
+  const eagerKeys: readonly string[] =
     traceActive || opentuiCoreSymbols.length === 0 ? allKeys : opentuiCoreSymbols
 
   mark("opentui.preCoreBind")
@@ -2052,17 +1994,15 @@ function createStagedSymbolLibrary(resolvedLibPath: string) {
         }
         state.fullyBound = true
         if (anyBound) mark("opentui.fullBound")
-        for (const handle of state.extraHandles) {
-          try {
-            handle.close()
-          } catch {
-            // best-effort handle cleanup
-          }
-        }
-        state.extraHandles = []
+        // Wrapper functions stay valid only while their dlopen handle is open
+        // (verified: bun ffi throws SIGILL on a call after handle.close()).
+        // The full-bind handle is therefore kept open until the library itself
+        // closes, exactly like the trap-miss handles below.
+        state.extraHandles.push(extra)
       } catch {
         // A DEFERRED symbol absent from the actual native keeps the lazy proxy
-        // active; its first use throws exactly like the old eager table.
+        // active; its first use throws exactly like the old eager table. No
+        // further retry: each absent symbol self-heals individually on access.
         state.fullBindScheduled = false
       }
     }, 0)
@@ -2088,7 +2028,7 @@ function createStagedSymbolLibrary(resolvedLibPath: string) {
     close,
   }
   Object.defineProperty(library, WAVE5_STAGED_CONTROL, {
-    value: { scheduleFullBind, markClosed: () => (state.closed = true) },
+    value: { scheduleFullBind },
   })
   return library
 }

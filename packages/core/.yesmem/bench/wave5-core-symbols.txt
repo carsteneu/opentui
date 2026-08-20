@@ -1,24 +1,24 @@
 # Wave-5 CORE symbol set (staged FFI binding)
 
-Derived from the committed M1 first-frame access trace
-(wave5-symbol-access-trace.json, run 2 of 3; all three runs agree on the 51
-pre-commit accesses). CORE = exactly the pre-commit (ctor + first native frame)
-symbols present in every trace run. Any other symbol is DEFERRED: lazy-bound by
-the proxy on first use and pre-bound in the background right after the first
-native commit.
+CORE = the 51 symbols the FFIRenderLib ctor + first native frame touch
+(committed M1 access trace, wave5-symbol-access-trace.json, run 2 of 3; all
+three runs agree on the 51 pre-commit accesses) plus the 4 render-commit
+trigger symbols (render, renderPartial, repaintSplitFooter,
+commitSplitFooterSnapshot): a real interactive first commit calls render()/
+renderPartial(), so the trigger path stays eager. Total 55.
 
-Provenance:
-  date:        2026-08-20
-  native-sha:  553180957522fcdf2558e899e6d97562555fff238d68d62861a563040008f5cd
-  bun:         1.3.14
-  trace-runs:  3 (identical pre-commit access sets)
-  core-size:   51
+Any other symbol is DEFERRED: lazy-bound by the proxy on first use and pre-bound
+in the background right after the first native commit.
 
-The source of truth is the exported `opentuiCoreSymbols` array in zig.ts; this
-file is the committed fixture the binding tests assert against.
+Source of truth: exported opentuiCoreSymbols in src/zig-symbol-stage.ts (kept
+out of the package barrel so staging mechanics are not public API); the binding
+tests assert it covers this trace. FFI table total: 376 symbols.
+
+Provenance: date 2026-08-20, native-sha 553180957522fcdf2558e899e6d97562555fff238d68d62861a563040008f5cd, bun 1.3.14, trace-runs 3 (identical pre-commit access sets).
 addToHitGrid
 bufferClear
 bufferDrawTextBufferView
+commitSplitFooterSnapshot
 createEventSink
 createNativeRenderable
 createRenderer
@@ -33,7 +33,10 @@ hitGridClearScissorRects
 imageRetainIccCache
 nativeRenderableAttachYogaNode
 nativeRenderableSetMeasureTarget
+render
+renderPartial
 renderRetained
+repaintSplitFooter
 resetSplitScrollback
 resizeRenderer
 setClearOnShutdown
