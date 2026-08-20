@@ -31,6 +31,15 @@ function markNames(): string[] {
 const DEFERRED_TRAP = "imageTestFailIccProfileCopyAllocationOnce"
 const DEFERRED_TRAP_DEF = { args: [] as string[], returns: "void" }
 
+async function waitForMark(predicate: () => boolean, timeoutMs = 3000): Promise<boolean> {
+  const deadline = performance.now() + timeoutMs
+  while (performance.now() < deadline) {
+    if (predicate()) return true
+    await new Promise<void>((resolveCallback) => setTimeout(resolveCallback, 50))
+  }
+  return predicate()
+}
+
 async function main(): Promise<void> {
   setTelemetryEnabled(true)
   const mode = process.argv[2]
@@ -60,6 +69,9 @@ async function main(): Promise<void> {
       eagerThrew = error instanceof Error ? error.message : String(error)
     }
     const marks = markNames()
+    // A trap must kick the chunked full-bind without any render(): wait and
+    // observe completion while the trapped wrapper keeps its identity.
+    const kickCompleted = await waitForMark(() => markNames().includes("opentui.fullBound"))
     result({
       trappedType: typeof trapped,
       cachedIdentity: trapped === cached,
@@ -69,6 +81,38 @@ async function main(): Promise<void> {
       eagerThrew,
       resultEqual: typeof trappedResult === typeof eagerResult,
       deferredMarked: marks.includes(`opentui.deferredBound.${DEFERRED_TRAP}`),
+      trapKickedFullBind: kickCompleted,
+      identityAfterKick: symbols[DEFERRED_TRAP] === trapped,
+    })
+    return
+  }
+
+  if (mode === "slicing") {
+    const lib = resolveRenderLib() as unknown as LibWithSymbols
+    const symbols = lib.opentui.symbols
+    const control = lib.opentui.__opentuiWave5StagedControl
+    const eagerWorks = typeof symbols.yogaSetMeasureCallback === "function"
+    // With no commit trigger and no trap, nothing may bind spontaneously: the
+    // full-bind slices must never run before the first native commit trigger on
+    // the renderer runtime.
+    await new Promise<void>((resolveCallback) => setTimeout(resolveCallback, 300))
+    const spills = markNames().filter((n) => n === "opentui.fullBound" || n.startsWith("opentui.fullBindSlice")).length
+    // Commit-equivalent trigger seam.
+    control?.scheduleFullBind()
+    await waitForMark(() => markNames().includes("opentui.fullBound"))
+    const marks = markNames()
+    const sliceCount = marks.filter((n) => n === "opentui.fullBindSlice").length
+    // A never-trapped deferred key must now be bound by a slice (pass-through),
+    // with stable identity across accesses.
+    const never1 = symbols.destroyEditBuffer
+    const never2 = symbols.destroyEditBuffer
+    result({
+      eagerWorks,
+      spontaneousSpillsBeforeTrigger: spills,
+      sliceCount,
+      fullBoundMarked: marks.includes("opentui.fullBound"),
+      deferredBoundBySlice: typeof never1 === "function",
+      passThroughStable: never1 === never2,
     })
     return
   }
@@ -79,7 +123,7 @@ async function main(): Promise<void> {
     const control = lib.opentui.__opentuiWave5StagedControl
     const f1 = symbols[DEFERRED_TRAP]
     control?.scheduleFullBind()
-    await new Promise<void>((resolveCallback) => setTimeout(resolveCallback, 200))
+    await waitForMark(() => markNames().includes("opentui.fullBound"))
     const marks = markNames()
     // The trap-bound wrapper must stay CALLABLE after the full-bind ran (its
     // dlopen handle is kept open until library close; closing it would SIGILL).
@@ -156,8 +200,9 @@ async function main(): Promise<void> {
     const lib = resolveRenderLib() as unknown as LibWithSymbols
     const symbols = lib.opentui.symbols
     lib.opentui.__opentuiWave5StagedControl?.scheduleFullBind()
-    await new Promise<void>((resolveCallback) => setTimeout(resolveCallback, 200))
-    if (!markNames().includes("opentui.fullBound")) throw new Error("fullBind did not complete in perf mode")
+    if (!(await waitForMark(() => markNames().includes("opentui.fullBound")))) {
+      throw new Error("fullBind did not complete in perf mode")
+    }
     const n = 200_000
     const eager = dlopen(libPath, { yogaSetMeasureCallback: { args: ["ptr"], returns: "void" } }).symbols
       .yogaSetMeasureCallback as (...args: any[]) => unknown

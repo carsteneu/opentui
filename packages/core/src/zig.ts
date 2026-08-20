@@ -1934,8 +1934,7 @@ function createStagedSymbolLibrary(resolvedLibPath: string) {
   // An empty CORE table means the staged split is not configured yet (or
   // misconfigured): bind the full table eagerly, matching the pre-split
   // behavior, so the library is always correct.
-  const eagerKeys: readonly string[] =
-    traceActive || opentuiCoreSymbols.length === 0 ? allKeys : opentuiCoreSymbols
+  const eagerKeys: readonly string[] = traceActive || opentuiCoreSymbols.length === 0 ? allKeys : opentuiCoreSymbols
 
   mark("opentui.preCoreBind")
   const primary = dlopen(resolvedLibPath, pickSymbolDefs(eagerKeys))
@@ -1971,6 +1970,9 @@ function createStagedSymbolLibrary(resolvedLibPath: string) {
       const fn = extra.symbols[property]
       object[property] = debugActive ? wrapDebugSymbol(property, fn) : fn
       mark(`opentui.deferredBound.${property}`)
+      // A trap means the deferred table is in use: kick the chunked full-bind
+      // immediately so subsequent symbols don't pay per-access dlopens.
+      scheduleFullBind()
       return object[property]
     },
   })
@@ -1978,34 +1980,55 @@ function createStagedSymbolLibrary(resolvedLibPath: string) {
   function scheduleFullBind() {
     if (state.closed || state.fullyBound || state.fullBindScheduled) return
     state.fullBindScheduled = true
-    setTimeout(() => {
-      if (state.closed || state.fullyBound) {
-        state.fullBindScheduled = false
-        return
-      }
-      try {
-        const extra = dlopen(resolvedLibPath, pickSymbolDefs(opentuiDeferredKeys))
-        let anyBound = false
-        for (const key of opentuiDeferredKeys) {
-          if (!(key in target)) {
+    void runFullBindSlices()
+  }
+
+  // Bind the rest of the table in chunks that yield to the event loop between
+  // slices. A single setTimeout(0) dlopen of ~320 symbols blocks the main thread
+  // for ~150 ms (bun ~0.3-0.6 ms/symbol), which landed inside the measured CPU
+  // window right after the first native commit (wave5-cpu-ab2 finding). Chunking
+  // lets queued worker/generation messages be processed between slices so the
+  // styled-commit latency no longer absorbs the whole blob.
+  const FULL_BIND_SLICE = 40
+
+  async function runFullBindSlices() {
+    let index = 0
+    while (!state.closed && index < opentuiDeferredKeys.length) {
+      const slice = opentuiDeferredKeys.slice(index, index + FULL_BIND_SLICE)
+      index += FULL_BIND_SLICE
+      const pending = slice.filter((key) => !(key in target))
+      if (pending.length > 0) {
+        try {
+          const extra = dlopen(resolvedLibPath, pickSymbolDefs(pending))
+          state.extraHandles.push(extra)
+          for (const key of pending) {
             target[key] = debugActive ? wrapDebugSymbol(key, extra.symbols[key]) : extra.symbols[key]
-            anyBound = true
+          }
+        } catch {
+          // A symbol in this slice is absent from the actual native: bind the
+          // rest one-by-one so a single missing export does not drop the whole
+          // slice; the absent key stays DEFERRED and throws on first use exactly
+          // like the old eager table (no retry in the full-bind path).
+          for (const key of pending) {
+            try {
+              const one = dlopen(resolvedLibPath, pickSymbolDefs([key]))
+              state.extraHandles.push(one)
+              target[key] = debugActive ? wrapDebugSymbol(key, one.symbols[key]) : one.symbols[key]
+            } catch {
+              // absent symbol: keep lazy
+            }
           }
         }
-        state.fullyBound = true
-        if (anyBound) mark("opentui.fullBound")
-        // Wrapper functions stay valid only while their dlopen handle is open
-        // (verified: bun ffi throws SIGILL on a call after handle.close()).
-        // The full-bind handle is therefore kept open until the library itself
-        // closes, exactly like the trap-miss handles below.
-        state.extraHandles.push(extra)
-      } catch {
-        // A DEFERRED symbol absent from the actual native keeps the lazy proxy
-        // active; its first use throws exactly like the old eager table. No
-        // further retry: each absent symbol self-heals individually on access.
-        state.fullBindScheduled = false
       }
-    }, 0)
+      mark("opentui.fullBindSlice")
+      if (!state.closed && index < opentuiDeferredKeys.length) {
+        await new Promise<void>((resolveFn) => setTimeout(resolveFn, 0))
+      }
+    }
+    state.fullBindScheduled = false
+    if (state.closed) return
+    state.fullyBound = true
+    mark("opentui.fullBound")
   }
 
   function close() {

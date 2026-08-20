@@ -10,6 +10,9 @@
 //     trapped symbols keep their identity (child process).
 // #4  dispose/destroy stays idempotent with the staged proxy: one close, one
 //     event-sink destroy, no lazy dlopen after close (child process).
+// #6  The full-bind is time-sliced (multiple macrotask batches) and never runs
+//     before the commit/trap trigger; a trap kicks the full-bind on its own
+//     (child process).
 import { describe, expect, test } from "bun:test"
 import { readFileSync, readdirSync, existsSync } from "node:fs"
 import { join } from "node:path"
@@ -67,6 +70,10 @@ describe("wave5 staged binding", () => {
       expect(out.eagerThrew).toBe("")
       expect(out.resultEqual).toBe(true)
       expect(out.deferredMarked).toBe(true)
+      // A trap must kick the full-bind without any render() (worker/main path),
+      // and keep the trapped wrapper's identity afterwards.
+      expect(out.trapKickedFullBind).toBe(true)
+      expect(out.identityAfterKick).toBe(true)
     },
     30_000,
   )
@@ -100,6 +107,23 @@ describe("wave5 staged binding", () => {
   )
 
   test(
+    "#6 full-bind is time-sliced and never runs before the commit/trap trigger",
+    { skip: requiresNative },
+    async () => {
+      const out = await runChild("slicing", nativeLib!)
+      // Ordering: no slice may fire before the first native commit / trap.
+      expect(out.eagerWorks).toBe(true)
+      expect(out.spontaneousSpillsBeforeTrigger).toBe(0)
+      // Time-slicing: the deferred table is bound in multiple batches.
+      expect(out.sliceCount).toBeGreaterThanOrEqual(2)
+      expect(out.fullBoundMarked).toBe(true)
+      expect(out.deferredBoundBySlice).toBe(true)
+      expect(out.passThroughStable).toBe(true)
+    },
+    30_000,
+  )
+
+  test(
     "#4 dispose/destroy is idempotent and close blocks further lazy bind",
     { skip: requiresNative },
     async () => {
@@ -110,7 +134,10 @@ describe("wave5 staged binding", () => {
       expect(out.eventSinkDestroyCalls).toBe(1)
       expect(out.preDisposeDeferred).toBe(true)
       expect(out.alreadyBoundAfterClose).toBe(true)
-      expect(out.afterCloseUnbound).toBe("undefined")
+      // After close a deferred key resolves to its already-bound wrapper (a
+      // full-bind slice may have raced the dispose) or undefined — but it must
+      // be a plain proxy read, never a fresh dlopen.
+      expect(["function", "undefined"]).toContain(out.afterCloseUnbound)
       expect(out.noPostCloseTrap).toBe(true)
     },
     30_000,

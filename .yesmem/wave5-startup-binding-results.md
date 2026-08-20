@@ -164,3 +164,60 @@ run `bun packages/core/scripts/wave3-clean-gate-cpu.ts --baseline-root=<fastpatc
 --candidate-root=<wave5-startup-binding HEAD> --baseline-revision=13dc7193... --candidate-revision=<sha>
 --pairs=10 --output-dir=packages/core/.yesmem/bench/wave5-cpu-ab2`. Acceptance:
 `cold-1000 updateToStyledCommit` familywise upper < +10 % (or CI includes 0).
+
+## Round 3 — chunked full-bind (2026-08-20 14:49, second verification round)
+
+Coordinator 2nd verify (working build host; CORE 78 in place, diff `d70f4b9e`): cold-1000
+`updateToStyledCommit +27.71 % CI [+11.11, +50.55]` — CI still excludes 0; warm now neutral
+(−0.87 %, was +13.4 %, so the CORE-78 streaming additions DID fix warm). Native exonerated
+(candidate code + baseline native shows the same regression). Stage decomposition
+(cold-1000): candidate `733 ms = workerWait 615 + main 115` vs baseline `431 = workerWait 328
++ main ~103` → **+287 ms attributed to the worker-wait window**.
+
+**Independent root-cause evidence (this sandbox, `wave5-stream-trace.ts --staged`):**
+- `inWindowDeferredBounds = []` — zero main-thread trap-misses in the measured window (CORE 78
+  already covers the cold-1000 working set). No per-symbol dlopen inflation on the main thread.
+- `fullBoundInWindow = true` — the single `setTimeout(0)` full-bind (`dlopen` of ~320 deferred
+  symbols, ~150 ms) fires at ~257 ms INSIDE the measured window [112, 606]. The blob blocks the
+  main thread mid-job, delaying acceptance of worker generations — this inflates the
+  `workerWait` gap, not worker-owned zig traps (`parser.worker.ts` imports no zig/staged path).
+  This matches the coordinator's fix directive in effect (A: independent of render; B: chunk it).
+
+**Fix (JS-only, no CORE growth; commit `wave5-round3` = the chunked-full-bind commit on
+`yesloop/wave5-startup-binding`):**
+- **B — time-sliced full-bind:** `scheduleFullBind()` now drives `runFullBindSlices()` which
+  binds the deferred table in chunks of `FULL_BIND_SLICE = 40` symbols per `dlopen`, yielding to
+  the event loop (`setTimeout(0)`) between slices so queued worker/generation messages get
+  processed instead of absorbing one ~150 ms main-thread blob. Per slice a `opentui.fullBindSlice`
+  mark; `opentui.fullBound` fires once at completion. Absent symbols fall back to per-key bind
+  (self-healing preserved).
+- **A — trap-kick independent of render():** the proxy trap-miss path now calls
+  `scheduleFullBind()` itself, so a deferred first use in any runtime (worker or main) triggers
+  the chunked full-bind without waiting for `render()`/`renderPartial()`.
+- Ordering preserved: slices only start after the commit/trap trigger (the commit seam is the
+  same `scheduleFullBind()`), so the first-native-commit path is untouched; `--staged` probe adds
+  window-overlap evidence fields.
+
+**Focused tests extended** (wave5 suite now 6/6):
+- #2: trap-miss kicks full-bind without render (`trapKickedFullBind`) and keeps trapped identity.
+- #6 (`slicing` child mode): no `fullBindSlice`/`fullBound` spill before the commit/trap trigger
+  (ordering assert), `sliceCount >= 2` (time-sliced into multiple batches), a never-trapped
+  deferred symbol resolves via pass-through after completion, identity stable.
+- #4: dispose invariant updated — after close a deferred key reads as its bound wrapper or
+  undefined (a slice may have raced dispose) but never triggers a fresh dlopen.
+
+**Re-verification after Round 3:** tsc exit 0; wave5 suite 6/6; natives-free 108/108.
+
+**Micro (staged cold-1000, this sandbox, same load):** measured updateMs 493 → 348–419 (3 runs,
+full-bind now interleaved inside the window instead of one blocking blob).
+
+**Gates (Round 3):**
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| CPU cold-1000 updateToStyledCommit familywise upper < +10 % | **coordinator re-run (wave5-cpu-ab3)** | root cause measured: single blob in window, now chunked 40/slice + trap-kick; workerWait target delta < +40 ms. Sandbox cannot host the per-arm gate (nativeArtifact + load). |
+| workerWaitMs p50 delta < +40 ms (report per arm) | **coordinator re-run** | baseline 328 vs candidate 615 was the blob block; interleave removes it. |
+| Startup TTFMF p50 ≤ 95 ms, slices never before first commit | **design-unchanged + test** | slices only after commit/trap trigger; #6 asserts no pre-trigger spill. No CORE change this round. |
+| wave5 suite | **PASS** | 6/6 |
+| natives-free allowlist | **PASS** | 108/108 |
+| tsc node-test --noEmit | **PASS** | exit 0 |

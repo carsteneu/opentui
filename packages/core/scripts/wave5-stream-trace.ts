@@ -24,7 +24,9 @@ import { isAbsolute, join, resolve, dirname } from "node:path"
 import { pathToFileURL } from "node:url"
 
 // Trace mode must be visible to zig.ts when the staged library is created.
-process.env.OTUI_WAVE5_TRACE_SYMBOLS = "1"
+// --staged disables it: run the REAL staged split and emit full-bind/trap
+// timing evidence so the measured window overlap can be diagnosed.
+if (!process.argv.includes("--staged")) process.env.OTUI_WAVE5_TRACE_SYMBOLS = "1"
 
 const RESULT_PREFIX = "WAVE5_STREAM_TRACE_RESULT "
 
@@ -149,11 +151,32 @@ async function main(): Promise<void> {
 
     const marks = telemetryModule.getTelemetrySnapshot().marks as Mark[]
     const firstNativeCommitAtMs = marks.find((m) => m.name === "opentui.firstNativeCommit")?.atMs ?? null
+    const coreBoundAtMs = marks.find((m) => m.name === "opentui.coreBound")?.atMs ?? null
     const fullBoundAtMs = marks.find((m) => m.name === "opentui.fullBound")?.atMs ?? null
     const accesses = marks
       .filter((m) => m.name.startsWith("opentui.symbolAccess."))
       .map((m) => ({ name: m.name.slice("opentui.symbolAccess.".length), atMs: m.atMs }))
       .sort((a, b) => a.atMs - b.atMs)
+    const deferredBounds = marks
+      .filter((m) => m.name.startsWith("opentui.deferredBound."))
+      .map((m) => ({ name: m.name.slice("opentui.deferredBound.".length), atMs: m.atMs }))
+      .sort((a, b) => a.atMs - b.atMs)
+
+    // In --staged mode the real split runs: emit the trap/full-bind timing
+    // evidence against the measured window [tUpdateStart, tStyledCommitEnd].
+    const staged = process.argv.includes("--staged")
+    const staging = staged
+      ? {
+          staged: true,
+          windowStartAtMs: tUpdateStart,
+          windowEndAtMs: tStyledCommitEnd,
+          coreBoundAtMs,
+          inWindowDeferredBounds: deferredBounds.filter((d) => d.atMs >= tUpdateStart && d.atMs <= tStyledCommitEnd),
+          fullBoundInWindow:
+            fullBoundAtMs !== null && fullBoundAtMs >= tUpdateStart && fullBoundAtMs <= tStyledCommitEnd,
+          fullBoundAtMs,
+        }
+      : { staged: false }
 
     const fixture = {
       scenario,
@@ -161,11 +184,11 @@ async function main(): Promise<void> {
       nativeSha256: createHash("sha256").update(readFileSync(nativePath)).digest("hex"),
       updateMs: tStyledCommitEnd - tUpdateStart,
       firstNativeCommitAtMs,
-      fullBoundAtMs,
       styledVerified,
       finalMarkerVisible,
       accessCount: accesses.length,
       accesses,
+      ...staging,
     }
     mkdirSync(dirname(outPath), { recursive: true })
     writeFileSync(outPath, JSON.stringify(fixture, null, 1) + "\n")
