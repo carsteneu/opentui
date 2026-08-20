@@ -1,0 +1,265 @@
+{
+ "scenario": "warm-1000-append100",
+ "bun": "1.3.14",
+ "nativeSha256": "553180957522fcdf2558e899e6d97562555fff238d68d62861a563040008f5cd",
+ "updateMs": 49.211929000000055,
+ "firstNativeCommitAtMs": 207.306949,
+ "fullBoundAtMs": null,
+ "styledVerified": true,
+ "finalMarkerVisible": true,
+ "accessCount": 63,
+ "accesses": [
+  {
+   "name": "imageRetainIccCache",
+   "atMs": 197.43454
+  },
+  {
+   "name": "setLogCallback",
+   "atMs": 198.355502
+  },
+  {
+   "name": "createEventSink",
+   "atMs": 198.878938
+  },
+  {
+   "name": "createRenderer",
+   "atMs": 199.093065
+  },
+  {
+   "name": "setUseThread",
+   "atMs": 199.363529
+  },
+  {
+   "name": "setKittyKeyboardFlags",
+   "atMs": 199.446758
+  },
+  {
+   "name": "setClearOnShutdown",
+   "atMs": 199.493767
+  },
+  {
+   "name": "setTerminalEnvVar",
+   "atMs": 199.534294
+  },
+  {
+   "name": "getNextBuffer",
+   "atMs": 199.786334
+  },
+  {
+   "name": "getBufferWidth",
+   "atMs": 199.813014
+  },
+  {
+   "name": "getBufferHeight",
+   "atMs": 199.817753
+  },
+  {
+   "name": "getCurrentBuffer",
+   "atMs": 199.996373
+  },
+  {
+   "name": "yogaNodeCreateForOpenTUI",
+   "atMs": 200.285904
+  },
+  {
+   "name": "yogaNodeStyleSetEnum",
+   "atMs": 200.369814
+  },
+  {
+   "name": "yogaNodeStyleSetValue",
+   "atMs": 200.58883
+  },
+  {
+   "name": "yogaNodeStyleSetFloat",
+   "atMs": 200.703839
+  },
+  {
+   "name": "yogaNodeUnsetMeasureFunc",
+   "atMs": 201.166429
+  },
+  {
+   "name": "yogaNodeUnsetDirtiedFunc",
+   "atMs": 201.224489
+  },
+  {
+   "name": "yogaNodeFree",
+   "atMs": 201.237624
+  },
+  {
+   "name": "yogaNodeCalculateLayout",
+   "atMs": 201.391968
+  },
+  {
+   "name": "yogaNodeSetHasNewLayout",
+   "atMs": 201.527536
+  },
+  {
+   "name": "resizeRenderer",
+   "atMs": 202.158686
+  },
+  {
+   "name": "resetSplitScrollback",
+   "atMs": 202.251763
+  },
+  {
+   "name": "setRenderOffset",
+   "atMs": 202.298442
+  },
+  {
+   "name": "createSyntaxStyle",
+   "atMs": 203.41191
+  },
+  {
+   "name": "syntaxStyleRegister",
+   "atMs": 203.745244
+  },
+  {
+   "name": "createTextBuffer",
+   "atMs": 204.314908
+  },
+  {
+   "name": "createTextBufferView",
+   "atMs": 204.43731
+  },
+  {
+   "name": "textBufferSetSyntaxStyle",
+   "atMs": 204.501422
+  },
+  {
+   "name": "textBufferViewSetWrapMode",
+   "atMs": 204.564863
+  },
+  {
+   "name": "textBufferViewSetFirstLineOffset",
+   "atMs": 204.587065
+  },
+  {
+   "name": "createNativeRenderable",
+   "atMs": 204.62619
+  },
+  {
+   "name": "nativeRenderableAttachYogaNode",
+   "atMs": 204.642571
+  },
+  {
+   "name": "nativeRenderableSetMeasureTarget",
+   "atMs": 204.699299
+  },
+  {
+   "name": "textBufferSetDefaultFg",
+   "atMs": 204.724908
+  },
+  {
+   "name": "textBufferSetDefaultBg",
+   "atMs": 204.782387
+  },
+  {
+   "name": "textBufferSetDefaultAttributes",
+   "atMs": 204.804238
+  },
+  {
+   "name": "textBufferViewSetTruncate",
+   "atMs": 204.823425
+  },
+  {
+   "name": "yogaNodeMarkDirty",
+   "atMs": 204.862579
+  },
+  {
+   "name": "yogaNodeInsertChild",
+   "atMs": 205.222935
+  },
+  {
+   "name": "bufferClear",
+   "atMs": 206.168243
+  },
+  {
+   "name": "yogaNodeIsDirty",
+   "atMs": 206.326414
+  },
+  {
+   "name": "yogaNodeGetComputedLayout",
+   "atMs": 206.535952
+  },
+  {
+   "name": "textBufferViewSetViewport",
+   "atMs": 206.661191
+  },
+  {
+   "name": "hitGridClearScissorRects",
+   "atMs": 206.766952
+  },
+  {
+   "name": "addToHitGrid",
+   "atMs": 206.840111
+  },
+  {
+   "name": "bufferDrawTextBufferView",
+   "atMs": 206.978655
+  },
+  {
+   "name": "renderRetained",
+   "atMs": 207.209153
+  },
+  {
+   "name": "getHitGridDirty",
+   "atMs": 207.371111
+  },
+  {
+   "name": "updateStats",
+   "atMs": 207.420896
+  },
+  {
+   "name": "textBufferViewGetLogicalLineInfoDirect",
+   "atMs": 208.957108
+  },
+  {
+   "name": "yogaNodeGetHasNewLayout",
+   "atMs": 209.279571
+  },
+  {
+   "name": "textBufferSetStyledText",
+   "atMs": 547.255873
+  },
+  {
+   "name": "textBufferGetLength",
+   "atMs": 575.727861
+  },
+  {
+   "name": "textBufferGetByteSize",
+   "atMs": 575.769671
+  },
+  {
+   "name": "textBufferAppendStyledText",
+   "atMs": 632.785774
+  },
+  {
+   "name": "bufferGetRealCharSize",
+   "atMs": 637.409178
+  },
+  {
+   "name": "bufferWriteResolvedChars",
+   "atMs": 637.454424
+  },
+  {
+   "name": "bufferGetCharPtr",
+   "atMs": 637.829959
+  },
+  {
+   "name": "bufferGetFgPtr",
+   "atMs": 637.844747
+  },
+  {
+   "name": "bufferGetBgPtr",
+   "atMs": 637.860286
+  },
+  {
+   "name": "bufferGetAttributesPtr",
+   "atMs": 637.87301
+  },
+  {
+   "name": "getCursorState",
+   "atMs": 640.77489
+  }
+ ]
+}
