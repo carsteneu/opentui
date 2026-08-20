@@ -25,6 +25,9 @@ Remove an element when spacing, order, plain text, or standard HTML can do the s
 - Use `GrayText` for structural hairlines, such as code borders and table rows.
 - Use the text color for rules that carry content weight, such as table headers and callout edges.
 - Use monochrome syntax highlighting. Use plain identifiers, bold keywords, gray literals, and faint gray italic comments.
+- Set code blocks in the primary typeface, one step smaller than prose.
+- Mark inline code with a faint translucent fill of the text color. Do not add hue or rounded corners.
+- Keep article heading sizes distinct from bold body text.
 - Use a translucent page background and backdrop blur for a sticky navigation header.
 - If the browser does not support `backdrop-filter`, use an opaque header.
 
@@ -108,7 +111,8 @@ Documentation can be dense, but it must use the same restrained design language.
 - Use plain text for disclosure controls and remove the native summary marker.
 - End each page with previous and next links.
 - Use text only for the code copy control. Show it on hover or focus, and keep it visible on touch devices.
-- Prefer monospace box-drawing diagrams in code blocks to images. They inherit the typeface and both themes.
+- Prefer monospace box-drawing diagrams to images. Set them in a `text` fence that starts with a box-drawing corner.
+- Those fences use the article typeface at body size. They have no code frame and no copy control.
 
 ## Exceptions
 

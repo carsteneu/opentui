@@ -39,7 +39,7 @@ jobs:
       - name: Restore Zig cache
         uses: actions/cache@v5
         with:
-          path: .zig-cache
+          path: packages/native/.zig-cache
           key: zig-v1-${{ runner.os }}-0.16.0-${{ github.run_id }}-${{ github.job }}
           restore-keys: zig-v1-${{ runner.os }}-0.16.0-
 
@@ -47,7 +47,7 @@ jobs:
         run: bun install
 
       - name: Build core (all platforms via cross-compilation)
-        run: bun scripts/build.ts --native --all && bun scripts/build.ts --lib
+        run: bun run build:native --all && bun scripts/build.ts --lib
         working-directory: packages/core
 
       - name: Build three

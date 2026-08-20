@@ -1,12 +1,7 @@
-# Zig build cache
-.zig-cache
 .node-test
 .node-benchmark
 ffi-fast-path-paired.json
 zig-out
-src/zig/lib
-src/zig/zig-pkg
-
-# Native staged assets (never committed) and temp probe scratch (Wave 3)
+src/zig/
 .yesmem/native-assets/
 .yesmem/tmp/

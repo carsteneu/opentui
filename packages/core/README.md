@@ -7,7 +7,7 @@ OpenTUI is a native terminal UI core written in Zig with TypeScript bindings. Th
 - [Getting Started](https://opentui.com/docs/getting-started) - API and usage guide
 - [Development Guide](docs/development.md) - Building, testing, and contributing
 - [Tree-Sitter](https://opentui.com/docs/reference/tree-sitter) - Syntax highlighting integration
-- [Renderables vs Constructs](https://opentui.com/docs/core-concepts/renderables-vs-constructs) - Understanding the component model
+- [Renderables](https://opentui.com/docs/core-concepts/renderables) - Understanding the component model
 - [Environment Variables](https://opentui.com/docs/reference/env-vars) - Configuration options
 
 ## Install
@@ -40,7 +40,7 @@ Run native performance benchmarks:
 bun run bench:native
 ```
 
-See [src/zig/bench.zig](src/zig/bench.zig) for available options like `--filter` and `--mem`.
+See [the native benchmark runner](../native/src/bench.zig) for options such as `--filter` and `--mem`.
 
 NativeSpanFeed TypeScript benchmarks:
 

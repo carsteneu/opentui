@@ -42,7 +42,10 @@ const treeSitterTestDataPaths = [
 const treeSitterAssetsDir = "src/lib/tree-sitter/assets"
 const audioFixturesDir = "src/tests/fixtures/audio"
 const imageFixturesDir = "src/tests/fixtures/images"
-const iccFixturesDir = "src/zig/tests/fixtures"
+const iccFixturesDir = "../native/src/tests/fixtures"
+const stagedNativeFixturesRoot = resolve(outDir, iccFixturesDir)
+const stagedNativeRoot = resolve(packageRoot, "native")
+let stagedNativeRootOwned = false
 const nodeTestTimeoutMs = 30_000
 const nodeProcessTimeoutMs = 10 * 60_000
 const nodePath = requireNode26()
@@ -78,10 +81,12 @@ const emittedAllowlist = [
   ".node-test/src/renderables/Diff.regression.test.js",
   ".node-test/src/renderables/Diff.test.js",
   ".node-test/src/renderables/EditBufferRenderable.test.js",
+  ".node-test/src/renderables/EmbeddedTerminal.test.js",
   ".node-test/src/renderables/Input.test.js",
   ".node-test/src/renderables/Select.test.js",
   ".node-test/src/renderables/Slider.test.js",
   ".node-test/src/renderables/TabSelect.test.js",
+  ".node-test/src/renderables/TimeToFirstDraw.test.js",
   ".node-test/src/renderables/__tests__/Code.test.js",
   ".node-test/src/renderables/__tests__/LineNumberRenderable.scrollbox-simple.test.js",
   ".node-test/src/renderables/__tests__/LineNumberRenderable.scrollbox.test.js",
@@ -122,6 +127,7 @@ const emittedAllowlist = [
   ".node-test/src/lib/tree-sitter/cache.test.js",
   ".node-test/src/lib/tree-sitter/client.test.js",
   ".node-test/src/lib/tree-sitter-styled-text.test.js",
+  ".node-test/src/lib/styled-text.test.js",
   ".node-test/src/lib/yoga.options.test.js",
   ".node-test/src/renderables/__tests__/markdown-parser.test.js",
   ".node-test/src/renderables/TextNode.test.js",
@@ -205,10 +211,14 @@ try {
   }
 
   if (exitCode === 0) {
+    if (existsSync(stagedNativeRoot)) {
+      throw new Error(`Refusing to replace existing native fixture staging directory: ${stagedNativeRoot}`)
+    }
     cpSync(resolve(packageRoot, treeSitterAssetsDir), resolve(outDir, treeSitterAssetsDir), { recursive: true })
     cpSync(resolve(packageRoot, audioFixturesDir), resolve(outDir, audioFixturesDir), { recursive: true })
     cpSync(resolve(packageRoot, imageFixturesDir), resolve(outDir, imageFixturesDir), { recursive: true })
-    cpSync(resolve(packageRoot, iccFixturesDir), resolve(outDir, iccFixturesDir), { recursive: true })
+    stagedNativeRootOwned = true
+    cpSync(resolve(packageRoot, iccFixturesDir), stagedNativeFixturesRoot, { recursive: true })
     for (const dataPath of treeSitterTestDataPaths) {
       mkdirSync(dataPath, { recursive: true })
     }
@@ -252,6 +262,7 @@ try {
   }
 } finally {
   rmSync(outDir, { recursive: true, force: true })
+  if (stagedNativeRootOwned) rmSync(stagedNativeRoot, { recursive: true, force: true })
 }
 
 process.exit(exitCode)

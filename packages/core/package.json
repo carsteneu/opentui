@@ -9,7 +9,7 @@
   "types": "src/index.ts",
   "module": "src/index.ts",
   "main": "src/index.ts",
-  "version": "0.5.3",
+  "version": "0.5.5",
   "type": "module",
   "imports": {
     "#opentui/runtime-assets": {
@@ -22,11 +22,14 @@
     "build": "bun run build:native && bun run build:lib",
     "build:dev": "bun run build:native:dev && bun run build:lib",
     "build:lib": "bun scripts/build.ts --lib",
-    "build:native": "bun scripts/build.ts --native",
-    "build:native:dev": "bun scripts/build.ts --native --dev",
-    "vendor:update:images": "sh src/zig/vendor/update.sh",
-    "test:native": "cd src/zig && zig build test --summary all",
-    "bench:native": "cd src/zig && zig build bench -Dbench-optimize=ReleaseFast --",
+    "prepare:native": "cd ../native && bun run prepare:zig",
+    "build:native": "bun run prepare:native && bun scripts/build.ts --native",
+    "build:native:dev": "bun run prepare:native && bun scripts/build.ts --native --dev",
+    "vendor:update:images": "cd ../native && sh src/vendor/update.sh",
+    "vendor:update:zig": "cd ../native && sh src/vendor/update-zig-deps.sh",
+    "test:native": "cd ../native && bun run test",
+    "bench:native": "cd ../native && bun run bench --",
+    "bench:native:ffi": "cd ../native && bun run bench:ffi",
     "bench:cold-import": "bun scripts/bench-cold-import.ts",
     "bench:cold-import:gate": "bun scripts/bench-cold-import.ts --gate",
     "bench:js": "bun src/benchmark/js-benchmark.ts",
@@ -83,14 +86,14 @@
     "web-tree-sitter": "0.25.10"
   },
   "optionalDependencies": {
-    "@opentui/core-darwin-x64": "0.5.3",
-    "@opentui/core-darwin-arm64": "0.5.3",
-    "@opentui/core-linux-x64": "0.5.3",
-    "@opentui/core-linux-arm64": "0.5.3",
-    "@opentui/core-win32-x64": "0.5.3",
-    "@opentui/core-win32-arm64": "0.5.3",
-    "@opentui/core-linux-x64-musl": "0.5.3",
-    "@opentui/core-linux-arm64-musl": "0.5.3"
+    "@opentui/core-darwin-x64": "0.5.5",
+    "@opentui/core-darwin-arm64": "0.5.5",
+    "@opentui/core-linux-x64": "0.5.5",
+    "@opentui/core-linux-arm64": "0.5.5",
+    "@opentui/core-win32-x64": "0.5.5",
+    "@opentui/core-win32-arm64": "0.5.5",
+    "@opentui/core-linux-x64-musl": "0.5.5",
+    "@opentui/core-linux-arm64-musl": "0.5.5"
   },
   "exports": {
     ".": {

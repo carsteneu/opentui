@@ -6,6 +6,7 @@
   "ignorePatterns": [
     "**/.zig-cache/**",
     "**/.yesmem/**",
+    "**/zig-pkg/**",
     "packages/core/src/lib/tree-sitter/default-parsers.ts",
     "packages/web/public/recordings/*.json"
   ]

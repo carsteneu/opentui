@@ -97,14 +97,15 @@ class TerminalConsoleCache extends EventEmitter {
     // Don't activate on import to avoid hiding console.log globally
   }
 
-  public activate(): void {
-    // Reference-counted: several root overlay renderers can capture console
-    // output at once. Destroying one must not steal the capture policy from
-    // another renderer that still depends on it.
-    if (this._activationCount > 0) {
-      this._activationCount += 1
-      return
-    }
+    public activate(): void {
+      // Reference-counted: several root overlay renderers can capture console
+      // output at once. Destroying one must not steal the capture policy from
+      // another renderer that still depends on it.
+      if (!env.OTUI_USE_CONSOLE) return
+      if (this._activationCount > 0) {
+        this._activationCount += 1
+        return
+      }
 
     if (!this._originalConsole) {
       this._originalConsole = global.console
