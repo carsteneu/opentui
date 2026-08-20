@@ -2,7 +2,7 @@
 // process so the module-level render-library singleton stays isolated. Uses
 // the SRC-native passed as --native-path (the sandbox has no resolvable
 // @opentui/core-linux-x64 link, so the node_modules default path is unusable).
-import { dlopen } from "bun:ffi"
+import { dlopen, type FFIFunction } from "bun:ffi"
 import { getTelemetrySnapshot, setTelemetryEnabled } from "../../telemetry.js"
 
 type LibWithSymbols = {
@@ -29,7 +29,7 @@ function markNames(): string[] {
 // direct eager dlopen can be invoked safely with an identical observable
 // result.
 const DEFERRED_TRAP = "imageTestFailIccProfileCopyAllocationOnce"
-const DEFERRED_TRAP_DEF = { args: [] as string[], returns: "void" }
+const DEFERRED_TRAP_DEF: FFIFunction = { args: [], returns: "void" }
 
 async function waitForMark(predicate: () => boolean, timeoutMs = 3000): Promise<boolean> {
   const deadline = performance.now() + timeoutMs
