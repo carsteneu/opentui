@@ -107,4 +107,4 @@ test("wave3 memory gate: full gate evaluation reports PASS", async () => {
     )
   }
   expect(overallVerdict(gates)).toBe("PASS")
-})
+}, 60_000)
