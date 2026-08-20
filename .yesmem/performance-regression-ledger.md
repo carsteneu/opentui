@@ -497,9 +497,9 @@ verwendet werden.
 | R-03 | `PARKED` | E2E-Wallgate grün; disjunkte Mainthread-CPU + Startup + Rolling-Memory formale n=30 unter Last UNCLEAR/-kontaminiert (kein Rückschritt belegt). Owner-Entscheidung 2026-08-20: ruhiges Messfenster (Load <4) realistisch nicht erreichbar — Zertifizierung geparkt, Referenzstand Tag `wave3-final` (f4fcb1fb) |
 | R-04 | `OPEN`  | C5 kompakte Spans/Transferables nur nach Clone-Profil; portabler Worker-Seam hat noch keine Transferliste        |
 | R-05 | `NO-OP` | B4 Native-Library-Split/Symboltrim erst nach neuem isolierten Cost-Weight-Beleg                                  |
-| R-06 | `OPEN`  | Bun-Worker-Resolve außerhalb des Plattformseams ist ein Robustheitsrisiko                                        |
-| R-07 | `OPEN`  | globale ConsoleCapture/TerminalConsoleCache-Policy ist bei zwei aktiven Root-Overlay-Renderern nicht refcounted  |
-| R-08 | `OPEN`  | `hasSafePartialComposition` bleibt potenziell O(K·N); erst Scaling-Gate, dann Umbau                              |
+| R-06 | `PASS`  | Bun-Worker-Resolve hinter dem Plattformseam (Wave-4, 9424766f); worker-Suiten grün           |
+| R-07 | `PASS`  | ConsoleCapture/TerminalConsoleCache refcounted (Wave-4, e9057389+058a7a84+a84e5aa4); Zwei-Renderer-Szenario getestet |
+| R-08 | `OPEN`  | updateFromLayout-FFI-Storm behoben (Epoch-Guard, Wave-4 37e3b10a); `hasSafePartialComposition` bleibt potenziell O(K·N) — erst Scaling-Gate, dann Umbau |
 | R-09 | `OPEN`  | Streaming-Layout kann stabile Geschwister global traversieren; Wave 3 misst, optimiert diesen Bereich noch nicht |
 | R-10 | `PASS`  | C9 TextBuffer-Tail auf `b4e6d8b1` integriert; W3-05-/W3-06-Gates und Runtime-Gleichheit belegt                   |
 
@@ -750,6 +750,46 @@ Gesamturteil: UNCLEAR (Load-Guard) — funktional READY, formal zu zertifizieren
 Offene Abweichung und Owner: formale Gesamt-A/B im ruhigen Messfenster (Koordinator); test:js:node 7 vorab
 Rohdatenpfad: .yesmem/bench/wave3-final-cpu-formal/ · wave3-startup-formal/ · wave3-memory-formal/
 Reportpfad: .yesmem/wave3-final-results.md
+```
+
+### 11.3 Wave-4-Abnahme 2026-08-20
+
+```text
+Datum/Run-ID: 2026-08-20 / wave4-robustness-ffi-merge
+Candidate-Branch/Worktree: fastpatch (Merges 253b9903 + 8456f724) / .worktrees/fastpatch
+Candidate-Commit: 2ff015da (nach Integrations-Fixes a84e5aa4, 195d0be1, 5957da1b)
+Vergleichscommit und Worktree: 8816eebd (= fastpatch vor Wave-4, identischer Baum-Basis)
+OpenTUI-Version/git describe: 0.5.3 / v0.5.3-104+-g2ff015da
+Bun/Node/Zig: 1.3.14 / n.a. (Sandbox) / 0.16.0 (Build via PATH-Override)
+Native-SHA: a2709a93 (SRC-Build; symboltextBufferAppendStyledText vorhanden, nm verifiziert)
+Host/CPU/Governor/Load: Load während Suite ~2.3-8 (oszillierend; R-03 bleibt geparkt)
+Gitstatus: clean nach jedem Commit-Schritt
+
+R-06: PASS — Worker-Resolve hinter Plattform-Seam (9424766f); worker.test 6/0, worker.node-test tsc-noEmit exit 0
+R-07: PASS — ConsoleCapture-Refcount (e9057389) + Idempotenz-Guard (058a7a84); console.test 34/0.
+  INTEGRATIONS-FIX des Koordinators: _useConsole-Default true→false (a84e5aa4) — der Idempotenz-Guard
+  skippte sonst die Erstkativierung (vorbestehender Test rot, jetzt grün; Ursache vom Agenten in Sandbox
+  nicht lauffähig, CI-gated vermutet)
+R-08 (Teil FFI-Roundtrip): PASS — Epoch-Guard in updateFromLayout (37e3b10a + Escape-Hatch d51cd5f4).
+  Eigene A/B-Rotation des Koordinators: Baseline-Renderable.ts → Scroll-Frame-Test ROT; mit Guard 3/0 grün.
+  Matrix-Harness (culling 100-10k) pre/post identisch (1007/10007 auf dem EINEN legitimen Dirty-Settle-Frame,
+  Reuse-Frames FFI=0, renderListReuses steigt, renderCommands geculled begrenzt 33) — Erwartung, das
+  Matrix-Szenario scrollt nicht; der Guard wirkt auf Scroll-Frames (translate-only).
+R-08 (Teil hasSafePartialComposition O(K·N)): UNVERÄNDERT OPEN — bewusst out of scope (E1-Folgearbeit).
+R-01/R-02/R-03/R-04/R-09: unverändert (R-03 PARKED per Owner-Entscheidung).
+
+Test-/Build-/Fmt-/Lint-Ergebnis (2026-08-20 11:38):
+  test:js 5692 pass / 0 fail / 5715 (23 skip) · build (zig 0.16.0) EXIT 0 · oxlint 0/0 ·
+  fmt:check GRÜN nach 195d0be1 (3 Dateien nachformatiert) + 5957da1b (.yesmem-Evidenz aus oxfmt ignoriert)
+  Memory-Gate-Harness: eigenes 60s-Timeout (2ff015da) — Full-Gate ~7s, vorher 5s-Default-Timeout-Falle
+  unter Last (A/B-Verifikation: identischer Fail mit/ohne Console-Fix → reines Zeitfenster, #85594-Klasse)
+
+Gesamturteil: PASS (funktional; deterministische Counterevidenz) — formale n=30-Walltimes bleiben
+  geparkt (R-03), keine neuen Wall-Gates in dieser Welle
+Offene Abweichung und Owner: E1-O(N)-Scan + hasSafePartialComposition-Umbau (Wave-5-Kandidat);
+  test:js:node 7 vorbestehend
+Rohdatenpfad: packages/core/.yesmem/bench/wave3-render-scaling/wave3-render-scaling-2026-08-20T09-38-55-988Z.json
+Reportpfad: .yesmem/bench/wave4-ffi-roundtrip-results.md (Loop-1-Agent) + dieser Block
 ```
 
 ## 12. Evidenzindex
