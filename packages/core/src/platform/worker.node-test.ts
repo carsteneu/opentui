@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test"
 
-import { Worker } from "./worker.js"
+import { resolveWorkerSpecifier, Worker } from "./worker.js"
+
+test("Node runtime never replaces a missing worker asset with a source entrypoint", () => {
+  const missing = new URL("./does-not-exist.worker.js", import.meta.url).href
+  const sourceFallback = new URL("./worker-startup.fixture.ts", import.meta.url)
+  expect(resolveWorkerSpecifier(missing, sourceFallback)).toBe(missing)
+})
 
 test("Node worker retains messages posted while its module is loading", async () => {
   const worker = new Worker(new URL("./worker-startup.fixture.js", import.meta.url))

@@ -17,7 +17,6 @@ import type {
 } from "./types.js"
 import { getParsers } from "./default-parsers.js"
 import { resolve, isAbsolute, parse } from "path"
-import { existsSync } from "fs"
 import { registerEnvVar, env } from "../env.js"
 import { isBunfsPath, normalizeBunfsPath } from "../bunfs.js"
 import {
@@ -26,6 +25,7 @@ import {
   type WorkerExitEvent,
   type WorkerMessageEvent,
   Worker as PlatformWorker,
+  resolveWorkerSpecifier,
 } from "../../platform/worker.js"
 import { resolveDefaultTreeSitterWorkerPath, resolveTreeSitterWasm } from "#opentui/runtime-assets"
 
@@ -265,7 +265,8 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
     }
   }
 
-  // Path resolution stays in the client for now; runtime-specific Worker construction lives in platform/worker.
+  // The source-entrypoint fallback is a runtime capability (Bun); the platform
+  // seam decides when a missing built bundle may be replaced with source.
   private resolveWorkerPath(): TreeSitterWorkerPath {
     if (this.options.workerPath) {
       return this.options.workerPath
@@ -279,13 +280,10 @@ export class TreeSitterClient extends EventEmitter<TreeSitterClientEvents> {
       return OTUI_TREE_SITTER_WORKER_PATH
     }
 
-    let workerPath = resolveDefaultTreeSitterWorkerPath(new URL("./parser.worker.js", import.meta.url))
-
-    if (!process.env.OTUI_ASSET_ROOT && !existsSync(workerPath)) {
-      workerPath = new URL("./parser.worker.ts", import.meta.url).href
-    }
-
-    return workerPath
+    return resolveWorkerSpecifier(
+      resolveDefaultTreeSitterWorkerPath(new URL("./parser.worker.js", import.meta.url)),
+      new URL("./parser.worker.ts", import.meta.url),
+    )
   }
 
   private async stopWorker(): Promise<void> {

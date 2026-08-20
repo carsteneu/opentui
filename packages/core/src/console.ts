@@ -84,6 +84,7 @@ class TerminalConsoleCache extends EventEmitter {
   private _collectCallerInfo: boolean = false
   private _cachingEnabled: boolean = true
   private _originalConsole: typeof console | null = null
+  private _activationCount: number = 0
 
   get cachedLogs(): [Date, LogLevel, any[], CallerInfo | null][] {
     return this._cachedLogs
@@ -97,11 +98,20 @@ class TerminalConsoleCache extends EventEmitter {
   }
 
   public activate(): void {
+    // Reference-counted: several root overlay renderers can capture console
+    // output at once. Destroying one must not steal the capture policy from
+    // another renderer that still depends on it.
+    if (this._activationCount > 0) {
+      this._activationCount += 1
+      return
+    }
+
     if (!this._originalConsole) {
       this._originalConsole = global.console
     }
     this.setupConsoleCapture()
     this.overrideConsoleMethods()
+    this._activationCount = 1
   }
 
   private setupConsoleCapture(): void {
@@ -168,7 +178,14 @@ class TerminalConsoleCache extends EventEmitter {
   }
 
   public deactivate(): void {
-    this.restoreOriginalConsole()
+    if (this._activationCount <= 0) {
+      return
+    }
+
+    this._activationCount -= 1
+    if (this._activationCount === 0) {
+      this.restoreOriginalConsole()
+    }
   }
 
   private restoreOriginalConsole(): void {
