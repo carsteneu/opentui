@@ -493,7 +493,7 @@ verwendet werden.
 | ID   | Status  | Punkt                                                                                                            |
 | ---- | ------- | ---------------------------------------------------------------------------------------------------------------- |
 | R-01 | `OPEN`  | Wave-1 Custom-Feed 25k p95 `+11,26 %`; sichere Ownership darf nicht entfernt werden                              |
-| R-02 | `OPEN`  | relatives Wave-2-TTFMF-Ziel `-30 %`; aktuell `-16,44 %`                                                          |
+| R-02 | `PASS`  | Startup-Ziel kumuliert erreicht: Wave-2 −16,4 % + Wave-5 −52,2 % TTFMF (03b887f1); Resthebel Import-Block ~43 ms optional |
 | R-03 | `PARKED` | E2E-Wallgate grün; disjunkte Mainthread-CPU + Startup + Rolling-Memory formale n=30 unter Last UNCLEAR/-kontaminiert (kein Rückschritt belegt). Owner-Entscheidung 2026-08-20: ruhiges Messfenster (Load <4) realistisch nicht erreichbar — Zertifizierung geparkt, Referenzstand Tag `wave3-final` (f4fcb1fb) |
 | R-04 | `OPEN`  | C5 kompakte Spans/Transferables nur nach Clone-Profil; portabler Worker-Seam hat noch keine Transferliste        |
 | R-05 | `NO-OP` | B4 Native-Library-Split/Symboltrim erst nach neuem isolierten Cost-Weight-Beleg                                  |
@@ -791,6 +791,43 @@ Offene Abweichung und Owner: E1-O(N)-Scan + hasSafePartialComposition-Umbau (Wav
 Rohdatenpfad: packages/core/.yesmem/bench/wave3-render-scaling/wave3-render-scaling-2026-08-20T09-38-55-988Z.json
 Reportpfad: .yesmem/bench/wave4-ffi-roundtrip-results.md (Loop-1-Agent) + dieser Block
 ```
+
+### 11.4 Wave-5-Abnahme 2026-08-20
+
+```text
+Datum/Run-ID: 2026-08-20 / wave5-startup-symbol-binding (3 Loop-Runden)
+Candidate-Branch/Worktree: yesloop/wave5-startup-binding / .worktrees/wave5-startup-binding
+Candidate-Commit: 78d7fd2f (nach Koordinator-Fix des Fixture-TS-Fehlers; Merge nach fastpatch: 03b887f1)
+Vergleichscommit und Worktree: 13dc7193 (= fastpatch pre-Wave-5)
+Native: Kandidat 55318095 (in-worktree gebaut) vs. Baseline a2709a93 — JS-only-Welle, kein Zig-Change
+Host/Load: Startup-Gate-Abnahme SAUBER (hostLoadExceeded=false, Peak 3,76); CPU-Läufe unter Last 4,9-6,1 (markiert)
+
+Ergebnis (Koordinator-Eigenmessung, alle Gates selbst gelaufen):
+  Startup-Gate n=16: TTFMF paired −52,24 % [−57,90/−46,82, CI ohne 0]; Import −2,78 % (neutral)
+  CPU-Gate cold n=10 (ab4): updateToStyledCommit +3,22 % [−7,13/+15,09, CI inkl. 0]; mainThread −2,28 %
+  CPU-Gate warm n=10: updateToStyledCommit −18,60 % [−26,49/−10,81, CI ohne 0 — Kandidat schneller]
+  workerWaitMs kalt: 281→298 ms (Rest-Delta +17 ms < +40-Gate; war +287 ms vor Runde 3)
+  Vollsuite 5721/0 · build:lib grün (nach Fixture-Fix 78d7fd2f) · oxlint/oxfmt grün
+  Kumuliert mit Wave 2: TTFMF ~518 ms (Wave-0-Basis) → ~131 ms ≈ −75 %
+
+Trade-off (dokumentiert, akzeptiert): einmalige ~+17 ms im ERSTEN Streaming-Job pro Prozess
+  (Worker-Vollbindung interleavt mit erstem Job; danach pass-through). Follow-up-Backlog:
+  Worker-fullBind nach erstem Job verschieben — Optimierungskandidat, kein Risiko.
+
+Loop-Historie: R1 TTFMF-Ziel erreicht, CPU-Regress +31,6 % (Worker trappte ~170 DEFERRED-Symbole,
+  scheduleFullBind hinge an render(), das der Worker nie ruft); R2 CORE 55→78 fixte warm (+13,4→−0,9 %),
+  cold blieb +27,7 % — Stage-Analyse lokalisierte +287 ms in workerWaitMs; R3 chunked full-bind
+  (8×~40 Symbole/Macrotask ≤15 ms) + Trap-Kick eliminierte den Regress.
+Diagnose-Werkzeuge neu: scripts/wave5-startup-breakdown.ts (Repo) + workerWaitMs-Rawanalyse.
+R-02-Update: kumuliertes Startup-Ziel −30 % ÜBERTROFFEN (−52 % allein in Wave 5) → PASS mit Verweis
+  auf Resthebel Import-Block ~43 ms (Levier 2, separate Welle).
+
+Gesamturteil: PASS
+Offene Abweichung und Owner: keine für diese Welle; Import-Block-Optimierung optional
+Rohdatenpfad: packages/core/.yesmem/bench/wave5-{startup,cpu}-ab*-verify/ (in beiden Worktrees)
+Reportpfad: .yesmem/wave5-startup-binding-results.md (im Branch gemerged)
+```
+
 
 ## 12. Evidenzindex
 
