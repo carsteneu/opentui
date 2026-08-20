@@ -73,3 +73,34 @@ Import is pure module-load (no code path change in the import graph; zig.ts modu
 - Absolute coreBind ≤ 20 ms not reached at the trace-exact 51-symbol CORE (21.8 p50). Options if a harder target is wanted: shrink the measured first-frame surface (out of scope), or move the initial mmap/link cost off the measurement (it is inherent to cold-loading the 21 MB .so, not symbol binding).
 - CPU harness crash (SIGILL) is a sandbox artifact; the coordinator may run `wave3-cpu-probe` / `wave3-clean-gate-cpu` on a working build host.
 - renderer.console-startup + node `requireNode26` path remain CI-only (established Wave-3/4 sandbox topology).
+
+## Code review round (2026-08-20 14:04, commit 10878a97)
+
+Independent cold review via task subagent (REVIEW trace: ses_fe0f67706ffeYFOBHnS0EFVq73) returned
+REQUEST CHANGES. Findings + dispositions:
+
+- **[HIGH] trap-bound wrapper SIGILLs after full-bind closes its dlopen handle** — confirmed
+  empirically (bun:ffi wrapper is invalid once its handle is close()d, even with the primary
+  handle open; probe-close2 SIGILL/132). FIXED: trap + full-bind handles stay open until the
+  library closes; test #3 now calls a trap-bound wrapper after full-bind and asserts liveness.
+- **[HIGH] render/renderPartial/repaintSplitFooter/commitSplitFooterSnapshot were DEFERRED** —
+  a real interactive first commit calls render()/renderPartial() and would have trapped on the
+  critical trigger path. FIXED: those 4 are now eager (CORE 51 -> 55).
+- **[MEDIUM] setTimeout(0) full-bind is a main-thread macrotask** — a one-time post-first-paint
+  stall while ~321 deferred symbols bind. Documented honestly: it is DEFERRED (moves out of
+  TTFMF), not "background"; one-time cost after the first commit. Chunking is a follow-up.
+- **[MEDIUM] perf test #5 dereferenced the symbol once** — measured FFI-vs-FFI noise, not proxy
+  per-access cost. FIXED: dereference inside the timed loop; overhead now includes the get trap.
+- **[MEDIUM] baseline = trace mode** — verified NOT a wrap-overhead confound: OTUI_WAVE5_TRACE_SYMBOLS
+  does not set debugActive (OTUI_DEBUG_FFI/OTUI_TRACE_FFI are separate env vars), so the baseline is
+  a plain all-eager dlopen plus negligible in-memory first-access marks. Not a finding.
+- **[LOW] dead markClosed** — removed. **[LOW] full-bind failure re-armed per commit** — now fixed
+  (no retry loop; absent symbols self-heal lazily). **[LOW] barrel leak** of opentuiCoreSymbols/
+  OpentuiSymbolName via index.ts re-export — fixed by moving the CORE set to src/zig-symbol-stage.ts
+  (not barrel-forwarded); test imports from the stage module. **[LOW] count 376 vs 395** — verified
+  376 is correct (original rawSymbols literal and extracted opentuiSymbolDefs have identical key
+  sets); 395 is a stale figure. Not a finding.
+- Probe sanity with CORE 55 (lighter load): coreBind p50 14.2 ms (<=20), TTFMF p50 55.8 ms (<=90),
+  all samples correct; deferred=12 (dispose-path symbols lazily trapped once).
+
+All fixes re-verified: tsc exit 0; wave5 suite 5/5; natives-free 108/108.
