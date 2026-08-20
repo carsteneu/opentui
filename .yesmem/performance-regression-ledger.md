@@ -828,6 +828,36 @@ Rohdatenpfad: packages/core/.yesmem/bench/wave5-{startup,cpu}-ab*-verify/ (in be
 Reportpfad: .yesmem/wave5-startup-binding-results.md (im Branch gemerged)
 ```
 
+### 11.5 Wave-6-Abnahme 2026-08-20 (Import-Lean / Hebel 2)
+
+```text
+Datum/Run-ID: 2026-08-20 / wave6-import-lean (1 Loop-Runde, M1-Audit)
+Candidate-Branch: yesloop/wave6-import-lean @ d8202b28 → Merge c7142f03 (nur Evidenz-Docs)
+Basis: fastpatch c13f0b64
+
+Ergebnis: VERIFIZIERTES ALREADY-SATISFIED (kein Code-Change nötig) — die Plan-Prämisse
+  (renderer.ts importiere statisch TerminalConsole + destroyTreeSitterClient) war Stand
+  Wave-2-Loop-B; Upstream-Commit 03c67c69 (carsten, 17.08.) hat die Abkopplung bereits
+  erledigt und ist Vorfahre unserer Basis. Dreifach verifiziert vom Loop + unabhängig
+  vom Koordinator:
+  (1) git show 03c67c69: type-only-Import, destroyTreeSitterClient entfernt, Seam-Module
+      renderer-integration.ts mit extern registrierten Integrationen
+  (2) entrypoint-import-graph.test.ts 4/4 grün (prüft exakt das Plan-RED-Ziel)
+  (3) eigener Bundle-Build (746 KB): 0 Treffer für TerminalConsole-Klasse,
+      destroyTreeSitterClient, getTreeSitterClient, parseMarkdown, node:worker_threads
+  Rest-Import-Kosten (Koordinator-Kaltmessung, 3 Prozesse/Modul): zig-structs ~19 ms,
+      platform-runtime ~20 ms, platform-ffi ~8 ms, First-Frame-Graph (yoga, Renderables,
+      styled-text, fonts) — alles CTOR/FIRST-FRAME-klassifiziert, laut Plan §3.2 statisch
+      zu lassen. Plan-Endtrigger §9.1 (Hebel endet bei Runtime-Parsing) hat gefeuert.
+Optionaler Resthebel (NICHT beauftragt, Empfehlung dagegen): zig-structs CORE/DEFERRED-
+  Split ≈ ~9 ms Potential bei frischem Wave-5-Seam-Risiko und unter Noise-Schwelle.
+
+Gesamturteil: PASS als verified-no-op-with-evidence; Hebel 2 für beendet erklärt
+Offene Abweichung und Owner: keine
+Rohdatenpfad: packages/core/.yesmem/bench/wave6-import-graph.md (im Merge)
+```
+
+
 
 ## 12. Evidenzindex
 
