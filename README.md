@@ -12,7 +12,7 @@ Docs: https://opentui.com/docs/getting-started
 
 > [!NOTE]
 > **This fork carries a performance-hardening line** (released as
-> [`v0.5.6-perf.2`](https://github.com/carsteneu/opentui/releases/tag/v0.5.6-perf.2), based on
+> [`v0.5.6-perf.3`](https://github.com/carsteneu/opentui/releases/tag/v0.5.6-perf.3), based on
 > upstream v0.5.5): cold start −75 % (time to first native frame), code streaming −83 % cold /
 > −93 % warm main-thread, zero FFI layout reads on scroll frames in culled lists, and a
 > tree-sitter memory-leak fix — each verified by paired A/B gates with confidence intervals.
