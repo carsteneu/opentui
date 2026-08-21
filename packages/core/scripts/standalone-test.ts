@@ -152,7 +152,7 @@ import { join } from "node:path"
 import { createTestRenderer } from ${JSON.stringify(`${packageJson.name}/testing`)}
 import * as Yoga from ${JSON.stringify(`${packageJson.name}/yoga`)}
 
-import { OptimizedBuffer, TreeSitterClient, Yoga as CoreYoga } from ${JSON.stringify(packageJson.name)}
+import { EditBuffer, OptimizedBuffer, TreeSitterClient, Yoga as CoreYoga } from ${JSON.stringify(packageJson.name)}
 
 assert.equal(typeof createTestRenderer, "function")
 assert.equal(CoreYoga.Node, Yoga.Node)
@@ -162,6 +162,10 @@ yogaNode.free()
 const buffer = OptimizedBuffer.create(4, 2, "unicode")
 assert.equal(buffer.width, 4)
 buffer.destroy()
+
+const editBuffer = EditBuffer.create("unicode")
+assert.equal(editBuffer.getText(), "")
+editBuffer.destroy()
 
 const dataPath = mkdtempSync(join(tmpdir(), "opentui-bun-tree-sitter-"))
 const client = new TreeSitterClient({ dataPath })

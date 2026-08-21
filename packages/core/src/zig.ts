@@ -2220,9 +2220,14 @@ function getOpenTUILib(libPath?: string) {
   }
 
   // Node keeps the original single eager dlopen: cold Node start is out of
-  // scope for Wave-5 and the portability seam must not change. The Bun path
-  // stages CORE eager / DEFERRED lazy with background full-bind.
-  if (!usesBunFFI) {
+  // scope for Wave-5 and the portability seam must not change. Bun standalone
+  // executables need the same ownership model: each dlopen of a BunFS asset can
+  // extract and load an independent native library instance, so handles made
+  // by one staged binding are not visible to another. Trace mode already binds
+  // the full table in one dlopen and still needs the staged access proxy.
+  const requiresSingleNativeInstance = usesBunFFI && isBunfsPath(resolvedLibPath)
+  const traceSymbolAccess = Boolean(process.env.OTUI_WAVE5_TRACE_SYMBOLS)
+  if (!usesBunFFI || (requiresSingleNativeInstance && !traceSymbolAccess)) {
     const rawSymbols = dlopen(resolvedLibPath, opentuiSymbolDefs)
     if (env.OTUI_DEBUG_FFI || env.OTUI_TRACE_FFI) {
       return {
