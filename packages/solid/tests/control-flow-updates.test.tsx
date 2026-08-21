@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { createSignal, For, Match, Show, Switch } from "solid-js"
-import { testRender } from "../index.js"
+import { setProp, testRender } from "../index.js"
+import type { TextRenderable } from "@opentui/core"
 
 let testSetup: Awaited<ReturnType<typeof testRender>>
 
@@ -101,5 +102,17 @@ describe("SolidJS Renderer - Control Flow Updates", () => {
     frame = testSetup.captureCharFrame()
     expect(frame).toContain("Other")
     expect(frame).not.toContain("Two")
+  })
+
+  it("ignores a queued property update after its renderable is destroyed", async () => {
+    let text!: TextRenderable
+    testSetup = await testRender(() => <text ref={(element) => (text = element)} content="before" />, {
+      width: 20,
+      height: 5,
+    })
+
+    text.destroy()
+
+    expect(() => setProp(text, "content", "after", "before")).not.toThrow()
   })
 })

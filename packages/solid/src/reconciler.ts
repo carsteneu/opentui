@@ -228,6 +228,8 @@ export const {
   },
 
   setProperty(node: DomNode, name: string, value: any, prev: any): void {
+    if (node instanceof Renderable && node.isDestroyed) return
+
     if (name.startsWith("on:")) {
       const eventName = name.slice(3)
       if (value) {
