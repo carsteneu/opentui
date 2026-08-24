@@ -9,7 +9,7 @@
   "types": "src/index.ts",
   "module": "src/index.ts",
   "main": "src/index.ts",
-  "version": "0.5.5",
+  "version": "0.5.6-perf.3",
   "type": "module",
   "imports": {
     "#opentui/runtime-assets": {
@@ -30,6 +30,8 @@
     "test:native": "cd ../native && bun run test",
     "bench:native": "cd ../native && bun run bench --",
     "bench:native:ffi": "cd ../native && bun run bench:ffi",
+    "bench:cold-import": "bun scripts/bench-cold-import.ts",
+    "bench:cold-import:gate": "bun scripts/bench-cold-import.ts --gate",
     "bench:js": "bun src/benchmark/js-benchmark.ts",
     "bench:js:node": "bun scripts/bench-js-node.ts",
     "bench:layout": "bun src/benchmark/layout-benchmark.ts",
@@ -50,7 +52,19 @@
     "test:standalone": "bun scripts/standalone-test.ts",
     "test:js": "bun test --path-ignore-patterns='src/zig/zig-pkg/**'",
     "test:js:node": "bun scripts/test-node.ts",
-    "test": "bun run test:js"
+    "test": "bun run test:native && bun run test:js",
+    "bench:wave3": "bun src/benchmark/wave3-harness.test.ts",
+    "bench:wave3:baseline": "bun scripts/wave3-baseline.ts",
+    "bench:wave3:clean-gate": "bun scripts/wave3-clean-gate.ts",
+    "bench:wave3:render-scaling": "bun scripts/wave3-render-scaling.ts",
+    "bench:wave3:cpu-gate": "bun scripts/wave3-clean-gate-cpu.ts",
+    "bench:wave3:startup-gate": "bun scripts/wave3-startup-gate.ts",
+    "test:wave3:cpu": "bun test src/benchmark/wave3-cpu-harness.test.ts scripts/wave3-clean-gate-cpu.test.ts",
+    "test:wave3:startup": "bun test scripts/wave3-startup-gate.test.ts",
+    "bench:wave3:memory": "bun scripts/wave3-memory-gate.ts",
+    "bench:wave3:memory:test": "bun test src/benchmark/wave3-memory-harness.test.ts",
+    "bench:wave3:memory:ab": "bun scripts/wave3-memory-ab.ts",
+    "bench:wave3:memory:ab:probe": "bun src/benchmark/wave3-memory-ab-probe.ts"
   },
   "license": "MIT",
   "devDependencies": {
@@ -72,14 +86,14 @@
     "web-tree-sitter": "0.25.10"
   },
   "optionalDependencies": {
-    "@opentui/core-darwin-x64": "0.5.5",
-    "@opentui/core-darwin-arm64": "0.5.5",
-    "@opentui/core-linux-x64": "0.5.5",
-    "@opentui/core-linux-arm64": "0.5.5",
-    "@opentui/core-win32-x64": "0.5.5",
-    "@opentui/core-win32-arm64": "0.5.5",
-    "@opentui/core-linux-x64-musl": "0.5.5",
-    "@opentui/core-linux-arm64-musl": "0.5.5"
+    "@opentui/core-darwin-x64": "0.5.6-perf.3",
+    "@opentui/core-darwin-arm64": "0.5.6-perf.3",
+    "@opentui/core-linux-x64": "0.5.6-perf.3",
+    "@opentui/core-linux-arm64": "0.5.6-perf.3",
+    "@opentui/core-win32-x64": "0.5.6-perf.3",
+    "@opentui/core-win32-arm64": "0.5.6-perf.3",
+    "@opentui/core-linux-x64-musl": "0.5.6-perf.3",
+    "@opentui/core-linux-arm64-musl": "0.5.6-perf.3"
   },
   "exports": {
     ".": {
@@ -92,6 +106,42 @@
       "types": "./src/testing.ts",
       "bun": "./src/testing.ts",
       "import": "./src/testing.ts"
+    },
+    "./renderer": {
+      "types": "./src/renderer-entry.ts",
+      "bun": "./src/renderer-entry.ts",
+      "node": "./src/renderer-entry.ts",
+      "import": "./src/renderer-entry.ts"
+    },
+    "./renderable": {
+      "types": "./src/renderable-entry.ts",
+      "bun": "./src/renderable-entry.ts",
+      "node": "./src/renderable-entry.ts",
+      "import": "./src/renderable-entry.ts"
+    },
+    "./audio": {
+      "types": "./src/audio-entry.ts",
+      "bun": "./src/audio-entry.ts",
+      "node": "./src/audio-entry.ts",
+      "import": "./src/audio-entry.ts"
+    },
+    "./image": {
+      "types": "./src/image-entry.ts",
+      "bun": "./src/image-entry.ts",
+      "node": "./src/image-entry.ts",
+      "import": "./src/image-entry.ts"
+    },
+    "./markdown-tree-sitter": {
+      "types": "./src/markdown-tree-sitter-entry.ts",
+      "bun": "./src/markdown-tree-sitter-entry.ts",
+      "node": "./src/markdown-tree-sitter-entry.ts",
+      "import": "./src/markdown-tree-sitter-entry.ts"
+    },
+    "./console": {
+      "types": "./src/console-entry.ts",
+      "bun": "./src/console-entry.ts",
+      "node": "./src/console-entry.ts",
+      "import": "./src/console-entry.ts"
     },
     "./runtime-plugin": {
       "types": "./src/runtime-plugin.ts",

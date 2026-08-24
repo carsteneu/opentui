@@ -1,4 +1,7 @@
 .node-test
 .node-benchmark
 ffi-fast-path-paired.json
+zig-out
 src/zig/
+.yesmem/native-assets/
+.yesmem/tmp/
