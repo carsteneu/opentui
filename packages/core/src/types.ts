@@ -115,7 +115,13 @@ export interface RenderContext extends EventEmitter {
   resolution?: { width: number; height: number } | null
   /** Monotonic, bumped once per `loop()` iteration. Lets renderables dedupe per-frame work. */
   frameId: number
-  requestRender: () => void
+  requestRender: (source?: Renderable) => void
+  /**
+   * Request a bounded frame for a renderable that can be redrawn without
+   * walking the complete root tree. The renderer may promote this to a full
+   * frame whenever retained state is unsafe.
+   */
+  requestPartialRender?: (renderable: Renderable) => void
   setCursorPosition: (x: number, y: number, visible: boolean) => void
   setCursorStyle: (options: CursorStyleOptions) => void
   setCursorColor: (color: RGBA) => void

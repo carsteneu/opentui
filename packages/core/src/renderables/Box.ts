@@ -9,7 +9,7 @@ import {
   borderCharsToArray,
   getBorderSides,
   parseBorderStyle,
-} from "../lib/index.js"
+} from "../lib/border.js"
 import { type ColorInput, RGBA, parseColor } from "../lib/RGBA.js"
 import { isValidPercentage } from "../lib/renderable.validations.js"
 import type { RenderContext } from "../types.js"
@@ -283,6 +283,11 @@ export class BoxRenderable extends Renderable {
       bottomTitle: this._bottomTitle,
       bottomTitleAlignment: this._bottomTitleAlignment,
     })
+  }
+
+  protected isScissorRectReusable(): boolean {
+    // Border and layout mutations already invalidate the cached command list.
+    return true
   }
 
   protected getScissorRect(): { x: number; y: number; width: number; height: number } {

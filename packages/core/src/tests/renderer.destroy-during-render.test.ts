@@ -145,3 +145,202 @@ test("destroying renderer during renderBefore should not crash", async () => {
 
   expect(destroyedDuringRenderBefore).toBe(true)
 })
+
+interface Deferred<T = void> {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (error: unknown) => void
+}
+
+function deferred<T = void>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+function silenceConsoleError<T>(fn: () => Promise<T>): Promise<T> {
+  const original = console.error
+  console.error = () => {}
+  return fn().finally(() => {
+    console.error = original
+  })
+}
+
+// Loop A – G1: a frame callback that never resolves must not block destroy(),
+// and late settlement must not commit native output or schedule follow-ups.
+
+test("destroy() completes the lifecycle even when a frame callback never resolves", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+
+  renderer.setFrameCallback(() => new Promise<void>(() => {})) // never settles
+
+  const frame = renderOnce() // loop suspends on the hanging callback
+  await Promise.resolve()
+
+  renderer.destroy()
+
+  await frame
+  await renderer.idle()
+
+  expect(renderer.isDestroyed).toBe(true)
+  expect(renderer.isRunning).toBe(false)
+  expect(renderer.getNativeStats().nativeFrameCount).toBe(0)
+})
+
+test("a frame callback that throws synchronously does not hang the loop", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+
+  renderer.setFrameCallback(() => {
+    throw new Error("sync boom")
+  })
+
+  await silenceConsoleError(() => renderOnce())
+
+  expect(renderer.isDestroyed).toBe(false)
+})
+
+test("a synchronous JavaScript frame callback remains supported without an error report", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+  const errors: unknown[][] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => errors.push(args)
+
+  let calls = 0
+  ;(renderer as any).setFrameCallback(() => {
+    calls++
+  })
+
+  try {
+    await renderOnce()
+  } finally {
+    console.error = originalError
+  }
+
+  expect(calls).toBe(1)
+  expect(errors).toEqual([])
+})
+
+test("a frame callback that rejects asynchronously does not hang the loop", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+
+  renderer.setFrameCallback(async () => {
+    throw new Error("async boom")
+  })
+
+  await silenceConsoleError(() => renderOnce())
+
+  expect(renderer.isDestroyed).toBe(false)
+})
+
+test("destroy() during a running frame callback completes the lifecycle", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+
+  const gate = deferred<void>()
+  renderer.setFrameCallback(async () => {
+    renderer.destroy()
+    gate.resolve()
+  })
+
+  const frame = renderOnce()
+  await gate.promise
+  await frame
+  await renderer.idle()
+
+  expect(renderer.isDestroyed).toBe(true)
+  expect(renderer.isRunning).toBe(false)
+})
+
+test("removing a frame callback during iteration does not skip or double-run later callbacks", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+
+  const calls: string[] = []
+  const first = async () => {
+    calls.push("a")
+    renderer.removeFrameCallback(first)
+  }
+  const second = async () => {
+    calls.push("b")
+  }
+
+  renderer.setFrameCallback(first)
+  renderer.setFrameCallback(second)
+
+  await renderOnce()
+
+  expect(calls).toEqual(["a", "b"])
+})
+
+test("a frame callback settling after destroy triggers no native render or follow-up timer", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+
+  const gate = deferred<void>()
+  renderer.setFrameCallback(() => gate.promise)
+
+  const frame = renderOnce()
+  await Promise.resolve()
+
+  renderer.destroy()
+  const framesBeforeLateSettle = renderer.getNativeStats().nativeFrameCount
+
+  gate.resolve() // settle well after destroy
+
+  await frame
+  await renderer.idle()
+
+  expect(renderer.getNativeStats().nativeFrameCount).toBe(framesBeforeLateSettle)
+  expect(renderer.getSchedulerState().hasScheduledRender).toBe(false)
+  expect(renderer.isDestroyed).toBe(true)
+})
+
+test("two normal frame callbacks run strictly serially in registration order", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+
+  const order: string[] = []
+  const gate = deferred<void>()
+
+  renderer.setFrameCallback(async () => {
+    order.push("a:start")
+    await gate.promise
+    order.push("a:end")
+  })
+  renderer.setFrameCallback(async () => {
+    order.push("b")
+  })
+
+  const frame = renderOnce()
+  await Promise.resolve()
+
+  expect(order).toEqual(["a:start"]) // second callback must wait for the first
+
+  gate.resolve()
+  await frame
+
+  expect(order).toEqual(["a:start", "a:end", "b"])
+})
+
+test("a frame callback rejecting after destroy does not leak an unhandled rejection", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({})
+
+  const gate = deferred<void>()
+  renderer.setFrameCallback(() =>
+    gate.promise.then(() => {
+      throw new Error("late boom")
+    }),
+  )
+
+  const frame = renderOnce()
+  await Promise.resolve()
+
+  renderer.destroy()
+
+  gate.resolve() // reject long after destroy; must stay observed, not unhandled
+  await frame
+  await renderer.idle()
+
+  expect(renderer.isDestroyed).toBe(true)
+  expect(renderer.isRunning).toBe(false)
+})

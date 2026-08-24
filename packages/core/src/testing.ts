@@ -1,4 +1,7 @@
 // Testing utilities module exports
+import "./renderer-console.integration.js"
+import "./renderer-tree-sitter.integration.js"
+
 export * from "./testing/test-renderer.js"
 export * from "./testing/mock-keys.js"
 export * from "./testing/mock-mouse.js"

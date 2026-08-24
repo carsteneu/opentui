@@ -540,6 +540,60 @@ describe("ScrollBoxRenderable - Mouse interaction", () => {
   })
 })
 
+describe("ScrollBoxRenderable - scrollbar callbacks", () => {
+  test("keeps internal translation when common callbacks are configured", async () => {
+    const initial: Array<{ position: number; translateY: number }> = []
+    const updated: Array<{ position: number; translateY: number }> = []
+    const scrollBox = new ScrollBoxRenderable(testRenderer, {
+      width: 10,
+      height: 3,
+      scrollbarOptions: {
+        onChange: (position) => initial.push({ position, translateY: scrollBox.content.translateY }),
+      },
+    })
+    scrollBox.add(new BoxRenderable(testRenderer, { width: 10, height: 10 }))
+    testRenderer.root.add(scrollBox)
+    await renderOnce()
+
+    scrollBox.scrollTop = 2
+    expect(initial).toEqual([{ position: 2, translateY: -2 }])
+
+    scrollBox.scrollbarOptions = {
+      onChange: (position) => updated.push({ position, translateY: scrollBox.content.translateY }),
+    }
+    scrollBox.scrollTop = 3
+
+    expect(initial).toHaveLength(1)
+    expect(updated).toEqual([{ position: 3, translateY: -3 }])
+  })
+
+  test("forwards vertical changes after applying internal translation", async () => {
+    const initial: Array<{ position: number; translateY: number }> = []
+    const updated: Array<{ position: number; translateY: number }> = []
+    const scrollBox = new ScrollBoxRenderable(testRenderer, {
+      width: 10,
+      height: 3,
+      verticalScrollbarOptions: {
+        onChange: (position) => initial.push({ position, translateY: scrollBox.content.translateY }),
+      },
+    })
+    scrollBox.add(new BoxRenderable(testRenderer, { width: 10, height: 10 }))
+    testRenderer.root.add(scrollBox)
+    await renderOnce()
+
+    scrollBox.scrollTop = 2
+    expect(initial).toEqual([{ position: 2, translateY: -2 }])
+
+    scrollBox.verticalScrollbarOptions = {
+      onChange: (position) => updated.push({ position, translateY: scrollBox.content.translateY }),
+    }
+    scrollBox.scrollTop = 3
+
+    expect(initial).toHaveLength(1)
+    expect(updated).toEqual([{ position: 3, translateY: -3 }])
+  })
+})
+
 describe("ScrollBoxRenderable - Content Visibility", () => {
   test("renders markdown prose in scrollbox before highlighting completes", async () => {
     const syntaxStyle = SyntaxStyle.fromTheme([])

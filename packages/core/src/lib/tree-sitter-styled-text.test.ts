@@ -8,6 +8,9 @@ import { tmpdir } from "os"
 import { join } from "path"
 import { mkdir } from "fs/promises"
 import type { SimpleHighlight } from "./tree-sitter/types.js"
+import type { TextChunk } from "../text-buffer.js"
+import type { StyleDefinition } from "../syntax-style.js"
+import { env } from "./env.js"
 
 describe("TreeSitter Styled Text", () => {
   let client: TreeSitterClient
@@ -1250,4 +1253,561 @@ Normal paragraph with [link](https://example.com).`
       expect(chunk.attributes).toBe(expectedAttributes)
     })
   })
+})
+
+// ============================================================================
+// Differential correctness harness (Wave 3 Loop D). The optimized
+// treeSitterToTextChunks must be output-identical to the pre-optimization
+// implementation. Sparked by .yesmem/bench/wave3-loop-d/. Spanning the full
+// chunk sequence (text, style, concealment, boundaries) over the §8.3 corpus.
+// ============================================================================
+
+function legacyGetSpecificity(group: string): number {
+  return group.split(".").length
+}
+
+function legacyShouldSuppressInInjection(group: string, meta: any): boolean {
+  if (meta?.isInjection) {
+    return false
+  }
+  return group === "markup.raw.block"
+}
+
+interface LegacyBoundary {
+  offset: number
+  type: "start" | "end"
+  highlightIndex: number
+}
+
+function legacyTreeSitterToTextChunks(
+  content: string,
+  highlights: SimpleHighlight[],
+  syntaxStyle: SyntaxStyle,
+  options?: { enabled?: boolean; baseHighlight?: string },
+): TextChunk[] {
+  const chunks: TextChunk[] = []
+  const defaultStyle = syntaxStyle.getStyle("default")
+  const concealEnabled = options?.enabled ?? true
+  const baseStyle = options?.baseHighlight ? syntaxStyle.getStyle(options.baseHighlight) : undefined
+
+  const injectionContainerRanges: Array<{ start: number; end: number }> = []
+  const boundaries: LegacyBoundary[] = []
+
+  for (let i = 0; i < highlights.length; i++) {
+    const [start, end, , meta] = highlights[i]
+    if (start === end) continue // Skip zero-length ranges
+    if (meta?.containsInjection) {
+      injectionContainerRanges.push({ start, end })
+    }
+    boundaries.push({ offset: start, type: "start", highlightIndex: i })
+    boundaries.push({ offset: end, type: "end", highlightIndex: i })
+  }
+
+  // Sort boundaries by offset, with ends before starts at same offset
+  // This ensures we close old ranges before opening new ones at the same position
+  boundaries.sort((a, b) => {
+    if (a.offset !== b.offset) return a.offset - b.offset
+    if (a.type === "end" && b.type === "start") return -1
+    if (a.type === "start" && b.type === "end") return 1
+    return 0
+  })
+
+  const activeHighlights = new Set<number>()
+  let currentOffset = 0
+
+  for (let i = 0; i < boundaries.length; i++) {
+    const boundary = boundaries[i]
+
+    if (currentOffset < boundary.offset && activeHighlights.size > 0) {
+      const segmentText = content.slice(currentOffset, boundary.offset)
+
+      const activeGroups: Array<{ group: string; meta: any; index: number }> = []
+      for (const idx of activeHighlights) {
+        const [, , group, meta] = highlights[idx]
+        activeGroups.push({ group, meta, index: idx })
+      }
+
+      const concealHighlight = concealEnabled
+        ? activeGroups.find(
+            (h) => h.meta?.conceal !== undefined || h.group === "conceal" || h.group.startsWith("conceal."),
+          )
+        : undefined
+
+      if (concealHighlight) {
+        let replacementText = ""
+
+        if (concealHighlight.meta?.conceal !== undefined) {
+          replacementText = concealHighlight.meta.conceal
+        } else if (concealHighlight.group === "conceal.with.space") {
+          replacementText = " "
+        }
+
+        if (replacementText) {
+          chunks.push({
+            __isChunk: true,
+            text: replacementText,
+            fg: defaultStyle?.fg,
+            bg: defaultStyle?.bg,
+            attributes: defaultStyle
+              ? createTextAttributes({
+                  bold: defaultStyle.bold,
+                  italic: defaultStyle.italic,
+                  underline: defaultStyle.underline,
+                  dim: defaultStyle.dim,
+                })
+              : 0,
+          })
+        }
+      } else {
+        const insideInjectionContainer = injectionContainerRanges.some(
+          (range) => currentOffset >= range.start && currentOffset < range.end,
+        )
+
+        const validGroups = activeGroups.filter((h) => {
+          if (insideInjectionContainer && legacyShouldSuppressInInjection(h.group, h.meta)) {
+            return false
+          }
+          return true
+        })
+
+        const sortedGroups = validGroups.sort((a, b) => {
+          const aSpec = legacyGetSpecificity(a.group)
+          const bSpec = legacyGetSpecificity(b.group)
+          if (aSpec !== bSpec) return aSpec - bSpec
+          return a.index - b.index
+        })
+
+        const mergedStyle: StyleDefinition = baseStyle ? { ...baseStyle } : {}
+
+        for (const { group } of sortedGroups) {
+          let styleForGroup = syntaxStyle.getStyle(group)
+
+          if (!styleForGroup && group.includes(".")) {
+            const baseName = group.split(".")[0]
+            styleForGroup = syntaxStyle.getStyle(baseName)
+          }
+
+          if (styleForGroup) {
+            if (styleForGroup.fg !== undefined) mergedStyle.fg = styleForGroup.fg
+            if (styleForGroup.bg !== undefined) mergedStyle.bg = styleForGroup.bg
+            if (styleForGroup.bold !== undefined) mergedStyle.bold = styleForGroup.bold
+            if (styleForGroup.italic !== undefined) mergedStyle.italic = styleForGroup.italic
+            if (styleForGroup.underline !== undefined) mergedStyle.underline = styleForGroup.underline
+            if (styleForGroup.dim !== undefined) mergedStyle.dim = styleForGroup.dim
+          } else {
+            if (group.includes(".")) {
+              const baseName = group.split(".")[0]
+              if (env.OTUI_TS_STYLE_WARN) {
+                console.warn(
+                  `Syntax style not found for group "${group}" or base scope "${baseName}", using default style`,
+                )
+              }
+            } else {
+              if (env.OTUI_TS_STYLE_WARN) {
+                console.warn(`Syntax style not found for group "${group}", using default style`)
+              }
+            }
+          }
+        }
+
+        const finalStyle = Object.keys(mergedStyle).length > 0 ? mergedStyle : defaultStyle
+
+        chunks.push({
+          __isChunk: true,
+          text: segmentText,
+          fg: finalStyle?.fg,
+          bg: finalStyle?.bg,
+          attributes: finalStyle
+            ? createTextAttributes({
+                bold: finalStyle.bold,
+                italic: finalStyle.italic,
+                underline: finalStyle.underline,
+                dim: finalStyle.dim,
+              })
+            : 0,
+        })
+      }
+    } else if (currentOffset < boundary.offset) {
+      const text = content.slice(currentOffset, boundary.offset)
+      const style = baseStyle ?? defaultStyle
+      chunks.push({
+        __isChunk: true,
+        text,
+        fg: style?.fg,
+        bg: style?.bg,
+        attributes: style
+          ? createTextAttributes({
+              bold: style.bold,
+              italic: style.italic,
+              underline: style.underline,
+              dim: style.dim,
+            })
+          : 0,
+      })
+    }
+
+    if (boundary.type === "start") {
+      activeHighlights.add(boundary.highlightIndex)
+    } else {
+      activeHighlights.delete(boundary.highlightIndex)
+
+      if (concealEnabled) {
+        const [, , group, meta] = highlights[boundary.highlightIndex]
+        if (meta?.concealLines !== undefined) {
+          if (boundary.offset < content.length && content[boundary.offset] === "\n") {
+            currentOffset = boundary.offset + 1
+            continue
+          }
+        }
+
+        if (meta?.conceal !== undefined) {
+          if (meta.conceal === " ") {
+            if (boundary.offset < content.length && content[boundary.offset] === " ") {
+              currentOffset = boundary.offset + 1
+              continue
+            }
+          } else if (meta.conceal === "" && group === "conceal" && !meta.isInjection) {
+            if (boundary.offset < content.length && content[boundary.offset] === " ") {
+              currentOffset = boundary.offset + 1
+              continue
+            }
+          }
+        }
+      }
+    }
+
+    currentOffset = boundary.offset
+  }
+
+  if (currentOffset < content.length) {
+    const text = content.slice(currentOffset)
+    const style = baseStyle ?? defaultStyle
+    chunks.push({
+      __isChunk: true,
+      text,
+      fg: style?.fg,
+      bg: style?.bg,
+      attributes: style
+        ? createTextAttributes({
+            bold: style.bold,
+            italic: style.italic,
+            underline: style.underline,
+            dim: style.dim,
+          })
+        : 0,
+    })
+  }
+
+  return chunks
+}
+
+// --- corpus helpers (deterministic) -------------------------------------------------
+
+function mulberry32(seed: number) {
+  return function () {
+    seed |= 0
+    seed = (seed + 0x6d2b79f5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+const UNICODE_CELLS = [
+  "é", // combining on single precomposed
+  "e\u0301", // combining mark
+  "\u{1F600}", // surrogate / emoji
+  "\u200d", // ZWJ
+  "\u{1F1E6}\u{1F1E7}", // regional indicator flags
+  "\u{1F3FB}", // skin tone modifier
+  "\uac00", // hangul syllable
+  "\u{1FA9D}", // keycap-ish wide
+  "界", // CJK wide
+  "a", // ascii
+]
+
+interface DiffCase {
+  name: string
+  content: string
+  highlights: SimpleHighlight[]
+  options?: { enabled?: boolean; baseHighlight?: string }
+}
+
+function buildDiffCorpus(): DiffCase[] {
+  const cases: DiffCase[] = []
+
+  // sparse: few isolated highlights
+  cases.push({
+    name: "sparse",
+    content: "const a = 1; // hi\nconst b = 2; // yo\n",
+    highlights: [
+      [0, 5, "keyword", undefined],
+      [14, 18, "comment", undefined],
+      [20, 25, "keyword", undefined],
+      [34, 38, "comment", undefined],
+    ],
+  })
+
+  // dense: adjacent highlights covering everything
+  cases.push({
+    name: "dense",
+    content: "abcd efgh ijkl mnop",
+    highlights: [
+      [0, 4, "string", undefined],
+      [4, 5, "keyword", undefined],
+      [5, 9, "number", undefined],
+      [9, 15, "comment", undefined],
+    ],
+  })
+
+  // nested ranges with overlapping siblings and priorities
+  cases.push({
+    name: "nested-overlap",
+    content: "0123456789abcdefghij",
+    highlights: [
+      [0, 20, "markup.raw.block", undefined],
+      [2, 18, "string", undefined],
+      [5, 15, "keyword", undefined],
+      [7, 12, "number", undefined],
+      [4, 16, "comment", undefined],
+    ],
+  })
+
+  // equal start
+  cases.push({
+    name: "equal-start",
+    content: "0123456789",
+    highlights: [
+      [0, 10, "keyword", undefined],
+      [0, 6, "string", undefined],
+      [0, 3, "number", undefined],
+    ],
+  })
+
+  // equal end
+  cases.push({
+    name: "equal-end",
+    content: "0123456789",
+    highlights: [
+      [0, 9, "keyword", undefined],
+      [2, 9, "string", undefined],
+      [5, 9, "number", undefined],
+    ],
+  })
+
+  // equal start AND end (fully identical ranges, different groups)
+  cases.push({
+    name: "equal-both",
+    content: "0123456789",
+    highlights: [
+      [2, 7, "keyword", undefined],
+      [2, 7, "string", undefined],
+      [2, 7, "number", undefined],
+    ],
+  })
+
+  // empty + invalid spans
+  cases.push({
+    name: "empty-invalid-spans",
+    content: "hello world",
+    highlights: [
+      [3, 3, "keyword", undefined], // zero-length
+      [0, 5, "string", undefined], // start == end? no
+      [6, 11, "number", undefined],
+      [9, 2, "comment", undefined], // start > end (degenerate, end before start)
+      [11, 12, "keyword", undefined], // starts at content.length
+    ],
+  })
+
+  // injection container (markup.raw.block) with inner groups
+  cases.push({
+    name: "injection-container",
+    content: "para ```js const x=1 ``` more",
+    highlights: [
+      [0, 26, "markup.raw.block", { containsInjection: true }],
+      [8, 10, "punctuation", { isInjection: true }],
+      [10, 18, "keyword", { isInjection: true }],
+      [18, 21, "number", { isInjection: true }],
+    ],
+  })
+
+  // conceal with space replacement
+  cases.push({
+    name: "conceal-space",
+    content: "text [url](https://x) more",
+    highlights: [
+      [5, 9, "bracket", { conceal: " " }],
+      [9, 12, "string", undefined],
+      [12, 13, "bracket", { conceal: "" }],
+      [13, 23, "conceal", undefined],
+      [23, 24, "bracket", { conceal: " " }],
+    ],
+  })
+
+  // conceal.with.space group
+  cases.push({
+    name: "conceal-with-space-group",
+    content: "aaa bb cc",
+    highlights: [
+      [0, 3, "conceal.with.space", { conceal: " " }],
+      [4, 6, "string", undefined],
+    ],
+  })
+
+  // concealLines: whole line conceal on newline
+  cases.push({
+    name: "conceal-lines",
+    content: "line1\nline2\nline3",
+    highlights: [
+      [0, 5, "conceal", { concealLines: "" }],
+      [8, 13, "conceal", { concealLines: "" }],
+    ],
+  })
+
+  // baseHighlight option
+  cases.push({
+    name: "base-highlight",
+    content: "const x = 1;",
+    highlights: [[0, 13, "keyword", undefined]],
+    options: { baseHighlight: "comment" },
+  })
+
+  // conceal disabled
+  cases.push({
+    name: "conceal-disabled",
+    content: "text [url](x)",
+    highlights: [
+      [5, 9, "bracket", { conceal: " " }],
+      [10, 11, "conceal", undefined],
+    ],
+    options: { enabled: false },
+  })
+
+  // CRLF
+  cases.push({
+    name: "crlf",
+    content: "const a = 1;\r\nconst b = 2;\r\n",
+    highlights: [
+      [0, 5, "keyword", undefined],
+      [16, 21, "keyword", undefined],
+    ],
+  })
+
+  // unicode cells: wide, combining, surrogate, hangul, flags, skin-tone, ZWJ
+  cases.push({
+    name: "unicode-cells",
+    content: UNICODE_CELLS.join(" "),
+    highlights: [
+      [0, 1, "string", undefined],
+      [2, 7, "keyword", undefined],
+      [8, 10, "comment", undefined],
+    ],
+  })
+
+  // nested conceal inside injection (heading marker non-injection conceal handling)
+  cases.push({
+    name: "conceal-in-injection",
+    content: "# heading ",
+    highlights: [
+      [0, 1, "conceal", { conceal: "", isInjection: false }],
+      [2, 9, "markup.heading", undefined],
+    ],
+  })
+
+  // injection with isInjection suppress override
+  cases.push({
+    name: "injection-suppress-override",
+    content: "```js let x=1 ```",
+    highlights: [
+      [0, 17, "markup.raw.block", { containsInjection: true }],
+      [5, 8, "markup.raw.block", { isInjection: true }], // should NOT be suppressed
+      [8, 14, "keyword", { isInjection: true }],
+    ],
+  })
+
+  return cases
+}
+
+function generateMixedHighlights(
+  lines: number,
+  seed: number,
+  density: number,
+): { content: string; hl: SimpleHighlight[] } {
+  const rnd = mulberry32(seed)
+  const groups = ["keyword", "string", "number", "function", "comment", "variable", "type", "markup.raw.block"]
+  let content = ""
+  const hl: SimpleHighlight[] = []
+  for (let li = 0; li < lines; li++) {
+    const start = content.length
+    const line = `let id${li} = "val${li}" + f(${li}); // note ${li}\n`
+    content += line
+    for (let s = 0; s < density; s++) {
+      // Positions relative to the line so ranges stay valid (start < end, within the line).
+      const relA = Math.floor(rnd() * (line.length - 2))
+      const a = start + relA
+      const len = 1 + Math.floor(rnd() * (line.length - relA - 1))
+      const g = groups[Math.floor(rnd() * groups.length)]
+      hl.push([a, a + len, g, undefined])
+    }
+  }
+  return { content, hl }
+}
+
+function chunkSignature(chunk: TextChunk): string {
+  return JSON.stringify([chunk.text, chunk.fg, chunk.bg, chunk.attributes])
+}
+
+const STYLE_STYLES: Record<string, any> = {
+  default: { fg: { r: 255, g: 255, b: 255, a: 1 } },
+  keyword: { fg: { r: 255, g: 100, b: 100, a: 1 }, bold: true },
+  string: { fg: { r: 100, g: 255, b: 100, a: 1 } },
+  number: { fg: { r: 100, g: 100, b: 255, a: 1 } },
+  function: { fg: { r: 255, g: 255, b: 100, a: 1 }, italic: true },
+  comment: { fg: { r: 128, g: 128, b: 128, a: 1 }, italic: true },
+  variable: { fg: { r: 200, g: 200, b: 255, a: 1 } },
+  type: { fg: { r: 255, g: 200, b: 100, a: 1 } },
+  punctuation: { fg: { r: 150, g: 150, b: 150, a: 1 } },
+  bracket: { fg: { r: 210, g: 210, b: 210, a: 1 } },
+  conceal: { fg: { r: 0, g: 0, b: 0, a: 1 } },
+  "conceal.with.space": { fg: { r: 0, g: 0, b: 0, a: 1 } },
+  "markup.raw": { fg: { r: 200, g: 255, b: 200, a: 1 } },
+  "markup.raw.block": { fg: { r: 200, g: 255, b: 200, a: 1 } },
+  "markup.heading": { fg: { r: 255, g: 200, b: 200, a: 1 }, bold: true },
+}
+const diffStyleStub = {
+  getStyle(name: string) {
+    return (STYLE_STYLES as Record<string, any>)[name]
+  },
+} as unknown as SyntaxStyle
+
+function compareChunkSequences(legacy: TextChunk[], opt: TextChunk[], context: string): void {
+  expect(opt.length, `${context}: chunk count`).toBe(legacy.length)
+  for (let i = 0; i < legacy.length; i++) {
+    expect(chunkSignature(opt[i]), `${context}: chunk[${i}]`).toBe(chunkSignature(legacy[i]))
+  }
+}
+
+describe("Wave3 Loop D differential: optimized vs legacy oracle", () => {
+  const corpus = buildDiffCorpus()
+  for (const c of corpus) {
+    test(`differential ${c.name}`, () => {
+      const legacy = legacyTreeSitterToTextChunks(c.content, c.highlights, diffStyleStub, c.options)
+      const opt = treeSitterToTextChunks(c.content, c.highlights, diffStyleStub, c.options)
+      compareChunkSequences(legacy, opt, c.name)
+    })
+  }
+
+  const large = [
+    [100, 2, 1],
+    [1000, 3, 2],
+    [1000, 8, 4],
+  ] as const
+  for (const [lines, density, seed] of large) {
+    test(`differential large lines=${lines} density=${density}`, () => {
+      const { content, hl } = generateMixedHighlights(lines, seed, density)
+      const legacy = legacyTreeSitterToTextChunks(content, hl, diffStyleStub)
+      const opt = treeSitterToTextChunks(content, hl, diffStyleStub)
+      compareChunkSequences(legacy, opt, `large-${lines}-${density}`)
+    }, 120_000)
+  }
 })

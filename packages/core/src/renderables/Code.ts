@@ -7,6 +7,15 @@ import type { OptimizedBuffer } from "../buffer.js"
 import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
 import type { TextChunk } from "../text-buffer.js"
 import { treeSitterToTextChunks } from "../lib/tree-sitter-styled-text.js"
+import type { RGBA } from "../lib/RGBA.js"
+import { getHighlightCompletion } from "../lib/highlight-completion.js"
+import { CodeHighlightSession, type CodeHighlightSource, type HighlightOwner } from "./CodeHighlightSession.js"
+import { CodeBufferedHighlightSource } from "./CodeBufferedHighlightSource.js"
+import {
+  createStyledAppendSnapshot,
+  getSafeStyledAppend,
+  type StyledAppendSnapshot,
+} from "../lib/styled-text-append.js"
 
 export interface HighlightContext {
   content: string
@@ -36,7 +45,13 @@ export interface CodeOptions extends TextBufferOptions {
   conceal?: boolean
   drawUnstyledText?: boolean
   streaming?: boolean
+  /**
+   * Paint the complete layout rectangle with `bg` and allow retained partial
+   * redraws while streaming. The background must be fully opaque.
+   */
+  retainedRendering?: boolean
   initialStyledText?: StyledText
+  deferStreamingHighlight?: boolean
   baseHighlight?: string
   onHighlight?: OnHighlightCallback
   onChunks?: OnChunksCallback
@@ -47,11 +62,14 @@ type ConcealLineRange = [start: number, end: number]
 export class CodeRenderable extends TextBufferRenderable {
   private _content: string
   private _filetype?: string
+  // Collapse synchronous streaming updates into one renderer request.
+  private _renderCoalesceScheduled: boolean = false
   private _syntaxStyle: SyntaxStyle
   private _isHighlighting: boolean = false
   private _treeSitterClient: TreeSitterClient
   private _highlightsDirty: boolean = false
-  private _highlightSnapshotId: number = 0
+  private _session: CodeHighlightSession
+  private _bufferedHighlightSource?: CodeBufferedHighlightSource
   private _highlightLoopActive: boolean = false
   private _highlightPromise?: Promise<void>
   private _highlightRerun: boolean = false
@@ -59,9 +77,13 @@ export class CodeRenderable extends TextBufferRenderable {
   private _drawUnstyledText: boolean
   private _shouldRenderTextBuffer: boolean = true
   private _streaming: boolean
+  private _retainedRendering: boolean
   private _initialStyledText?: StyledText
+  private _initialStyledTextContent?: string
+  private _deferStreamingHighlight: boolean
   private _hadInitialContent: boolean = false
   private _lastHighlights: SimpleHighlight[] = []
+  private _committedStyledSnapshot?: StyledAppendSnapshot
   private _baseHighlight?: string
   private _onHighlight?: OnHighlightCallback
   private _onChunks?: OnChunksCallback
@@ -84,19 +106,25 @@ export class CodeRenderable extends TextBufferRenderable {
     this._filetype = options.filetype
     this._syntaxStyle = options.syntaxStyle
     this._treeSitterClient = options.treeSitterClient ?? getTreeSitterClient()
+    this._streaming = options.streaming ?? this._contentDefaultOptions.streaming
+    this._session = this.createHighlightSession()
     this._conceal = options.conceal ?? this._contentDefaultOptions.conceal
     this._drawUnstyledText = options.drawUnstyledText ?? this._contentDefaultOptions.drawUnstyledText
-    this._streaming = options.streaming ?? this._contentDefaultOptions.streaming
+    this._retainedRendering = options.retainedRendering ?? false
     this._initialStyledText = options.initialStyledText
+    this._initialStyledTextContent = this._initialStyledText ? this._content : undefined
+    this._deferStreamingHighlight = options.deferStreamingHighlight ?? false
     this._baseHighlight = options.baseHighlight
     this._onHighlight = options.onHighlight
     this._onChunks = options.onChunks
 
+    this.updatePartialEligibility()
+
     if (this._content.length > 0) {
-      if (this._initialStyledText && this._drawUnstyledText) {
-        this.textBuffer.setStyledText(this._initialStyledText)
+      if (this._initialStyledText && this._initialStyledTextContent === this._content && this._drawUnstyledText) {
+        this.setInitialStyledTextContent(this._initialStyledText, this._content)
       } else {
-        this.textBuffer.setText(this._content)
+        this.setPlainTextContent(this._content)
       }
       this.updateTextInfo()
       this._shouldRenderTextBuffer = this._drawUnstyledText || !this._filetype
@@ -109,29 +137,143 @@ export class CodeRenderable extends TextBufferRenderable {
     return this._content
   }
 
-  private invalidateHighlights(): void {
+  private invalidateHighlights(owner: HighlightOwner = "fullReplace"): void {
     this._highlightsDirty = true
-    this._highlightSnapshotId++
+    this._session.revise(owner)
+  }
+
+  private createHighlightSession(): CodeHighlightSession {
+    let source: CodeHighlightSource
+    if (this._streaming) {
+      this._bufferedHighlightSource = new CodeBufferedHighlightSource(this._treeSitterClient)
+      source = this._bufferedHighlightSource
+    } else {
+      this._bufferedHighlightSource = undefined
+      source = {
+        highlight: (content, filetype) => this._treeSitterClient.highlightOnce(content, filetype),
+      }
+    }
+    return new CodeHighlightSession(source)
+  }
+
+  private replaceHighlightSession(): void {
+    this._session.close()
+    this._bufferedHighlightSource?.close()
+    this._session = this.createHighlightSession()
   }
 
   set content(value: string) {
     if (this._content !== value) {
+      const scrollWidth = this.scrollWidth
+      const scrollHeight = this.scrollHeight
       this._content = value
       this.invalidateHighlights()
+      if (value.length === 0) this._bufferedHighlightSource?.release()
 
       if (this._streaming && this._filetype && !this._drawUnstyledText) {
-        this.requestRender()
+        this.coalesceRender()
         return
       }
 
-      if (this._initialStyledText && this._drawUnstyledText) {
-        this.textBuffer.setStyledText(this._initialStyledText)
+      if (this._initialStyledText && this._initialStyledTextContent === value && this._drawUnstyledText) {
+        this.setInitialStyledTextContent(this._initialStyledText, value)
       } else {
-        this.textBuffer.setText(value)
+        this.setPlainTextContent(value)
       }
       this.setRenderedLineSources(undefined)
-      this.updateTextInfo()
+      this.updateTextInfoAfterBufferChange(scrollWidth, scrollHeight)
     }
+  }
+
+  private isDefaultStyledContent(styledText: StyledText, content: string): boolean {
+    let offset = 0
+    for (const chunk of styledText.chunks) {
+      if (chunk.fg && !chunk.fg.equals(this._defaultFg)) return false
+      if (chunk.bg && !chunk.bg.equals(this._defaultBg)) return false
+      if ((chunk.attributes ?? 0) !== this._defaultAttributes || chunk.link) return false
+      if (!content.startsWith(chunk.text, offset)) return false
+      offset += chunk.text.length
+    }
+    return offset === content.length
+  }
+
+  private setInitialStyledTextContent(styledText: StyledText, content: string): void {
+    // Default-styled content uses the ordinary text path until the first
+    // highlighted snapshot establishes a safe incremental styled prefix.
+    if (this.isDefaultStyledContent(styledText, content)) {
+      this.setPlainTextContent(content)
+      return
+    }
+    this.textBuffer.setStyledText(styledText)
+    this.commitStyledSnapshot(content, styledText.chunks)
+  }
+
+  private clearStyledSnapshot(): void {
+    this._committedStyledSnapshot = undefined
+  }
+
+  private setPlainTextContent(content: string): void {
+    this.textBuffer.setText(content)
+    this.clearStyledSnapshot()
+  }
+
+  private commitStyledSnapshot(content: string, chunks: readonly TextChunk[]): void {
+    this._committedStyledSnapshot = createStyledAppendSnapshot(content, chunks)
+  }
+
+  private tryAppendStyledText(next: StyledAppendSnapshot, chunks: readonly TextChunk[]): boolean {
+    if (!this._streaming || !this._committedStyledSnapshot) return false
+    const tail = getSafeStyledAppend(this._committedStyledSnapshot, next, chunks)
+    if (!tail || !this.textBuffer.appendStyledText(new StyledText(tail))) return false
+    this._committedStyledSnapshot = next
+    return true
+  }
+
+  private applyDeferredInitialStyledText(): void {
+    if (
+      !this._deferStreamingHighlight ||
+      !this._streaming ||
+      !this._drawUnstyledText ||
+      !this._initialStyledText ||
+      this._initialStyledTextContent !== this._content
+    )
+      return
+
+    const scrollWidth = this.scrollWidth
+    const scrollHeight = this.scrollHeight
+    this.setInitialStyledTextContent(this._initialStyledText, this._content)
+    this.setRenderedLineSources(undefined)
+    this._shouldRenderTextBuffer = true
+    this.updateTextInfoAfterBufferChange(scrollWidth, scrollHeight)
+  }
+
+  private updateTextInfoAfterBufferChange(scrollWidth: number, scrollHeight: number): void {
+    this.updateTextInfo(
+      (this._width === "auto" && scrollWidth !== this.scrollWidth) ||
+        (this._height === "auto" && scrollHeight !== this.scrollHeight),
+    )
+  }
+
+  private updateTextInfoAfterHighlight(scrollWidth: number, scrollHeight: number): void {
+    if (!this._streaming) {
+      this.updateTextInfo()
+      return
+    }
+    this.updateTextInfoAfterBufferChange(scrollWidth, scrollHeight)
+  }
+
+  private coalesceRender(): void {
+    if (this._renderCoalesceScheduled) return
+    this._renderCoalesceScheduled = true
+    queueMicrotask(() => {
+      this._renderCoalesceScheduled = false
+      if (!this.isDestroyed) this.requestRender()
+    })
+  }
+
+  private retryLatestHighlight(): void {
+    if (this._streaming) this._isHighlighting = false
+    this.coalesceRender()
   }
 
   public override get lineInfo(): LineInfo {
@@ -165,9 +307,9 @@ export class CodeRenderable extends TextBufferRenderable {
     super.onResize(width, height)
   }
 
-  protected override updateTextInfo(): void {
+  protected override updateTextInfo(layoutChanged: boolean = true): void {
     this._mappedLineInfo = undefined
-    super.updateTextInfo()
+    super.updateTextInfo(layoutChanged)
   }
 
   get filetype(): string | undefined {
@@ -177,7 +319,8 @@ export class CodeRenderable extends TextBufferRenderable {
   set filetype(value: string | undefined) {
     if (this._filetype !== value) {
       this._filetype = value
-      this.invalidateHighlights()
+      this._bufferedHighlightSource?.release()
+      this.invalidateHighlights("filetypeChange")
     }
   }
 
@@ -211,6 +354,7 @@ export class CodeRenderable extends TextBufferRenderable {
     if (this._drawUnstyledText !== value) {
       this._drawUnstyledText = value
       this.invalidateHighlights()
+      this.applyDeferredInitialStyledText()
     }
   }
 
@@ -218,19 +362,53 @@ export class CodeRenderable extends TextBufferRenderable {
     return this._streaming
   }
 
+  get retainedRendering(): boolean {
+    return this._retainedRendering
+  }
+
+  set retainedRendering(value: boolean) {
+    if (this._retainedRendering === value) return
+    this._retainedRendering = value
+    this.updatePartialEligibility()
+    this.requestRender()
+  }
+
   set initialStyledText(value: StyledText | undefined) {
-    if (this._initialStyledText !== value) {
-      this._initialStyledText = value
+    if (this._initialStyledText === value) return
+    this.setInitialStyledText(value, value?.chunks.map((chunk) => chunk.text).join(""))
+  }
+
+  setInitialStyledText(value: StyledText | undefined, content?: string): void {
+    const snapshotContent = value ? content : undefined
+    if (this._initialStyledText === value && this._initialStyledTextContent === snapshotContent) return
+    this._initialStyledText = value
+    this._initialStyledTextContent = snapshotContent
+    this.invalidateHighlights()
+    this.applyDeferredInitialStyledText()
+  }
+
+  get deferStreamingHighlight(): boolean {
+    return this._deferStreamingHighlight
+  }
+
+  set deferStreamingHighlight(value: boolean) {
+    if (this._deferStreamingHighlight !== value) {
+      this._deferStreamingHighlight = value
       this.invalidateHighlights()
+      this.applyDeferredInitialStyledText()
     }
   }
 
   set streaming(value: boolean) {
     if (this._streaming !== value) {
       this._streaming = value
+      this.replaceHighlightSession()
+      this.updatePartialEligibility()
       this._hadInitialContent = false
       this._lastHighlights = []
+      this.clearStyledSnapshot()
       this.invalidateHighlights()
+      this.applyDeferredInitialStyledText()
     }
   }
 
@@ -241,6 +419,7 @@ export class CodeRenderable extends TextBufferRenderable {
   set treeSitterClient(value: TreeSitterClient) {
     if (this._treeSitterClient !== value) {
       this._treeSitterClient = value
+      this.replaceHighlightSession()
       this.invalidateHighlights()
     }
   }
@@ -286,6 +465,10 @@ export class CodeRenderable extends TextBufferRenderable {
     return this._highlightingPromise
   }
 
+  public [getHighlightCompletion](): Promise<void> | null {
+    return this.isHighlighting ? this.highlightingDone : null
+  }
+
   protected async transformChunks(chunks: TextChunk[], context: ChunkRenderContext): Promise<TextChunk[]> {
     if (!this._onChunks) return chunks
 
@@ -309,10 +492,10 @@ export class CodeRenderable extends TextBufferRenderable {
     if (this._streaming && !isInitialContent) {
       this._shouldRenderTextBuffer = true
     } else if (shouldDrawUnstyledNow) {
-      if (this._initialStyledText) {
-        this.textBuffer.setStyledText(this._initialStyledText)
+      if (this._initialStyledText && this._initialStyledTextContent === content) {
+        this.setInitialStyledTextContent(this._initialStyledText, content)
       } else {
-        this.textBuffer.setText(content)
+        this.setPlainTextContent(content)
       }
       this.setRenderedLineSources(undefined)
       this._shouldRenderTextBuffer = true
@@ -324,7 +507,8 @@ export class CodeRenderable extends TextBufferRenderable {
   private async startHighlight(): Promise<void> {
     const content = this._content
     const filetype = this._filetype
-    const snapshotId = ++this._highlightSnapshotId
+    const session = this._session
+    const snapshotId = session.generation
 
     if (!filetype) return
 
@@ -336,10 +520,10 @@ export class CodeRenderable extends TextBufferRenderable {
     this._isHighlighting = true
 
     try {
-      const result = await this._treeSitterClient.highlightOnce(content, filetype)
+      const result = await session.source.highlight(content, filetype)
 
-      if (snapshotId !== this._highlightSnapshotId) {
-        this.requestRender()
+      if (!session.isCurrent(snapshotId)) {
+        this.retryLatestHighlight()
         return
       }
 
@@ -359,8 +543,8 @@ export class CodeRenderable extends TextBufferRenderable {
         }
       }
 
-      if (snapshotId !== this._highlightSnapshotId) {
-        this.requestRender()
+      if (!session.isCurrent(snapshotId)) {
+        this.retryLatestHighlight()
         return
       }
 
@@ -371,6 +555,9 @@ export class CodeRenderable extends TextBufferRenderable {
           this._lastHighlights = highlights
         }
       }
+
+      const scrollWidth = this.scrollWidth
+      const scrollHeight = this.scrollHeight
 
       if (highlights.length > 0 || this._onChunks || this._baseHighlight) {
         const context: ChunkRenderContext = {
@@ -389,41 +576,47 @@ export class CodeRenderable extends TextBufferRenderable {
 
         chunks = await this.transformChunks(chunks, context)
 
-        if (snapshotId !== this._highlightSnapshotId) {
-          this.requestRender()
+        if (!session.isCurrent(snapshotId)) {
+          this.retryLatestHighlight()
           return
         }
 
         if (this.isDestroyed) return
 
         const styledText = new StyledText(chunks)
-        this.textBuffer.setStyledText(styledText)
+        const styledSnapshot = createStyledAppendSnapshot(content, chunks)
+        if (!this.tryAppendStyledText(styledSnapshot, chunks)) {
+          this.textBuffer.setStyledText(styledText)
+          this._committedStyledSnapshot = styledSnapshot
+        }
         this.setRenderedLineSources(renderedLineSources)
       } else {
-        this.textBuffer.setText(content)
+        this.setPlainTextContent(content)
         this.setRenderedLineSources(undefined)
       }
 
       this._shouldRenderTextBuffer = true
       this._isHighlighting = false
       this._highlightsDirty = false
-      this.updateTextInfo()
-      this.requestRender()
+      this.updateTextInfoAfterHighlight(scrollWidth, scrollHeight)
+      this.coalesceRender()
     } catch (error) {
-      if (snapshotId !== this._highlightSnapshotId) {
-        this.requestRender()
+      if (!session.isCurrent(snapshotId)) {
+        this.retryLatestHighlight()
         return
       }
 
       console.warn("Code highlighting failed, falling back to plain text:", error)
       if (this.isDestroyed) return
-      this.textBuffer.setText(content)
+      const scrollWidth = this.scrollWidth
+      const scrollHeight = this.scrollHeight
+      this.setPlainTextContent(content)
       this.setRenderedLineSources(undefined)
       this._shouldRenderTextBuffer = true
       this._isHighlighting = false
       this._highlightsDirty = false
-      this.updateTextInfo()
-      this.requestRender()
+      this.updateTextInfoAfterHighlight(scrollWidth, scrollHeight)
+      this.coalesceRender()
     }
   }
 
@@ -440,7 +633,8 @@ export class CodeRenderable extends TextBufferRenderable {
   }
 
   private clearPendingHighlight(): void {
-    this._highlightSnapshotId++
+    this._session.revise("fullReplace")
+    this._bufferedHighlightSource?.release()
     this._isHighlighting = false
     this._highlightRerun = false
     this._highlightingPromise = Promise.resolve()
@@ -558,7 +752,23 @@ export class CodeRenderable extends TextBufferRenderable {
     return this.textBuffer.getLineHighlights(lineIdx)
   }
 
+  protected override onBgChanged(newColor: RGBA): void {
+    this.setPartialEligible(this._streaming && this._retainedRendering && newColor.a === 1)
+  }
+
+  private updatePartialEligibility(): void {
+    this.setPartialEligible(this._streaming && this._retainedRendering && this._defaultBg.a === 1)
+  }
+
   protected renderSelf(buffer: OptimizedBuffer): void {
+    if (this._retainedRendering && this._defaultBg.a === 1) {
+      const x = Math.max(0, this._screenX)
+      const y = Math.max(0, this._screenY)
+      const right = Math.min(buffer.width, this._screenX + this.width)
+      const bottom = Math.min(buffer.height, this._screenY + this.height)
+      if (right > x && bottom > y) buffer.fillRect(x, y, right - x, bottom - y, this._defaultBg)
+    }
+
     if (this._highlightsDirty) {
       if (this.isDestroyed) return
 
@@ -569,10 +779,21 @@ export class CodeRenderable extends TextBufferRenderable {
         this.clearPendingHighlight()
 
         if (hasContent) {
-          this.textBuffer.setText(this._content)
+          this.setPlainTextContent(this._content)
           this.setRenderedLineSources(undefined)
           this.updateTextInfo()
         }
+      } else if (
+        this._deferStreamingHighlight &&
+        this._streaming &&
+        this._initialStyledText &&
+        this._drawUnstyledText &&
+        this._initialStyledTextContent === this._content
+      ) {
+        // MarkdownRenderable already parsed and styled the unstable streaming
+        // token. Re-highlighting it would replace the same buffer asynchronously.
+        this._shouldRenderTextBuffer = true
+        this._highlightsDirty = false
       } else {
         this.ensureVisibleTextBeforeHighlight()
         this._highlightsDirty = false
@@ -611,6 +832,8 @@ export class CodeRenderable extends TextBufferRenderable {
   public override destroy(): void {
     if (this.isDestroyed) return
     this.clearPendingHighlight()
+    this._session.close()
+    this._bufferedHighlightSource?.close()
     super.destroy()
   }
 }

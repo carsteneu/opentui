@@ -63,6 +63,7 @@ export type TreeSitterWorkerRequest =
       content: string
       filetype: string
       messageId: string
+      simpleHighlightsOnly?: boolean
     }
   | { type: "HANDLE_EDITS"; bufferId: number; version: number; content: string; edits: Edit[] }
   | { type: "GET_PERFORMANCE"; messageId: string }
@@ -79,10 +80,17 @@ export type TreeSitterWorkerResponse =
       bufferId: number
       messageId: string
       hasParser: boolean
+      simpleHighlights?: SimpleHighlight[]
       warning?: string
       error?: string
     }
-  | { type: "HIGHLIGHT_RESPONSE"; bufferId: number; version: number; highlights: HighlightResponse[] }
+  | {
+      type: "HIGHLIGHT_RESPONSE"
+      bufferId: number
+      version: number
+      highlights: HighlightResponse[]
+      simpleHighlights?: SimpleHighlight[]
+    }
   | { type: "PRELOAD_PARSER_RESPONSE"; messageId: string; hasParser: boolean }
   | { type: "BUFFER_DISPOSED"; bufferId: number }
   | { type: "PERFORMANCE_RESPONSE"; performance: PerformanceStats; messageId: string }
@@ -122,6 +130,43 @@ export interface Edit {
   startPosition: { row: number; column: number }
   oldEndPosition: { row: number; column: number }
   newEndPosition: { row: number; column: number }
+}
+
+/** Full initial highlight result for a newly owned versioned buffer. */
+export interface CreateBufferHighlightResult {
+  hasParser: boolean
+  highlights?: SimpleHighlight[]
+  warning?: string
+  error?: string
+}
+
+/** Result of a single updateBuffer() call, settled exactly once. */
+export type UpdateOutcome =
+  | { status: "completed"; bufferId: number; version: number; highlights?: SimpleHighlight[] }
+  | { status: "superseded"; bufferId: number; version: number; supersededBy: number }
+  | { status: "error"; bufferId: number; version: number; error: string }
+  | { status: "skipped"; bufferId: number; version: number }
+
+/** Always-on backpressure/queue counters (payload sizes in UTF-8 bytes). */
+export interface UpdateQueueStats {
+  /** Number of edit/reset jobs actually posted to the worker. */
+  posted: number
+  /** Number of posted jobs scheduled (always equals posted for now). */
+  started: number
+  /** updateBuffer() calls settled as completed via a versioned worker-ACK. */
+  completed: number
+  /** updateBuffer() calls settled as superseded by a newer update. */
+  superseded: number
+  /** Cumulative UTF-8 bytes of posted job payloads (newest content only per job). */
+  postedBytes: number
+  /** Maximum concurrent active jobs (target <= 1). */
+  activeHighWater: number
+  /** Maximum pending jobs per buffer (target <= 1). */
+  pendingJobsHighWater: number
+  /** Bytes of the single newest pending payload (0 when none). */
+  pendingBytes: number
+  /** Peak bytes held by a single pending payload, never the sum of versions. */
+  pendingByteHighWater: number
 }
 
 export interface PerformanceStats {

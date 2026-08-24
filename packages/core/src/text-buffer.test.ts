@@ -7,6 +7,7 @@ import { resolveRenderLib } from "./zig.js"
 import { StyledText, stringToStyledText } from "./lib/styled-text.js"
 import { RGBA } from "./lib/RGBA.js"
 import { SyntaxStyle } from "./syntax-style.js"
+import { TextBufferView } from "./text-buffer-view.js"
 
 const MALFORMED_UTF8_ABOVE_UNICODE_RANGE = new Uint8Array([0x41, 0xf4, 0x90, 0x80, 0x80, 0x42])
 const MALFORMED_UTF8_TEXT = "A" + "\uFFFD".repeat(4) + "B"
@@ -38,6 +39,45 @@ describe("TextBuffer", () => {
       expect(buffer.length).toBe(11)
     })
 
+    it("should append styled text with Unicode, colors, attributes, and links", () => {
+      const syntaxStyle = SyntaxStyle.create()
+      const red = RGBA.fromValues(1, 0, 0, 1)
+      const green = RGBA.fromValues(0, 1, 0, 1)
+      buffer.setSyntaxStyle(syntaxStyle)
+
+      try {
+        buffer.setStyledText(
+          new StyledText([
+            {
+              __isChunk: true,
+              text: "const initial = 1",
+              fg: red,
+              attributes: 1,
+              link: { url: "https://example.test/source" },
+            },
+          ]),
+        )
+
+        expect(
+          buffer.appendStyledText(
+            new StyledText([
+              {
+                __isChunk: true,
+                text: '\nconst tail = "👩🏽‍💻"',
+                fg: green,
+                attributes: 2,
+                link: { url: "https://example.test/source" },
+              },
+            ]),
+          ),
+        ).toBe(true)
+        expect(buffer.getPlainText()).toBe('const initial = 1\nconst tail = "👩🏽‍💻"')
+        expect(buffer.getHighlightCount()).toBe(2)
+      } finally {
+        syntaxStyle.destroy()
+      }
+    })
+
     it("should handle empty text", () => {
       buffer.setText("")
 
@@ -65,6 +105,87 @@ describe("TextBuffer", () => {
       buffer.setText(text)
 
       expect(buffer.length).toBe(18) // 6 + 6 + 6 chars (newlines not counted)
+    })
+  })
+
+  describe("appendStyledText differential", () => {
+    it("fails safely at the owned-buffer bound and recovers after full replacement", () => {
+      buffer.setStyledText(stringToStyledText("start"))
+      let rejected = 0
+      for (let index = 0; index < 260; index++) {
+        if (!buffer.appendStyledText(stringToStyledText(`\nline ${index}`))) rejected++
+      }
+
+      expect(rejected).toBeGreaterThan(0)
+      buffer.setStyledText(stringToStyledText("reset"))
+      expect(buffer.appendStyledText(stringToStyledText("\nrecovered"))).toBe(true)
+      expect(buffer.getPlainText()).toBe("reset\nrecovered")
+    })
+
+    it("matches full replacement for wrapping, Unicode graphemes, CRLF, styles, and links", () => {
+      const corpora = [
+        ["alpha beta gamma", "\ndelta epsilon"],
+        ["windows", "\r\nline\r\ntail"],
+        ["combining é", "\n👩🏽‍💻 🇩🇪 한글 1️⃣"],
+        ["tabs\tand words", "\n最后一行"],
+      ] as const
+
+      for (const mode of ["none", "char", "word"] as const) {
+        for (const [initial, tail] of corpora) {
+          const candidate = TextBuffer.create("unicode")
+          const oracle = TextBuffer.create("unicode")
+          const candidateView = TextBufferView.create(candidate)
+          const oracleView = TextBufferView.create(oracle)
+          const syntaxStyle = SyntaxStyle.create()
+          const red = RGBA.fromValues(1, 0, 0, 1)
+          const green = RGBA.fromValues(0, 1, 0, 1)
+          const initialChunk = {
+            __isChunk: true as const,
+            text: initial,
+            fg: red,
+            attributes: 1,
+            link: { url: "https://example.test/initial" },
+          }
+          const tailChunk = {
+            __isChunk: true as const,
+            text: tail,
+            fg: green,
+            attributes: 2,
+            link: { url: "https://example.test/tail" },
+          }
+
+          try {
+            candidate.setSyntaxStyle(syntaxStyle)
+            oracle.setSyntaxStyle(syntaxStyle)
+            candidate.setStyledText(new StyledText([initialChunk]))
+            expect(candidate.appendStyledText(new StyledText([tailChunk]))).toBe(true)
+            oracle.setStyledText(new StyledText([initialChunk, tailChunk]))
+
+            candidateView.setWrapMode(mode)
+            oracleView.setWrapMode(mode)
+            candidateView.setWrapWidth(8)
+            oracleView.setWrapWidth(8)
+            candidateView.setViewport(0, 0, 8, 100)
+            oracleView.setViewport(0, 0, 8, 100)
+
+            expect(candidate.getPlainText()).toBe(oracle.getPlainText())
+            expect(candidate.length).toBe(oracle.length)
+            expect(candidate.byteSize).toBe(oracle.byteSize)
+            expect(candidate.getLineCount()).toBe(oracle.getLineCount())
+            expect(candidateView.lineInfo).toEqual(oracleView.lineInfo)
+            expect(candidateView.measureForDimensions(8, 100)).toEqual(oracleView.measureForDimensions(8, 100))
+            for (let line = 0; line < oracle.getLineCount(); line++) {
+              expect(candidate.getLineHighlights(line)).toEqual(oracle.getLineHighlights(line))
+            }
+          } finally {
+            candidateView.destroy()
+            oracleView.destroy()
+            candidate.destroy()
+            oracle.destroy()
+            syntaxStyle.destroy()
+          }
+        }
+      }
     })
   })
 

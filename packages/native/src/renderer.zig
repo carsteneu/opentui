@@ -36,6 +36,13 @@ pub const RenderResult = struct {
     status: RenderStatus,
 };
 
+pub const RenderRegion = struct {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+};
+
 const CLEAR_CHAR = '\u{0a00}';
 const MAX_STAT_SAMPLES = 30;
 const STAT_SAMPLE_CAPACITY = 30;
@@ -916,8 +923,26 @@ pub const CliRenderer = struct {
         self.splitBatchDeltaTime = 0;
     }
 
-    // One code path; backend selects writer type at compile time.
     pub fn render(self: *CliRenderer, force: bool) RenderStatus {
+        return self.renderRequested(force, null, true);
+    }
+
+    pub fn renderRetained(self: *CliRenderer, force: bool) RenderStatus {
+        return self.renderRequested(force, null, false);
+    }
+
+    pub fn renderRegion(self: *CliRenderer, region: RenderRegion) RenderStatus {
+        // Image deletion, placement commits, and fallback materialization require a complete frame transaction.
+        if (self.hasActiveImageState()) return .failed;
+        return self.renderRequested(false, region, false);
+    }
+
+    pub fn hasActiveImageState(self: *const CliRenderer) bool {
+        return self.nextRenderBuffer.image_placements.items.len != 0 or self.currentImages.items.len != 0;
+    }
+
+    // One code path; backend selects writer type at compile time.
+    fn renderRequested(self: *CliRenderer, force: bool, region: ?RenderRegion, clear_next: bool) RenderStatus {
         // Backpressure: skipping must NOT update lastRenderTime so the next
         // successful render sees the full accumulated delta (catch-up).
         if (self.backend.prepareFrame() != .ok) {
@@ -940,7 +965,7 @@ pub const CliRenderer = struct {
             inline else => |*b| {
                 b.beginFrame();
                 var w = b.writer();
-                self.prepareRenderFrameWithWriter(&w, force, false);
+                self.prepareRenderFrameWithWriter(&w, force, false, region, clear_next);
                 if (self.imageRenderFailed) b.failFrame();
                 write_status = b.endFrame();
             },
@@ -952,8 +977,14 @@ pub const CliRenderer = struct {
             self.restoreSplitFrameState(start_split_state);
             return result;
         }
-        self.commitPendingHitGrid();
-        self.commitPendingImageState();
+        if (region == null) {
+            self.commitPendingHitGrid();
+            self.commitPendingImageState();
+        } else {
+            self.hitGridDirty = false;
+            @memset(self.nextHitGrid, 0);
+            self.pendingImages.clearRetainingCapacity();
+        }
 
         self.collectFrameStats(deltaTime);
         return status;
@@ -1141,7 +1172,7 @@ pub const CliRenderer = struct {
                     };
 
                     if (finalize_frame) {
-                        self.prepareRenderFrameWithWriter(&w, redraw_footer, true);
+                        self.prepareRenderFrameWithWriter(&w, redraw_footer, true, null, true);
                         if (self.imageRenderFailed) b.failFrame();
                         write_status = b.endFrame();
                         const status = renderStatusFromWrite(write_status);
@@ -1200,7 +1231,7 @@ pub const CliRenderer = struct {
                 self.splitBatchRedrawFooter = self.splitBatchRedrawFooter or redraw_footer;
 
                 if (finalize_frame) {
-                    self.prepareRenderFrameWithWriter(&w, self.splitBatchRedrawFooter, true);
+                    self.prepareRenderFrameWithWriter(&w, self.splitBatchRedrawFooter, true, null, true);
                     if (self.imageRenderFailed) b.failFrame();
                     write_status = b.endFrame();
 
@@ -1721,7 +1752,7 @@ pub const CliRenderer = struct {
             inline else => |*b| {
                 b.beginFrame();
                 var w = b.writer();
-                self.prepareRenderFrameWithWriter(&w, redraw_footer, false);
+                self.prepareRenderFrameWithWriter(&w, redraw_footer, false, null, true);
                 if (self.imageRenderFailed) b.failFrame();
                 write_status = b.endFrame();
             },
@@ -2319,11 +2350,29 @@ pub const CliRenderer = struct {
     /// (buffered frame append or feed streaming) without dispatch in the render path.
     /// `sync_started` is true only when the caller already opened the
     /// synchronized-update envelope for a batched split-footer commit.
+<<<<<<< HEAD:packages/native/src/renderer.zig
     pub fn prepareRenderFrameWithWriter(self: *CliRenderer, writer: anytype, force: bool, sync_started: bool) void {
         const renderStartTime = std.Io.Clock.now(.awake, io).toMicroseconds();
+=======
+    pub fn prepareRenderFrameWithWriter(
+        self: *CliRenderer,
+        writer: anytype,
+        force: bool,
+        sync_started: bool,
+        requested_region: ?RenderRegion,
+        clear_next: bool,
+    ) void {
+        const renderStartTime = std.time.microTimestamp();
+>>>>>>> e7e3c6e8 (perf(core): port retained partial rendering):packages/core/src/zig/renderer.zig
         var cellsUpdated: u32 = 0;
         const palette_force = self.last_rendered_palette_epoch == null or self.last_rendered_palette_epoch.? != self.palette_epoch;
         const should_force = force or self.force_full_repaint or palette_force;
+        const region = if (should_force or self.debugOverlay.enabled) null else requested_region;
+        const start_y = if (region) |value| @min(value.y, self.height) else 0;
+        const end_y = if (region) |value| @min(value.y +| value.height, self.height) else self.height;
+        const start_x = if (region) |value| @min(value.x, self.width) else 0;
+        const end_x = if (region) |value| @min(value.x +| value.width, self.width) else self.width;
+        const region_width = end_x - start_x;
         const has_image_state = self.nextRenderBuffer.image_placements.items.len != 0 or self.currentImages.items.len != 0;
         if (self.nextRenderBuffer.image_placements.items.len != 0) {
             self.materializeFallbackImages() catch {
@@ -2385,12 +2434,12 @@ pub const CliRenderer = struct {
         const hyperlinksEnabled = self.terminal.getCapabilities().hyperlinks;
         var use_row_equality = !should_force and !clears_pending;
 
-        for (0..self.height) |uy| {
+        for (start_y..end_y) |uy| {
             const y = @as(u32, @intCast(uy));
 
             if (use_row_equality) {
-                const row_start = @as(usize, y) * self.width;
-                const row_end = row_start + self.width;
+                const row_start = @as(usize, y) * self.width + start_x;
+                const row_end = row_start + region_width;
                 if (std.mem.eql(u32, self.currentRenderBuffer.buffer.char[row_start..row_end], self.nextRenderBuffer.buffer.char[row_start..row_end]) and
                     std.mem.eql(RGBA, self.currentRenderBuffer.buffer.fg[row_start..row_end], self.nextRenderBuffer.buffer.fg[row_start..row_end]) and
                     std.mem.eql(RGBA, self.currentRenderBuffer.buffer.bg[row_start..row_end], self.nextRenderBuffer.buffer.bg[row_start..row_end]) and
@@ -2401,7 +2450,7 @@ pub const CliRenderer = struct {
             var runLength: u32 = 0;
             const cells_updated_before_row = cellsUpdated;
 
-            for (0..self.width) |ux| {
+            for (start_x..end_x) |ux| {
                 const x = @as(u32, @intCast(ux));
                 const currentCell = self.currentRenderBuffer.get(x, y);
                 const nextCell = self.nextRenderBuffer.get(x, y);
@@ -2562,7 +2611,7 @@ pub const CliRenderer = struct {
 
                 cellsUpdated += 1;
             }
-            if (cellsUpdated - cells_updated_before_row == self.width) use_row_equality = false;
+            if (cellsUpdated - cells_updated_before_row == region_width) use_row_equality = false;
         }
 
         var sixel_dirty = false;
@@ -2777,7 +2826,7 @@ pub const CliRenderer = struct {
             }
         }
 
-        self.nextRenderBuffer.clear(self.backgroundColor, null);
+        if (clear_next) self.nextRenderBuffer.clear(self.backgroundColor, null);
     }
 
     pub fn setDebugOverlay(self: *CliRenderer, enabled: bool, corner: DebugOverlayCorner) void {

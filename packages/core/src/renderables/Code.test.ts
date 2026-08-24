@@ -1,4 +1,4 @@
-import { test, expect, beforeEach, afterEach } from "bun:test"
+import { test, expect, beforeEach, afterEach, spyOn } from "bun:test"
 import { CodeRenderable } from "./Code.js"
 import { SyntaxStyle } from "../syntax-style.js"
 import { RGBA } from "../lib/RGBA.js"
@@ -7,6 +7,7 @@ import { ManualClock } from "../testing/manual-clock.js"
 import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
 import { BoxRenderable } from "./Box.js"
 import { TextAttributes, type CapturedFrame } from "../types.js"
+import { StyledText } from "../lib/styled-text.js"
 
 let currentRenderer: TestRenderer
 let renderOnce: () => Promise<void>
@@ -337,6 +338,9 @@ test("CodeRenderable - removing filetype shows the latest unstyled streaming con
 
   mockClient.resolveHighlightOnce()
   await flushAsync()
+  // The buffered source first correlates the create response, then lets the
+  // existing highlight loop replay the latest generation.
+  await new Promise<void>((resolve) => setImmediate(resolve))
   await renderOnce()
 
   expect(codeRenderable.plainText).toBe("latest")
@@ -1344,6 +1348,303 @@ test("CodeRenderable - streaming mode with drawUnstyledText=false waits for new 
   expect(codeRenderable.plainText).toBe("const updated = 'world';")
 })
 
+test("CodeRenderable - streaming initial styled text skips duplicate highlighting", async () => {
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+  const highlightSpy = spyOn(mockClient, "highlightOnce")
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-initial-styled-stream",
+    content: "already styled markdown",
+    filetype: "markdown",
+    syntaxStyle: SyntaxStyle.create(),
+    treeSitterClient: mockClient,
+    streaming: true,
+    drawUnstyledText: true,
+    initialStyledText: new StyledText([{ __isChunk: true, text: "already styled markdown" }]),
+    deferStreamingHighlight: true,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  expect(codeRenderable.plainText).toBe("already styled markdown")
+  expect(highlightSpy).not.toHaveBeenCalled()
+
+  codeRenderable.initialStyledText = undefined
+  await renderOnce()
+  expect(highlightSpy).toHaveBeenCalledTimes(1)
+
+  mockClient.resolveAllHighlightOnce()
+  await waitForHighlight(codeRenderable)
+  highlightSpy.mockRestore()
+})
+
+test("CodeRenderable - streaming keeps one highlight in flight and replays the latest content", async () => {
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+  const highlightSpy = spyOn(mockClient, "highlightOnce")
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-single-flight",
+    content: "first",
+    filetype: "markdown",
+    syntaxStyle: SyntaxStyle.create(),
+    treeSitterClient: mockClient,
+    streaming: true,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  expect(highlightSpy).toHaveBeenCalledTimes(1)
+
+  codeRenderable.content = "second"
+  await renderOnce()
+  codeRenderable.content = "latest"
+  await renderOnce()
+  expect(highlightSpy).toHaveBeenCalledTimes(1)
+
+  mockClient.resolveHighlightOnce()
+  // Upstream keeps highlightingDone pending across the coalesced rerun loop.
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  expect(highlightSpy).toHaveBeenCalledTimes(2)
+
+  mockClient.resolveHighlightOnce()
+  await waitForHighlight(codeRenderable)
+  await renderOnce()
+  expect(codeRenderable.plainText).toBe("latest")
+  highlightSpy.mockRestore()
+})
+
+test("CodeRenderable - coalesces streaming render requests", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-coalesce",
+    content: "const initial = 'hello';",
+    filetype: "javascript",
+    syntaxStyle: SyntaxStyle.create(),
+    treeSitterClient: new MockTreeSitterClient(),
+    streaming: true,
+    retainedRendering: true,
+    drawUnstyledText: false,
+    bg: RGBA.fromValues(0, 0, 0, 1),
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await flushAsync()
+  const renderSpy = spyOn(codeRenderable, "requestRender")
+  const partialSpy = spyOn(currentRenderer, "requestPartialRender")
+  partialSpy.mockClear()
+
+  codeRenderable.content = "const a = 1;"
+  codeRenderable.content = "const a = 1; const b = 2;"
+  codeRenderable.content = "const a = 1; const b = 2; const c = 3;"
+  codeRenderable.content = "const a = 1; const b = 2; const c = 3; const d = 4;"
+  await flushAsync()
+
+  expect(renderSpy).toHaveBeenCalledTimes(1)
+  expect(partialSpy).toHaveBeenCalledTimes(1)
+  renderSpy.mockRestore()
+  partialSpy.mockRestore()
+})
+
+test("CodeRenderable - transparent streaming content avoids partial redraws", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-transparent-streaming",
+    content: "const a = 1;",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    retainedRendering: true,
+    width: 20,
+    height: 1,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await flushAsync()
+  const partialSpy = spyOn(codeRenderable, "requestPartialRender" as keyof CodeRenderable)
+
+  codeRenderable.content = "const a = 2;"
+  await flushAsync()
+
+  expect(partialSpy).not.toHaveBeenCalled()
+  partialSpy.mockRestore()
+})
+
+test("CodeRenderable - retained rendering is opt-in", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-retained-opt-in",
+    content: "const a = 1;",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    bg: RGBA.fromValues(0, 0, 0, 1),
+    width: 20,
+    height: 1,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await flushAsync()
+  const partialSpy = spyOn(codeRenderable, "requestPartialRender" as keyof CodeRenderable)
+
+  codeRenderable.content = "const a = 2;"
+  await flushAsync()
+
+  expect(partialSpy).not.toHaveBeenCalled()
+  partialSpy.mockRestore()
+})
+
+test("CodeRenderable - partial redraw clears replaced and trailing glyphs", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-partial-clear",
+    content: "text.",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    retainedRendering: true,
+    bg: RGBA.fromValues(0, 0, 0, 1),
+    width: 20,
+    height: 1,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  codeRenderable.content = "text more"
+  await renderOnce()
+  expect(captureFrame().split("\n")[0]?.slice(0, 20)).toBe("text more".padEnd(20))
+
+  codeRenderable.content = "text"
+  await renderOnce()
+  expect(captureFrame().split("\n")[0]?.slice(0, 20)).toBe("text".padEnd(20))
+})
+
+test("CodeRenderable - retained redraw clears empty and partially offscreen content", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-partial-empty-offscreen",
+    content: "abcdef",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    retainedRendering: true,
+    bg: RGBA.fromValues(0, 0, 0, 1),
+    position: "absolute",
+    left: -3,
+    top: 0,
+    width: 6,
+    height: 1,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  expect(captureFrame().split("\n")[0]?.slice(0, 3)).toBe("def")
+
+  codeRenderable.content = ""
+  await renderOnce()
+  expect(captureFrame().split("\n")[0]?.slice(0, 3)).toBe("   ")
+})
+
+test("CodeRenderable - retained rendering owns the full background rectangle", async () => {
+  const background = RGBA.fromHex("#8a1538")
+  const unowned = new CodeRenderable(currentRenderer, {
+    id: "test-code-unowned-background",
+    content: "x",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    bg: background,
+    position: "absolute",
+    top: 0,
+    width: 5,
+    height: 1,
+  })
+  const owned = new CodeRenderable(currentRenderer, {
+    id: "test-code-owned-background",
+    content: "x",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    retainedRendering: true,
+    bg: background,
+    position: "absolute",
+    top: 1,
+    width: 5,
+    height: 1,
+  })
+
+  currentRenderer.root.add(unowned)
+  currentRenderer.root.add(owned)
+  await renderOnce()
+
+  const buffer = currentRenderer.currentRenderBuffer
+  const color = (x: number, y: number) => {
+    const offset = (y * buffer.width + x) * 4
+    return RGBA.fromArray(buffer.buffers.bg.slice(offset, offset + 4)).toInts()
+  }
+  expect(color(4, 0)).not.toEqual(background.toInts())
+  expect(color(4, 1)).toEqual(background.toInts())
+})
+
+test("CodeRenderable - same-line streaming update keeps layout clean", async () => {
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-same-line",
+    content: "Hello",
+    filetype: "markdown",
+    syntaxStyle: SyntaxStyle.create(),
+    treeSitterClient: mockClient,
+    streaming: true,
+    width: "100%",
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  mockClient.resolveAllHighlightOnce()
+  await waitForHighlight(codeRenderable)
+  await renderOnce()
+  expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(false)
+
+  codeRenderable.content = "Hello world"
+  expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(false)
+})
+
+test("CodeRenderable - async chunk transform marks changed streaming dimensions dirty", async () => {
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-async-dimensions",
+    content: "Hello",
+    filetype: "markdown",
+    syntaxStyle: SyntaxStyle.create(),
+    treeSitterClient: mockClient,
+    streaming: true,
+    width: "100%",
+    onChunks: (chunks, context) => {
+      if (context.content === "Hello") return chunks
+      return chunks.map((chunk, index) => (index === 0 ? { ...chunk, text: chunk.text + "\nworld" } : chunk))
+    },
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  mockClient.resolveAllHighlightOnce()
+  await waitForHighlight(codeRenderable)
+  await renderOnce()
+
+  codeRenderable.content = "Hello world"
+  await renderOnce()
+  mockClient.resolveAllHighlightOnce()
+  await waitForHighlight(codeRenderable)
+
+  expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(true)
+})
+
+test("CodeRenderable - new streaming line marks layout dirty", async () => {
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-new-line",
+    content: "Hello",
+    syntaxStyle: SyntaxStyle.create(),
+    streaming: true,
+    width: "100%",
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await renderOnce()
+  codeRenderable.content = "Hello\nworld"
+
+  expect(currentRenderer.root.getLayoutNode().isDirty()).toBe(true)
+})
+
 test("CodeRenderable - onChunks callback can transform chunks when highlights are empty", async () => {
   const syntaxStyle = SyntaxStyle.fromStyles({
     default: { fg: RGBA.fromValues(1, 1, 1, 1) },
@@ -1814,6 +2115,80 @@ test("CodeRenderable - streaming mode works with large content updates", async (
 
   expect(codeRenderable.content).toContain("const var9 = 9;")
   expect(codeRenderable.plainText).toContain("const var9 = 9;")
+})
+
+test("CodeRenderable - appends an unchanged styled prefix at a safe line boundary", async () => {
+  const red = RGBA.fromValues(1, 0, 0, 1)
+  const syntaxStyle = SyntaxStyle.fromStyles({ default: { fg: red } })
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+  const initial = "const initial = 1"
+  const updated = `${initial}\nconst tail = "👩🏽‍💻"`
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-styled-append",
+    content: initial,
+    filetype: "javascript",
+    syntaxStyle,
+    treeSitterClient: mockClient,
+    streaming: true,
+    drawUnstyledText: false,
+    conceal: false,
+    onChunks: (_chunks, context) => [{ __isChunk: true, text: context.content, fg: red }],
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await resolveMockHighlights(codeRenderable, mockClient)
+
+  const textBuffer = (codeRenderable as any).textBuffer
+  const appendStyledText = spyOn(textBuffer, "appendStyledText")
+  const setStyledText = spyOn(textBuffer, "setStyledText")
+
+  codeRenderable.content = updated
+  await resolveMockHighlights(codeRenderable, mockClient)
+
+  expect(appendStyledText).toHaveBeenCalledTimes(1)
+  expect(setStyledText).not.toHaveBeenCalled()
+  expect(codeRenderable.plainText).toBe(updated)
+  expect(findSpanContaining(captureSpans(), "const tail")?.fg?.equals(red)).toBe(true)
+})
+
+test("CodeRenderable - falls back to full styled replacement when the prefix style changes", async () => {
+  const red = RGBA.fromValues(1, 0, 0, 1)
+  const green = RGBA.fromValues(0, 1, 0, 1)
+  const syntaxStyle = SyntaxStyle.fromStyles({ default: { fg: red } })
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+  const initial = "const initial = 1"
+  const updated = `${initial}\nconst tail = 2`
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code-styled-full-fallback",
+    content: initial,
+    filetype: "javascript",
+    syntaxStyle,
+    treeSitterClient: mockClient,
+    streaming: true,
+    drawUnstyledText: false,
+    conceal: false,
+    onChunks: (_chunks, context) => [
+      { __isChunk: true, text: initial, fg: context.content === initial ? red : green },
+      { __isChunk: true, text: context.content.slice(initial.length), fg: red },
+    ],
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await resolveMockHighlights(codeRenderable, mockClient)
+
+  const textBuffer = (codeRenderable as any).textBuffer
+  const appendStyledText = spyOn(textBuffer, "appendStyledText")
+  const setStyledText = spyOn(textBuffer, "setStyledText")
+
+  codeRenderable.content = updated
+  await resolveMockHighlights(codeRenderable, mockClient)
+
+  expect(appendStyledText).not.toHaveBeenCalled()
+  expect(setStyledText).toHaveBeenCalledTimes(1)
+  expect(codeRenderable.plainText).toBe(updated)
+  expect(findSpanContaining(captureSpans(), "const initial")?.fg?.equals(green)).toBe(true)
 })
 
 test("CodeRenderable - disabling streaming clears cached highlights", async () => {

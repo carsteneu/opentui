@@ -33,6 +33,7 @@ type ParserState = {
   filetype: string
   content: string
   injectionMapping?: InjectionMapping
+  simpleHighlightsOnly: boolean
 }
 
 interface FiletypeParser {
@@ -54,7 +55,8 @@ interface ReusableParserState {
   }
 }
 
-class ParserWorker {
+/** @internal Exported for focused worker ownership tests. */
+export class ParserWorker {
   private bufferParsers: Map<number, ParserState> = new Map()
   private filetypeParserOptions: Map<string, FiletypeParserOptions> = new Map()
   private filetypeAliases: Map<string, string> = new Map()
@@ -329,6 +331,7 @@ class ParserWorker {
     content: string,
     filetype: string,
     messageId: string,
+    simpleHighlightsOnly: boolean = false,
   ) {
     const filetypeParser = await this.resolveFiletypeParser(filetype)
 
@@ -364,16 +367,18 @@ class ParserWorker {
       filetype,
       content,
       injectionMapping: filetypeParser.injectionMapping,
+      simpleHighlightsOnly,
     }
     this.bufferParsers.set(bufferId, parserState)
 
+    const highlights = await this.initialQuery(parserState)
     postWorkerMessage({
       type: "PARSER_INIT_RESPONSE",
       bufferId,
       messageId,
       hasParser: true,
+      simpleHighlights: highlights.simpleHighlights,
     })
-    const highlights = await this.initialQuery(parserState)
     postWorkerMessage({
       type: "HIGHLIGHT_RESPONSE",
       bufferId,
@@ -393,11 +398,50 @@ class ParserWorker {
       injectionRanges = injectionResult.injectionRanges
     }
 
-    return this.getHighlights(parserState, matches, injectionRanges)
+    return {
+      highlights: parserState.simpleHighlightsOnly
+        ? []
+        : this.getHighlights(parserState, matches, injectionRanges).highlights,
+      simpleHighlights: this.getSimpleHighlights(matches, injectionRanges),
+    }
   }
 
   private getNodeText(node: any, content: string): string {
     return content.substring(node.startIndex, node.endIndex)
+  }
+
+  private replaceOwnedTree(parserState: ParserState, newTree: Tree): void
+  private replaceOwnedTree<Result>(
+    parserState: ParserState,
+    newTree: Tree,
+    beforeCommit: (previousTree: Tree, newTree: Tree) => Result,
+  ): Result
+  private replaceOwnedTree<Result>(
+    parserState: ParserState,
+    newTree: Tree,
+    beforeCommit?: (previousTree: Tree, newTree: Tree) => Result,
+  ): Result | void {
+    const previousTree = parserState.tree
+    if (previousTree === newTree) {
+      return beforeCommit?.(previousTree, newTree)
+    }
+
+    let result: Result | undefined
+    try {
+      result = beforeCommit?.(previousTree, newTree)
+    } catch (error) {
+      // parse() transferred a fresh tree to this scope, but it has not yet
+      // become the buffer's owner. Never leak it when pre-commit work fails.
+      newTree.delete()
+      throw error
+    }
+
+    // Publish the replacement before releasing the previous owner. If
+    // Tree.delete() unexpectedly throws, the buffer still points at the valid
+    // new tree and will not later double-delete the previous one.
+    parserState.tree = newTree
+    previousTree.delete()
+    return result
   }
 
   private async processInjections(
@@ -549,7 +593,12 @@ class ParserWorker {
     bufferId: number,
     content: string,
     edits: Edit[],
-  ): Promise<{ highlights?: HighlightResponse[]; warning?: string; error?: string }> {
+  ): Promise<{
+    highlights?: HighlightResponse[]
+    simpleHighlights?: SimpleHighlight[]
+    warning?: string
+    error?: string
+  }> {
     const parserState = this.bufferParsers.get(bufferId)
     if (!parserState) {
       return { warning: "No parser state found for buffer" }
@@ -578,13 +627,14 @@ class ParserWorker {
       return { error: "Failed to parse buffer" }
     }
 
-    const changedRanges = parserState.tree.getChangedRanges(newTree)
-    parserState.tree = newTree
+    const changedRanges = this.replaceOwnedTree(parserState, newTree, (previousTree, replacementTree) =>
+      parserState.simpleHighlightsOnly ? [] : previousTree.getChangedRanges(replacementTree),
+    )
 
     const startQuery = performance.now()
     const matches: QueryCapture[] = []
 
-    if (changedRanges.length === 0) {
+    if (!parserState.simpleHighlightsOnly && changedRanges.length === 0) {
       edits.forEach((edit) => {
         const range = this.editToRange(edit)
         changedRanges.push(range)
@@ -629,12 +679,17 @@ class ParserWorker {
       matches.push(...nodeCaptures)
     }
 
+    // CodeRenderable needs a complete offset-based result to rebuild its
+    // StyledText exactly. Keep the legacy line delta for existing event
+    // consumers, but query one full capture set for the versioned owner.
+    const completeMatches = parserState.queries.highlights.captures(parserState.tree.rootNode)
     let injectionRanges = new Map<string, Array<{ start: number; end: number }>>()
     if (parserState.queries.injections) {
       const injectionResult = await this.processInjections(parserState)
       // Only add injection matches that are in the changed ranges
       // This is a simplification - ideally we'd only process injections in changed ranges
-      matches.push(...injectionResult.captures)
+      if (!parserState.simpleHighlightsOnly) matches.push(...injectionResult.captures)
+      completeMatches.push(...injectionResult.captures)
       injectionRanges = injectionResult.injectionRanges
     }
 
@@ -647,7 +702,12 @@ class ParserWorker {
     this.performance.averageQueryTime =
       this.performance.queryTimes.reduce((acc, time) => acc + time, 0) / this.performance.queryTimes.length
 
-    return this.getHighlights(parserState, matches, injectionRanges)
+    return {
+      highlights: parserState.simpleHighlightsOnly
+        ? []
+        : this.getHighlights(parserState, matches, injectionRanges).highlights,
+      simpleHighlights: this.getSimpleHighlights(completeMatches, injectionRanges),
+    }
   }
 
   private nodeContainsRange(node: any, range: any): boolean {
@@ -778,7 +838,12 @@ class ParserWorker {
     bufferId: number,
     version: number,
     content: string,
-  ): Promise<{ highlights?: HighlightResponse[]; warning?: string; error?: string }> {
+  ): Promise<{
+    highlights?: HighlightResponse[]
+    simpleHighlights?: SimpleHighlight[]
+    warning?: string
+    error?: string
+  }> {
     const parserState = this.bufferParsers.get(bufferId)
     if (!parserState) {
       return { warning: "No parser state found for buffer" }
@@ -792,7 +857,7 @@ class ParserWorker {
       return { error: "Failed to parse buffer during reset" }
     }
 
-    parserState.tree = newTree
+    this.replaceOwnedTree(parserState, newTree)
     const matches = parserState.queries.highlights.captures(parserState.tree.rootNode)
 
     let injectionRanges = new Map<string, Array<{ start: number; end: number }>>()
@@ -802,7 +867,12 @@ class ParserWorker {
       injectionRanges = injectionResult.injectionRanges
     }
 
-    return this.getHighlights(parserState, matches, injectionRanges)
+    return {
+      highlights: parserState.simpleHighlightsOnly
+        ? []
+        : this.getHighlights(parserState, matches, injectionRanges).highlights,
+      simpleHighlights: this.getSimpleHighlights(matches, injectionRanges),
+    }
   }
 
   disposeBuffer(bufferId: number): void {
@@ -858,6 +928,7 @@ class ParserWorker {
           filetype,
           content,
           injectionMapping: reusableState.filetypeParser.injectionMapping,
+          simpleHighlightsOnly: false,
         }
         const injectionResult = await this.processInjections(parserState)
 
@@ -978,30 +1049,31 @@ if (isWorkerRuntime) {
             message.content,
             message.filetype,
             message.messageId,
+            message.simpleHighlightsOnly,
           )
           break
 
         case "HANDLE_EDITS": {
           const response = await worker.handleEdits(message.bufferId, message.content, message.edits)
-          if (response.highlights && response.highlights.length > 0) {
+          if (response.error) {
+            postWorkerError(message.bufferId, undefined, new Error(response.error))
+          } else {
+            // Always ACK the version (even with no highlight captures) so the
+            // client can settle updateBuffer on a versioned worker ACK.
             postWorkerMessage({
               type: "HIGHLIGHT_RESPONSE",
               bufferId: message.bufferId,
               version: message.version,
-              highlights: response.highlights,
+              highlights: response.highlights ?? [],
+              simpleHighlights: response.simpleHighlights,
             } satisfies TreeSitterWorkerResponse)
-          } else if (response.warning) {
-            postWorkerMessage({
-              type: "WARNING",
-              bufferId: message.bufferId,
-              warning: response.warning,
-            } satisfies TreeSitterWorkerResponse)
-          } else if (response.error) {
-            postWorkerMessage({
-              type: "ERROR",
-              bufferId: message.bufferId,
-              error: response.error,
-            } satisfies TreeSitterWorkerResponse)
+            if (response.warning) {
+              postWorkerMessage({
+                type: "WARNING",
+                bufferId: message.bufferId,
+                warning: response.warning,
+              } satisfies TreeSitterWorkerResponse)
+            }
           }
           break
         }
@@ -1016,25 +1088,23 @@ if (isWorkerRuntime) {
 
         case "RESET_BUFFER": {
           const resetResponse = await worker.handleResetBuffer(message.bufferId, message.version, message.content)
-          if (resetResponse.highlights && resetResponse.highlights.length > 0) {
+          if (resetResponse.error) {
+            postWorkerError(message.bufferId, undefined, new Error(resetResponse.error))
+          } else {
             postWorkerMessage({
               type: "HIGHLIGHT_RESPONSE",
               bufferId: message.bufferId,
               version: message.version,
-              highlights: resetResponse.highlights,
+              highlights: resetResponse.highlights ?? [],
+              simpleHighlights: resetResponse.simpleHighlights,
             } satisfies TreeSitterWorkerResponse)
-          } else if (resetResponse.warning) {
-            postWorkerMessage({
-              type: "WARNING",
-              bufferId: message.bufferId,
-              warning: resetResponse.warning,
-            } satisfies TreeSitterWorkerResponse)
-          } else if (resetResponse.error) {
-            postWorkerMessage({
-              type: "ERROR",
-              bufferId: message.bufferId,
-              error: resetResponse.error,
-            } satisfies TreeSitterWorkerResponse)
+            if (resetResponse.warning) {
+              postWorkerMessage({
+                type: "WARNING",
+                bufferId: message.bufferId,
+                warning: resetResponse.warning,
+              } satisfies TreeSitterWorkerResponse)
+            }
           }
           break
         }

@@ -7,6 +7,7 @@ import { TextareaRenderable } from "../Textarea.js"
 import { t, fg, bold, cyan } from "../../lib/styled-text.js"
 import { parseColor } from "../../lib/RGBA.js"
 import type { CodeRenderable } from "../Code.js"
+import { destroyTreeSitterClient } from "../../lib/tree-sitter/index.js"
 
 const HIGHLIGHT_TIMEOUT_MS = 5000
 
@@ -102,11 +103,12 @@ async function createTestRenderer(...args: Parameters<typeof baseCreateTestRende
   return testRenderer
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const renderer of activeRenderers) {
     renderer.destroy()
   }
   activeRenderers.clear()
+  await destroyTreeSitterClient()
 })
 
 describe("LineNumberRenderable", () => {

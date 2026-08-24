@@ -6,6 +6,7 @@ import { BoxRenderable } from "../Box.js"
 import { ScrollBoxRenderable } from "../ScrollBox.js"
 import { SyntaxStyle } from "../../syntax-style.js"
 import { RGBA } from "../../lib/RGBA.js"
+import { destroyTreeSitterClient } from "../../lib/tree-sitter/index.js"
 
 let currentRenderer: TestRenderer
 let renderOnce: () => Promise<void>
@@ -22,6 +23,7 @@ afterEach(async () => {
   if (currentRenderer) {
     currentRenderer.destroy()
   }
+  await destroyTreeSitterClient()
 })
 
 // Helper to generate multi-line code content

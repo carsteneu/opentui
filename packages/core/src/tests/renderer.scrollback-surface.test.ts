@@ -41,6 +41,18 @@ class CountingRenderable extends Renderable {
   }
 }
 
+class ThrowingHighlightGettersRenderable extends Renderable {
+  public get isHighlighting(): boolean {
+    throw new Error("foreign isHighlighting getter was inspected")
+  }
+
+  public get highlightingDone(): Promise<void> {
+    throw new Error("foreign highlightingDone getter was inspected")
+  }
+
+  protected renderSelf(): void {}
+}
+
 const activeRenderers: TestRenderer[] = []
 const activeTreeSitterClients: MockTreeSitterClient[] = []
 
@@ -214,6 +226,21 @@ test("ScrollbackSurface.settle waits for code highlighting before commit", async
   } finally {
     destroyClaimedCommits(commits)
   }
+})
+
+test("ScrollbackSurface.settle ignores unbranded highlight-shaped renderables", async () => {
+  const { renderer } = await createSplitFooterRenderer()
+  const surface = renderer.createScrollbackSurface()
+
+  surface.root.add(
+    new ThrowingHighlightGettersRenderable(surface.renderContext, {
+      id: "foreign-highlight-shaped-renderable",
+      width: 1,
+      height: 1,
+    }),
+  )
+
+  await expect(surface.settle()).resolves.toBeUndefined()
 })
 
 test("ScrollbackSurface.settle renders a queued streaming highlight", async () => {

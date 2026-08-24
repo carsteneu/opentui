@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs"
+
 export const WORKER_UNAVAILABLE = "OpenTUI tree-sitter workers are not available for this runtime yet."
 
 export interface WorkerMessageEvent<T = unknown> {
@@ -7,6 +9,10 @@ export interface WorkerMessageEvent<T = unknown> {
 export interface WorkerErrorEvent {
   readonly error?: unknown
   readonly message: string
+}
+
+export interface WorkerExitEvent {
+  readonly code: number
 }
 
 export type WorkerMessageHandler<T = unknown> = (event: WorkerMessageEvent<T>) => void | Promise<void>
@@ -21,6 +27,8 @@ export interface PlatformWorkerOptions {
 export interface PlatformWorkerHandle {
   onmessage: WorkerMessageHandler | null
   onerror: WorkerErrorHandler | null
+  /** Optional: fired when the worker process exits unexpectedly. Additive seam. */
+  onexit?: ((event: WorkerExitEvent) => void) | null
   postMessage(value: unknown): void
   terminate(): void | Promise<number>
   addEventListener(type: "message" | "error", listener: WorkerMessageHandler | WorkerErrorHandler): void
@@ -42,8 +50,10 @@ interface NodeWorkerThread {
   postMessage(value: unknown): void
   on(event: "message", listener: (value: unknown) => void): void
   on(event: "error", listener: (error: Error) => void): void
+  on(event: "exit", listener: (code: number) => void): void
   off(event: "message", listener: (value: unknown) => void): void
   off(event: "error", listener: (error: Error) => void): void
+  off(event: "exit", listener: (code: number) => void): void
   terminate(): Promise<number>
 }
 
@@ -117,6 +127,36 @@ class UnsupportedWorker implements PlatformWorkerHandle {
 export const Worker: PlatformWorkerConstructor = loadWorkerConstructor()
 export const isWorkerRuntime = runtimeBridge !== undefined
 
+// Only the global (Bun/web) Worker runs a real module graph and can execute
+// source entrypoints (e.g. .ts) directly. The Node shim imports an ESM file
+// through an eval bootstrap and needs a built asset.
+const RUNS_SOURCE_ENTRYPOINTS = typeof globalWithWorker.Worker === "function"
+
+/**
+ * Runtime-aware worker entry resolution. Callers hand over their resolved
+ * bundle location; whether a missing bundle may be replaced with a source
+ * entrypoint is a platform capability (Bun), not a caller decision.
+ */
+export function resolveWorkerSpecifier(
+  resolved: string | URL,
+  sourceFallback?: string | URL,
+  canRunSource: boolean = RUNS_SOURCE_ENTRYPOINTS,
+): string | URL {
+  if (resolved instanceof URL || !canRunSource || sourceFallback === undefined) {
+    return resolved
+  }
+
+  if (isRuntimeSpecifier(resolved)) {
+    return resolved
+  }
+
+  if (!existsSync(resolved)) {
+    return sourceFallback instanceof URL ? sourceFallback.href : sourceFallback
+  }
+
+  return resolved
+}
+
 export function postWorkerMessage(value: unknown): void {
   if (!runtimeBridge) {
     throw new Error(WORKER_UNAVAILABLE)
@@ -166,6 +206,7 @@ function createNodeWorkerConstructor(node: NodeWorkerThreadsModule): PlatformWor
   return class NodeWorkerShim implements PlatformWorkerHandle {
     public onmessage: WorkerMessageHandler | null = null
     public onerror: WorkerErrorHandler | null = null
+    public onexit: ((event: WorkerExitEvent) => void) | null = null
 
     private readonly errorListeners = new Set<WorkerErrorHandler>()
     private readonly messageListeners = new Set<WorkerMessageHandler>()
@@ -183,6 +224,7 @@ function createNodeWorkerConstructor(node: NodeWorkerThreadsModule): PlatformWor
 
       this.worker.on("message", this.handleMessage)
       this.worker.on("error", this.handleError)
+      this.worker.on("exit", this.handleExit)
     }
 
     postMessage(value: unknown): void {
@@ -196,10 +238,12 @@ function createNodeWorkerConstructor(node: NodeWorkerThreadsModule): PlatformWor
 
       this.worker.off("message", this.handleMessage)
       this.worker.off("error", this.handleError)
+      this.worker.off("exit", this.handleExit)
       const termination = this.worker.terminate().catch((error: unknown) => {
         this.terminationPromise = undefined
         this.worker.on("message", this.handleMessage)
         this.worker.on("error", this.handleError)
+        this.worker.on("exit", this.handleExit)
         throw error
       })
       this.terminationPromise = termination
@@ -245,6 +289,11 @@ function createNodeWorkerConstructor(node: NodeWorkerThreadsModule): PlatformWor
       for (const listener of this.errorListeners) {
         listener(event)
       }
+    }
+
+    private readonly handleExit = (code: number): void => {
+      const event: WorkerExitEvent = { code }
+      this.onexit?.(event)
     }
   }
 }

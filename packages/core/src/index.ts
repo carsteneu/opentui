@@ -28,3 +28,25 @@ export * from "./zig.js"
 export * from "./console.js"
 export { resolveBundledFilePath } from "./platform/runtime.js"
 export * as Yoga from "./yoga.js"
+// Opt-in performance telemetry API (module is already imported for the
+// importReady mark, so this re-export adds no cold-import cost; all functions
+// are no-ops when telemetry is disabled).
+export {
+  setTelemetryEnabled,
+  isTelemetryEnabled,
+  resetTelemetry,
+  increment,
+  add,
+  recordHistogramLabel,
+  recordSpan,
+  mark,
+  getTelemetrySnapshot,
+} from "./telemetry.js"
+export type { TelemetryCounterName, TelemetryHistogramLabel, TelemetrySnapshot } from "./telemetry.js"
+import "./renderer-console.integration.js"
+import "./renderer-tree-sitter.integration.js"
+import { mark } from "./telemetry.js"
+
+// Marked at the end of module evaluation: all heavy deps (zig native setup,
+// renderables, tree-sitter, markdown) have finished importing by this point.
+mark("opentui.importReady")

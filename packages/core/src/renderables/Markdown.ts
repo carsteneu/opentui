@@ -107,6 +107,11 @@ export interface MarkdownOptions extends RenderableOptions<MarkdownRenderable> {
    */
   streaming?: boolean
   /**
+   * Let built-in streaming text blocks own their opaque background rectangle
+   * so the renderer may redraw them through the retained partial path.
+   */
+  retainedRendering?: boolean
+  /**
    * Options for internally rendered markdown tables.
    */
   tableOptions?: MarkdownTableOptions
@@ -121,6 +126,11 @@ export interface MarkdownOptions extends RenderableOptions<MarkdownRenderable> {
    * - "top-level": preserve top-level markdown blocks as separate render blocks.
    */
   internalBlockMode?: "coalesced" | "top-level"
+}
+
+export interface MarkdownContentUpdate {
+  content: string
+  appended?: string
 }
 
 export interface RenderNodeContext {
@@ -235,6 +245,7 @@ function colorsEqual(left?: RGBA, right?: RGBA): boolean {
 export interface BlockState {
   token: MarkedToken
   tokenRaw: string // Cache raw for comparison
+  sourceTokenEnd?: number
   marginTop?: number
   renderable: Renderable
   tableContentCache?: TableContentCache
@@ -272,6 +283,7 @@ export class MarkdownRenderable extends Renderable {
 
   _parseState: ParseState | null = null
   private _streaming: boolean = false
+  private _retainedRendering: boolean
   _blockStates: BlockState[] = []
   _stableBlockCount = 0
   private _styleDirty: boolean = false
@@ -286,6 +298,7 @@ export class MarkdownRenderable extends Renderable {
     conceal: true,
     concealCode: false,
     streaming: false,
+    retainedRendering: false,
     internalBlockMode: "coalesced",
   } satisfies Partial<MarkdownOptions>
 
@@ -306,6 +319,7 @@ export class MarkdownRenderable extends Renderable {
     this._tableOptions = options.tableOptions
     this._renderNode = options.renderNode
     this._streaming = options.streaming ?? this._contentDefaultOptions.streaming
+    this._retainedRendering = options.retainedRendering ?? this._contentDefaultOptions.retainedRendering
     this._internalBlockMode = options.internalBlockMode ?? this._contentDefaultOptions.internalBlockMode
 
     this.updateBlocks()
@@ -320,8 +334,17 @@ export class MarkdownRenderable extends Renderable {
     if (this._content !== value) {
       this._content = value
       this.updateBlocks()
-      this.requestRender()
     }
+  }
+
+  set contentUpdate(value: MarkdownContentUpdate) {
+    if (this.isDestroyed || this._content === value.content) return
+    const appended =
+      this._streaming && value.appended !== undefined && value.content === this._content + value.appended
+        ? value.appended
+        : undefined
+    this._content = value.content
+    this.updateBlocks(false, appended)
   }
 
   get syntaxStyle(): SyntaxStyle {
@@ -386,6 +409,17 @@ export class MarkdownRenderable extends Renderable {
 
   get streaming(): boolean {
     return this._streaming
+  }
+
+  get retainedRendering(): boolean {
+    return this._retainedRendering
+  }
+
+  set retainedRendering(value: boolean) {
+    if (this._retainedRendering === value) return
+    this._retainedRendering = value
+    this._styleDirty = true
+    this.requestRender()
   }
 
   set streaming(value: boolean) {
@@ -634,6 +668,7 @@ export class MarkdownRenderable extends Renderable {
     onChunks: OnChunksCallback = this._linkifyMarkdownChunks,
     baseHighlight?: string,
     initialStyledText?: StyledText,
+    deferStreamingHighlight: boolean = false,
   ): CodeRenderable {
     return new CodeRenderable(this.ctx, {
       id,
@@ -645,7 +680,9 @@ export class MarkdownRenderable extends Renderable {
       conceal: this._conceal,
       drawUnstyledText: initialStyledText !== undefined,
       streaming: true,
+      retainedRendering: this._retainedRendering && this._streaming,
       initialStyledText,
+      deferStreamingHighlight,
       baseHighlight,
       onChunks,
       treeSitterClient: this._treeSitterClient,
@@ -962,6 +999,7 @@ export class MarkdownRenderable extends Renderable {
       conceal: this._concealCode,
       drawUnstyledText: !this._streaming,
       streaming: this._streaming,
+      retainedRendering: this._retainedRendering && this._streaming,
       treeSitterClient: this._treeSitterClient,
       width: "100%",
       marginBottom,
@@ -975,7 +1013,7 @@ export class MarkdownRenderable extends Renderable {
     baseHighlight?: string,
     initialStyledText?: StyledText,
   ): void {
-    renderable.initialStyledText = initialStyledText
+    renderable.setInitialStyledText(initialStyledText, content)
     renderable.filetype = "markdown"
     renderable.syntaxStyle = this._syntaxStyle
     renderable.fg = this._fg
@@ -983,6 +1021,7 @@ export class MarkdownRenderable extends Renderable {
     renderable.conceal = this._conceal
     renderable.drawUnstyledText = initialStyledText !== undefined
     renderable.streaming = true
+    renderable.retainedRendering = this._retainedRendering && this._streaming
     renderable.baseHighlight = baseHighlight
     renderable.content = content
     renderable.marginBottom = marginBottom
@@ -1024,6 +1063,7 @@ export class MarkdownRenderable extends Renderable {
     renderable.conceal = this._concealCode
     renderable.drawUnstyledText = !this._streaming
     renderable.streaming = this._streaming
+    renderable.retainedRendering = this._retainedRendering && this._streaming
     renderable.content = token.text
     renderable.marginBottom = marginBottom
   }
@@ -1116,19 +1156,23 @@ export class MarkdownRenderable extends Renderable {
     return renderTokens
   }
 
-  private buildTopLevelRenderBlocks(tokens: MarkedToken[]): MarkdownRenderBlock[] {
+  private buildTopLevelRenderBlocks(
+    tokens: MarkedToken[],
+    startIndex: number = 0,
+    previousToken?: MarkedToken,
+  ): MarkdownRenderBlock[] {
     const blocks: MarkdownRenderBlock[] = []
     let gapBefore = ""
 
-    for (let i = 0; i < tokens.length; i += 1) {
+    for (let i = startIndex; i < tokens.length; i += 1) {
       const token = tokens[i]
       if (token.type === "space") {
         gapBefore += token.raw
         continue
       }
 
-      const prev = blocks[blocks.length - 1]
-      const marginTop = prev && this.shouldAddTopLevelMargin(prev.token, token, gapBefore) ? 1 : 0
+      const prev = blocks[blocks.length - 1]?.token ?? previousToken
+      const marginTop = prev && this.shouldAddTopLevelMargin(prev, token, gapBefore) ? 1 : 0
 
       blocks.push({
         token,
@@ -1452,6 +1496,7 @@ export class MarkdownRenderable extends Renderable {
   ): void {
     state.token = block.token
     state.tokenRaw = block.token.raw
+    state.sourceTokenEnd = block.sourceTokenEnd
     state.marginTop = block.marginTop
     state.tableContentCache = tableContentCache
   }
@@ -1513,6 +1558,7 @@ export class MarkdownRenderable extends Renderable {
       this._linkifyMarkdownChunks,
       undefined,
       this.createInitialStyledText(token),
+      true,
     )
     renderable.marginTop = marginTop
     return { renderable, canUpdateInPlace: true }
@@ -1755,10 +1801,13 @@ export class MarkdownRenderable extends Renderable {
   }
 
   private updateTopLevelBlocks(tokens: MarkedToken[], forceTableRefresh: boolean): void {
-    const blocks = this.buildTopLevelRenderBlocks(tokens)
-    this._stableBlockCount = this.getStableBlockCount(blocks, this._parseState?.stableTokenCount ?? 0)
+    const stableTokenCount = this._parseState?.stableTokenCount ?? 0
+    const reusableBlockCount = this._streaming && !forceTableRefresh ? this.getReusableBlockCount(stableTokenCount) : 0
+    const previousState = this._blockStates[reusableBlockCount - 1]
+    const blocks = this.buildTopLevelRenderBlocks(tokens, previousState?.sourceTokenEnd ?? 0, previousState?.token)
+    this._stableBlockCount = reusableBlockCount + this.getStableBlockCount(blocks, stableTokenCount)
 
-    let blockIndex = 0
+    let blockIndex = reusableBlockCount
     for (let i = 0; i < blocks.length; i += 1) {
       const block = blocks[i]
       const existing = this._blockStates[blockIndex]
@@ -1808,6 +1857,7 @@ export class MarkdownRenderable extends Renderable {
             this._blockStates[blockIndex] = {
               token: block.token,
               tokenRaw: block.token.raw,
+              sourceTokenEnd: block.sourceTokenEnd,
               marginTop: block.marginTop,
               renderable: custom.renderable,
               tableContentCache: custom.tableContentCache,
@@ -1839,6 +1889,7 @@ export class MarkdownRenderable extends Renderable {
         this._blockStates[blockIndex] = {
           token: block.token,
           tokenRaw: block.token.raw,
+          sourceTokenEnd: block.sourceTokenEnd,
           marginTop: block.marginTop,
           renderable: next.renderable,
           tableContentCache: next.tableContentCache,
@@ -1854,6 +1905,23 @@ export class MarkdownRenderable extends Renderable {
     }
   }
 
+  private getReusableBlockCount(stableTokenCount: number): number {
+    let low = 0
+    let high = this._blockStates.length
+
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2)
+      const sourceTokenEnd = this._blockStates[middle]?.sourceTokenEnd
+      if (sourceTokenEnd !== undefined && sourceTokenEnd <= stableTokenCount) {
+        low = middle + 1
+        continue
+      }
+      high = middle
+    }
+
+    return low
+  }
+
   private canUpdateBlockRenderable(renderable: Renderable, token: MarkedToken): boolean {
     if (token.type === "code") return renderable instanceof CodeRenderable
 
@@ -1864,7 +1932,7 @@ export class MarkdownRenderable extends Renderable {
     return renderable instanceof CodeRenderable
   }
 
-  private updateBlocks(forceTableRefresh: boolean = false): void {
+  private updateBlocks(forceTableRefresh: boolean = false, appended?: string): void {
     if (this.isDestroyed) return
     if (!this._content) {
       this.clearBlockStates()
@@ -1874,7 +1942,7 @@ export class MarkdownRenderable extends Renderable {
     }
 
     const trailingUnstable = this._streaming ? 2 : 0
-    this._parseState = parseMarkdownIncremental(this._content, this._parseState, trailingUnstable)
+    this._parseState = parseMarkdownIncremental(this._content, this._parseState, trailingUnstable, appended)
 
     const tokens = this._parseState.tokens
 

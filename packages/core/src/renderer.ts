@@ -1,8 +1,8 @@
 import { appendFileSync, writeFileSync } from "node:fs"
 import { ANSI } from "./ansi.js"
 import { Renderable, RootRenderable } from "./Renderable.js"
+import type { Wave3ScalingCounters } from "./benchmark/wave3-scaling-counters.js"
 import { BoxRenderable } from "./renderables/Box.js"
-import { CodeRenderable } from "./renderables/Code.js"
 import { TextRenderable } from "./renderables/Text.js"
 import {
   DebugOverlayCorner,
@@ -25,7 +25,8 @@ import {
   type RendererHandle,
 } from "./zig.js"
 import { NativeSpanFeed } from "./NativeSpanFeed.js"
-import { TerminalConsole, type ConsoleOptions, capture } from "./console.js"
+import { increment, isTelemetryEnabled, mark, recordHistogramLabel, recordSpan } from "./telemetry.js"
+import type { ConsoleOptions, TerminalConsole } from "./console.js"
 import { type MouseEventType, type RawMouseEvent, type ScrollInfo } from "./lib/parse.mouse.js"
 import { Selection } from "./lib/selection.js"
 import { Clipboard, type ClipboardTarget } from "./lib/clipboard.js"
@@ -35,7 +36,8 @@ import { getObjectsInViewport } from "./lib/objects-in-viewport.js"
 import { KeyHandler, InternalKeyHandler } from "./lib/KeyHandler.js"
 import { isEditBufferRenderable, type EditBufferRenderable } from "./renderables/EditBufferRenderable.js"
 import { env, registerEnvVar } from "./lib/env.js"
-import { destroyTreeSitterClient } from "./lib/tree-sitter/index.js"
+import { getRendererConsoleIntegration, getRendererLastDestroyCleanups } from "./renderer-integration.js"
+import { getHighlightCompletion, type HighlightCompletionProvider } from "./lib/highlight-completion.js"
 import {
   buildTerminalPaletteSignature,
   createTerminalPalette,
@@ -248,6 +250,13 @@ export interface CliRendererExternalOutputEvent {
 export type ConsoleMode = "console-overlay" | "disabled"
 
 export type PixelResolution = {
+  width: number
+  height: number
+}
+
+type PartialRenderRegion = {
+  x: number
+  y: number
   width: number
   height: number
 }
@@ -757,6 +766,8 @@ export enum RendererControlState {
   EXPLICIT_STOPPED = "explicit_stopped",
 }
 
+type TelemetryFrameSource = "rAF" | "requestPartial" | "timer" | "live" | "request"
+
 export class CliRenderer extends EventEmitter implements RenderContext {
   private static animationFrameId = 0
   private lib: RenderLib
@@ -814,11 +825,33 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private minTargetFrameTime: number = 1000 / this._maxFps
   private immediateRerenderRequested: boolean = false
   private updateScheduled: boolean = false
+  // Single owner for a delayed one-shot activation (requestRender/requestPartialRender
+  // outside the running loop). updateScheduled marks a pending activation; bumping
+  // activationToken invalidates any queued callback (process.nextTick cannot be
+  // cancelled, so it is guarded by the token instead).
+  private activationTimer: TimerHandle | null = null
+  private activationToken: number = 0
 
   private liveRequestCounter: number = 0
   private _controlState: RendererControlState = RendererControlState.IDLE
 
   private frameCallbacks: ((deltaTime: number) => Promise<void>)[] = []
+  // Per-frame handle that destroy() resolves to end a never-resolving frame
+  // callback wait, so the render loop can exit before layout/native commit.
+  private _frameAbort: { promise: Promise<void>; trigger: () => void } | null = null
+  // Partial frames mutate the retained next buffer and are valid only while its native commit is known-good.
+  private partialRequests = new Set<Renderable>()
+  private partialFramePending: boolean = false
+  private ordinaryRenderGeneration: number = 0
+  private committedOrdinaryRenderGeneration: number = 0
+  private ordinaryRequestsDuringFrame = new Set<Renderable>()
+  private lastFrameCommitted: boolean = true
+  private telemetryFirstJsRenderMarked: boolean = false
+  private telemetryFirstNativeCommitMarked: boolean = false
+  private telemetryFirstOutputWriteMarked: boolean = false
+  private telemetryScheduledAsFollowup: boolean = false
+  private telemetryRequestQueuedAt: number = 0
+  private telemetryPendingSource: TelemetryFrameSource | null = null
   private renderStats: {
     frameCount: number
     fps: number
@@ -830,12 +863,16 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     renderTime: 0,
     frameCallbackTime: 0,
   }
+  /** Opt-in Wave-3 scaling counters (§10.3/§10.4). Null in the off-state. */
+  public scalingCounters: Wave3ScalingCounters | null = null
   public debugOverlay = {
     enabled: env.OTUI_SHOW_STATS,
     corner: DebugOverlayCorner.bottomRight,
   }
 
-  private _console: TerminalConsole
+  private _console: TerminalConsole | null = null
+  private readonly _consoleOptions: ConsoleOptions & { clock: Clock }
+  private _consoleMaterializing = false
   private _resolution: PixelResolution | null = null
   private _keyHandler: InternalKeyHandler
   private stdinParser: StdinParser | null = null
@@ -891,7 +928,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private pendingExternalOutputMode: ExternalOutputMode | null = null
   private realStdoutWrite: (chunk: any, encoding?: any, callback?: any) => boolean
 
-  private _useConsole: boolean = true
+  private _useConsole: boolean = false
   private sigwinchHandler: () => void = (() => {
     const width = this.stdout.columns || 80
     const height = this.stdout.rows || 24
@@ -936,14 +973,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private handleError: (error: Error) => void = ((error: Error) => {
     console.error(error)
 
-    if (this._openConsoleOnError) {
-      this.console.show()
-    }
+    if (this._openConsoleOnError) this.materializeConsole()?.show()
   }).bind(this)
 
   private dumpOutputCache(optionalMessage: string = ""): void {
-    const cachedLogs = this.console.getCachedLogs()
-    const capturedConsoleOutput = capture.claimOutput()
+    const cachedLogs = this._console?.getCachedLogs() ?? ""
+    const capturedConsoleOutput = getRendererConsoleIntegration()?.claimCapturedOutput() ?? ""
     const capturedExternalOutputCommits = this.externalOutputQueue.claim()
 
     let capturedExternalOutput = ""
@@ -992,12 +1027,19 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   // identity checks inline (e.g. rendererTracker compares `stdin` directly)
   // or duck-typed capability checks (e.g. `stdin.setRawMode?.()`).
   private readonly _usesProcessStdout: boolean
+  // Native output redirected to an in-memory buffer (no observed external write).
+  private readonly _bufferedOutputMemory: boolean
 
   // Feed wiring. Non-null when the given stdout is not process.stdout and native
   // output is not explicitly redirected to a buffered memory destination.
   private _feed: NativeSpanFeed | null = null
   private _detachFeed: (() => void) | null = null
   private _detachFeedError: (() => void) | null = null
+  /** Idempotent settlers for in-flight feed→Writable writes (plan 5.4). */
+  private readonly _feedPendingWrites = new Set<() => void>()
+  /** True once the sink reported error/close/finish; stops scheduling new writes. */
+  private _feedSinkTerminal = false
+  private _detachFeedSinkListeners: (() => void) | null = null
   private feedIdleRenderScheduled = false
   private ordinaryFrameWaitingForFeed = false
   private ordinaryFrameWaitControlState: RendererControlState | null = null
@@ -1044,8 +1086,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._usesProcessStdout = stdout === process.stdout
     this.realStdoutWrite = stdout.write
 
+    const consoleIntegration = getRendererConsoleIntegration()
+    if (!consoleIntegration && (config.consoleMode === "console-overlay" || config.consoleOptions !== undefined)) {
+      throw new Error(
+        "Console overlay is not installed. Import @opentui/core or @opentui/core/console before requesting it.",
+      )
+    }
     const lib = resolveRenderLib()
     const useMemoryBufferedOutput = config.bufferedOutput === "memory"
+    this._bufferedOutputMemory = useMemoryBufferedOutput
     const useFeedOutput = !this._usesProcessStdout && !useMemoryBufferedOutput
     const { screenMode, footerHeight, externalOutputMode } = resolveModes(config)
     const initialGeometry = calculateRenderGeometry(screenMode, width, height, footerHeight)
@@ -1093,6 +1142,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       feed?.close()
       throw new Error("Failed to create renderer")
     }
+    mark("opentui.rendererCreated")
 
     // Threading defaults (on everywhere except linux, where it currently
     // crashes — likely a missing build dep).
@@ -1105,20 +1155,75 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     lib.setKittyKeyboardFlags(rendererPtr, kittyFlags)
 
     // Wire feed → Writable piping. The returned Promise keeps the chunk
-    // pinned (refcount held) until Node's write callback fires; this turns
-    // Node's Writable flow control into async backpressure for the feed.
-    // Write errors are surfaced via feed.onError / console.error; we do not
-    // interfere with the Writable's own error handling (matches the
-    // pre-feed-integration posture where process.stdout EPIPE was the OS's
-    // problem, not the renderer's).
+    // pinned (refcount held) until the write settles; this turns Node's
+    // Writable flow control into async backpressure for the feed. This only
+    // applies to a custom stdout (process.stdout never uses the feed path).
+    // Write errors are surfaced via feed.onError / console.error; the sink's
+    // own error handling is left intact (its 'error' event still fires to any
+    // other listener) — we additionally observe error/close/finish only to
+    // bound feed teardown (see settleAllPendingWrites below).
     this._feed = feed
     if (feed) {
+      let sinkErrorReported = false
+      const reportSinkError = (error: unknown) => {
+        if (sinkErrorReported) return
+        sinkErrorReported = true
+        console.error(
+          "[CliRenderer] NativeSpanFeed sink error: " + (error instanceof Error ? error.message : String(error)),
+        )
+      }
+      // Bound teardown against an unreliable custom Writable (plan 5.4): a sink
+      // that never invokes its write callback must not pin feed chunks into
+      // destroy forever. Every in-flight write is settled by the first of the
+      // write callback, the sink's error/close/finish, or renderer destroy.
+      const settleAllPendingWrites = (error?: unknown) => {
+        if (error !== undefined) reportSinkError(error)
+        this._feedSinkTerminal = true
+        for (const settle of [...this._feedPendingWrites]) settle()
+        this._feedPendingWrites.clear()
+      }
+      const onSinkError = (error: unknown) => settleAllPendingWrites(error)
+      const onSinkClose = () => settleAllPendingWrites()
+      const onSinkFinish = () => settleAllPendingWrites()
+      stdout.on("error", onSinkError)
+      stdout.on("close", onSinkClose)
+      stdout.on("finish", onSinkFinish)
+      this._detachFeedSinkListeners = () => {
+        stdout.removeListener("error", onSinkError)
+        stdout.removeListener("close", onSinkClose)
+        stdout.removeListener("finish", onSinkFinish)
+      }
+
       this._detachFeed = feed.onData((bytes: Uint8Array) => {
+        if (this._feedSinkTerminal) return
+        // Owned copy: hand the sink only JS-owned bytes. The sink may outlive
+        // the feed chunk (slow or never-firing write callback), so releasing
+        // the native Zig chunk on any settlement path is always safe. Feeding
+        // borrowed native bytes to an unreliable Writable would be a UAF once
+        // destroy force-settles and frees the chunk underneath an in-flight
+        // write, so we never hand the borrowed native view to the sink.
+        const owned = bytes.slice()
+        this.recordFirstOutputWriteTelemetry()
         return new Promise<void>((resolve) => {
-          // Renderer-owned frame bytes must bypass any later stdout.write
-          // interception (e.g. split-footer capture) and go straight to the
-          // caller's actual sink.
-          this.realStdoutWrite.call(this.stdout, bytes, () => resolve())
+          let done = false
+          const settle = () => {
+            if (done) return
+            done = true
+            this._feedPendingWrites.delete(settle)
+            resolve()
+          }
+          this._feedPendingWrites.add(settle)
+          try {
+            this.realStdoutWrite.call(this.stdout, owned, (error?: Error | null) => {
+              if (error) {
+                settleAllPendingWrites(error)
+                return
+              }
+              settle()
+            })
+          } catch (error) {
+            settleAllPendingWrites(error)
+          }
         })
       })
       this._detachFeedError = feed.onError((code) => {
@@ -1167,6 +1272,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.targetFps = config.targetFps || 30
     this.maxFps = config.maxFps || 60
     this.clock = config.clock ?? new SystemClock()
+    this._consoleOptions = {
+      ...(config.consoleOptions ?? {}),
+      clock: this.clock,
+    }
     this.themeModeState = new RendererThemeMode(
       {
         queryThemeColors: () => {
@@ -1249,11 +1358,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       clock: this.clock,
     })
 
-    this._console = new TerminalConsole(this, {
-      ...(config.consoleOptions ?? {}),
-      clock: this.clock,
-    })
-    this.consoleMode = config.consoleMode ?? "console-overlay"
+    if (consoleIntegration) {
+      this.materializeConsole()
+      this.consoleMode = config.consoleMode ?? "console-overlay"
+    } else {
+      this._useConsole = false
+    }
     this.applyScreenMode(screenMode, false, false)
     rendererTracker.streamOwners.set(stdin, this)
     rendererTracker.streamOwners.set(stdout, this)
@@ -1266,6 +1376,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     global.requestAnimationFrame = (callback: FrameRequestCallback) => {
       const id = CliRenderer.animationFrameId++
       this.animationRequest.set(id, callback)
+      this.recordTelemetryRequest("rAF")
       this.requestLive()
       return id
     }
@@ -1459,6 +1570,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return true
     }
 
+    this.recordFirstOutputWriteTelemetry()
     return this.realStdoutWrite.call(this.stdout, chunk, encoding, callback)
   }
 
@@ -1467,7 +1579,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (!feed || this.feedIdleRenderScheduled || this._isDestroyed) return
 
     this.feedIdleRenderScheduled = true
+    // Feed backpressure wait (render stalls until native output drains).
+    const feedIdleStart = isTelemetryEnabled() ? performance.now() : 0
     feed.idle().then(() => {
+      if (isTelemetryEnabled() && feedIdleStart > 0) {
+        recordSpan("opentui.feedWait", feedIdleStart, performance.now())
+      }
       this.feedIdleRenderScheduled = false
       const ordinaryFrameWasWaiting = this.ordinaryFrameWaitingForFeed
       const ordinaryFrameWaitControlState = this.ordinaryFrameWaitControlState
@@ -1491,6 +1608,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private handleNativeRenderRejection(status: number): "retryable-skip" | "backpressured" | "failed" {
+    this.lastFrameCommitted = false
     if (status === NATIVE_RENDER_STATUS_SKIPPED && this._feed) {
       this.ordinaryFrameWaitingForFeed = true
       this.ordinaryFrameWaitControlState = this._controlState
@@ -1534,15 +1652,28 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.scheduleRenderTimer()
   }
 
-  public requestRender() {
+  public requestRender(source?: Renderable) {
     if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED) {
       return
     }
+
+    this.recordTelemetryRequest("request")
+
+    this.ordinaryRenderGeneration++
 
     // A skipped feed-backed frame already owns the next scheduling attempt through
     // feed.idle(). Coalesce normal invalidations into that retry so split-footer
     // output and UI updates cannot start competing render passes while the feed is busy.
     if (this.feedIdleRenderScheduled) {
+      return
+    }
+
+    if (this.rendering) {
+      if (source) {
+        this.ordinaryRequestsDuringFrame.add(source)
+        return
+      }
+      this.immediateRerenderRequested = true
       return
     }
 
@@ -1557,30 +1688,78 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
-    // NOTE: Using a frame callback that causes a re-render while already rendering
-    // leads to a continuous loop of renders.
+    this.scheduleDelayedActivation()
+  }
+
+  public requestPartialRender(renderable: Renderable) {
+    if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED || renderable.isDestroyed) return
+
+    this.recordTelemetryRequest("requestPartial")
+
+    this.partialRequests.add(renderable)
+    this.partialFramePending = true
+
+    if (this.feedIdleRenderScheduled || this.ordinaryFrameWaitingForFeed) return
+
     if (this.rendering) {
       this.immediateRerenderRequested = true
       return
     }
 
-    if (!this.updateScheduled && !this.renderTimeout) {
-      this.updateScheduled = true
-      const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
-      const elapsed = this.getElapsedMs(now, this.lastTime)
-      const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
-
-      if (delay === 0) {
-        process.nextTick(() => this.activateFrame())
-        return
-      }
-
-      this.clock.setTimeout(() => this.activateFrame(), delay)
+    if (this._isRunning) {
+      if (!this.renderTimeout) this.scheduleRenderTimer()
+      return
     }
+
+    this.scheduleDelayedActivation()
   }
 
-  private async activateFrame() {
-    if (!this.updateScheduled) {
+  /**
+   * Schedules the single one-shot activation owner shared by full and partial
+   * render requests issued outside the running loop. Coalesces repeated
+   * invalidations into at most one pending timer/microtask.
+   */
+  private scheduleDelayedActivation(): void {
+    if (this.updateScheduled || this.renderTimeout) return
+
+    this.updateScheduled = true
+    const token = ++this.activationToken
+    const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
+    const elapsed = this.getElapsedMs(now, this.lastTime)
+    const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
+
+    if (delay === 0) {
+      // process.nextTick cannot be cancelled; guard it with the activation token so a
+      // stale tick after a control transition neither renders nor clears a newer owner.
+      process.nextTick(() => {
+        void this.activateFrame(token)
+      })
+      return
+    }
+
+    this.activationTimer = this.clock.setTimeout(() => {
+      this.activationTimer = null
+      void this.activateFrame(token)
+    }, delay)
+  }
+
+  /**
+   * Cancels any pending delayed activation. Called by suspend, by the
+   * transition to the continuous loop (internalStart), and on destroy.
+   * Bumping the token invalidates an already-queued process.nextTick, because
+   * that microtask itself cannot be removed.
+   */
+  private cancelDelayedActivation(): void {
+    this.activationToken++
+    if (this.activationTimer !== null) {
+      this.clock.clearTimeout(this.activationTimer)
+      this.activationTimer = null
+    }
+    this.updateScheduled = false
+  }
+
+  private async activateFrame(token: number = this.activationToken) {
+    if (token !== this.activationToken || !this.updateScheduled) {
       this.resolveIdleIfNeeded()
       return
     }
@@ -1588,7 +1767,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     try {
       await this.loop()
     } finally {
-      this.updateScheduled = false
+      // A control transition can invalidate this owner while loop() is
+      // awaiting asynchronous frame work, then schedule a newer activation.
+      // Only the still-current owner may clear the shared scheduled flag.
+      if (token === this.activationToken) {
+        this.updateScheduled = false
+      }
       this.resolveIdleIfNeeded()
     }
   }
@@ -1597,13 +1781,45 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this._useConsole ? "console-overlay" : "disabled"
   }
 
-  public set consoleMode(mode: ConsoleMode) {
-    this._useConsole = mode === "console-overlay"
-    if (this._useConsole) {
-      this.console.activate()
-    } else {
-      this.console.deactivate()
+  private materializeConsole(): TerminalConsole | null {
+    if (this._console) return this._console
+    if (this._isDestroyed) return null
+
+    const integration = getRendererConsoleIntegration()
+    if (!integration) return null
+    if (this._consoleMaterializing) throw new Error("Console overlay integration materialized recursively")
+
+    this._consoleMaterializing = true
+    try {
+      const terminalConsole = integration.create(this, this._consoleOptions)
+      this._console = terminalConsole
+      return terminalConsole
+    } finally {
+      this._consoleMaterializing = false
     }
+  }
+
+  public set consoleMode(mode: ConsoleMode) {
+    if (mode === "console-overlay") {
+      if (this._useConsole) {
+        return
+      }
+      const terminalConsole = this.materializeConsole()
+      if (!terminalConsole) {
+        throw new Error(
+          "Console overlay is not installed. Import @opentui/core or @opentui/core/console before enabling it.",
+        )
+      }
+      this._useConsole = true
+      terminalConsole.activate()
+      return
+    }
+
+    if (!this._useConsole) {
+      return
+    }
+    this._useConsole = false
+    this._console?.deactivate()
   }
 
   public get isRunning(): boolean {
@@ -1652,7 +1868,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public get console(): TerminalConsole {
-    return this._console
+    const terminalConsole = this.materializeConsole()
+    if (!terminalConsole) {
+      throw new Error(
+        "Console overlay is not installed. Import @opentui/core or @opentui/core/console before accessing it.",
+      )
+    }
+    return terminalConsole
   }
 
   public get keyInput(): KeyHandler {
@@ -2022,21 +2244,23 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
     }
 
-    const collectPendingCodeRenderables = (node: Renderable): CodeRenderable[] => {
-      const pending: CodeRenderable[] = []
+    const collectPendingHighlightCompletions = (node: Renderable): Promise<void>[] => {
+      const pending: Promise<void>[] = []
+      const getCompletion = (node as Partial<HighlightCompletionProvider>)[getHighlightCompletion]
 
-      if (node instanceof CodeRenderable && node.isHighlighting) {
-        pending.push(node)
+      if (typeof getCompletion === "function") {
+        const completion = getCompletion.call(node)
+        if (completion) pending.push(completion)
       }
 
       for (const child of node.getChildren()) {
-        pending.push(...collectPendingCodeRenderables(child))
+        pending.push(...collectPendingHighlightCompletions(child))
       }
 
       return pending
     }
 
-    const waitForPendingHighlights = async (pending: CodeRenderable[], timeoutMs: number): Promise<void> => {
+    const waitForPendingHighlights = async (pending: Promise<void>[], timeoutMs: number): Promise<void> => {
       await new Promise<void>((resolve, reject) => {
         let settled = false
         const timeoutHandle = renderer.clock.setTimeout(() => {
@@ -2048,7 +2272,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           reject(new Error("ScrollbackSurface.settle timed out waiting for CodeRenderable highlighting"))
         }, timeoutMs)
 
-        Promise.all(pending.map((renderable) => renderable.highlightingDone)).then(
+        Promise.all(pending).then(
           () => {
             if (settled) {
               return
@@ -2145,7 +2369,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       while (true) {
         assertNotDestroyed()
 
-        const pending = collectPendingCodeRenderables(publicRoot)
+        const pending = collectPendingHighlightCompletions(publicRoot)
         if (pending.length === 0) {
           return
         }
@@ -3094,7 +3318,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.nextRenderBuffer = this.lib.getNextBuffer(this.rendererPtr)
     this.currentRenderBuffer = this.lib.getCurrentBuffer(this.rendererPtr)
 
-    this._console.resize(this.width, this.height)
+    this._console?.resize(this.width, this.height)
     this.root.resize(this.width, this.height)
 
     if (terminalScreenModeChanged) {
@@ -3189,6 +3413,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   public async setupTerminal(): Promise<void> {
     if (this._terminalIsSetup) return
     this._terminalIsSetup = true
+    mark("opentui.terminalSetupStarted")
 
     const startupCursorCprActive = this._screenMode === "split-footer" && this._externalOutputMode === "capture-stdout"
     this.updateStdinParserProtocolContext({
@@ -3550,7 +3775,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._hasPointer = true
     this._lastPointerModifiers = mouseEvent.modifiers
 
-    if (this._console.visible) {
+    if (this._console?.visible) {
       const consoleBounds = this._console.bounds
       if (
         mouseEvent.x >= consoleBounds.x &&
@@ -3920,7 +4145,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this.nextRenderBuffer = this.lib.getNextBuffer(this.rendererPtr)
     this.currentRenderBuffer = this.lib.getCurrentBuffer(this.rendererPtr)
-    this._console.resize(this.width, this.height)
+    this._console?.resize(this.width, this.height)
     this.root.resize(this.width, this.height)
     this.emit(CliRenderEvents.RESIZE, this.width, this.height)
     this.requestRender()
@@ -4071,7 +4296,39 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.frameCallbacks = []
   }
 
+  private startFrameCallbackAbort(): void {
+    if (this._frameAbort) return
+    let trigger!: () => void
+    const promise = new Promise<void>((resolve) => {
+      trigger = resolve
+    })
+    this._frameAbort = { promise, trigger }
+  }
+
+  private stopFrameCallbackAbort(): void {
+    this._frameAbort = null
+  }
+
+  private abortPendingFrameCallbackWait(): void {
+    const abort = this._frameAbort
+    if (!abort) return
+    abort.trigger()
+    this._frameAbort = null
+  }
+
+  private boundFrameCallbackWait(
+    callbackResult: void | PromiseLike<void>,
+    abort: { promise: Promise<void>; trigger: () => void },
+  ): Promise<void> {
+    // Promise.race installs both fulfillment and rejection reactions on the
+    // callback thenable. That reaction keeps a late rejection observed even
+    // when the destroy abort wins first, without allocating a redundant catch
+    // promise for every callback on every frame.
+    return Promise.race([callbackResult, abort.promise])
+  }
+
   public requestLive(): void {
+    this.recordTelemetryRequest("live")
     this.liveRequestCounter++
 
     if (this._controlState === RendererControlState.IDLE && this.liveRequestCounter > 0) {
@@ -4104,8 +4361,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
       // Invalidate any queued idle one-shot frame.
       // start()/live/resume transition to the continuous loop, so queued
-      // activateFrame callbacks must no-op via !updateScheduled.
-      this.updateScheduled = false
+      // activateFrame callbacks must no-op via the invalidated token.
+      this.cancelDelayedActivation()
 
       if (this.memorySnapshotInterval > 0) {
         this.startMemorySnapshotTimer()
@@ -4124,7 +4381,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._previousControlState = this._controlState
 
     this._controlState = RendererControlState.EXPLICIT_SUSPENDED
-    this.updateScheduled = false
+    this.cancelDelayedActivation()
     this.internalPause()
 
     if (this._terminalIsSetup) {
@@ -4261,9 +4518,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   public destroy(): void {
     if (this._isDestroyed) return
+    mark("opentui.destroyStarted")
     this._isDestroyed = true
     this._destroyPending = true
     this._palettePublishGeneration++
+    // Unblock a pending frame-callback await so loop() can reach finalizeDestroy()
+    // even when a callback never resolves.
+    this.abortPendingFrameCallbackWait()
 
     if (this.rendering) {
       // Restore terminal/input state immediately, but defer full native teardown until the frame unwinds.
@@ -4307,6 +4568,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.clock.clearTimeout(this.renderTimeout)
       this.renderTimeout = null
     }
+
+    this.cancelDelayedActivation()
 
     this.themeModeState.cancelRefresh()
 
@@ -4387,11 +4650,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     } catch (e) {
       console.error("Error destroying root renderable:", e instanceof Error ? e.stack : String(e))
     }
+    this.partialRequests.clear()
+    this.partialFramePending = false
+    this.ordinaryRequestsDuringFrame.clear()
 
     this.stdinParser?.destroy()
     this.stdinParser = null
     this.oscSubscribers.clear()
-    this._console.destroy()
+    this._console?.destroy()
+    this._console = null
 
     // Split-footer cleanup: flush pending output and reset offset before
     // tearing down the native renderer.
@@ -4462,9 +4729,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
     rendererTracker.renderers.delete(this)
     if (rendererTracker.renderers.size === 0) {
-      void destroyTreeSitterClient().catch((error) => {
-        console.error("Failed to destroy tree-sitter client:", error)
-      })
+      for (const cleanup of getRendererLastDestroyCleanups()) {
+        try {
+          void Promise.resolve(cleanup.run()).catch((error) => {
+            console.error(`Failed to destroy ${cleanup.description}:`, error)
+          })
+        } catch (error) {
+          console.error(`Failed to destroy ${cleanup.description}:`, error)
+        }
+      }
     }
 
     if (this._feed) {
@@ -4477,6 +4750,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this._detachFeed = null
       this._detachFeedError?.()
       this._detachFeedError = null
+      // Force-settle in-flight writes so feed.close() can reach its terminal
+      // state even if the sink never invokes its write callback (plan 5.4).
+      // Safe: the sink only ever received JS-owned copies, never the borrowed
+      // native chunk that is freed here, so no use-after-free can occur.
+      for (const settle of [...this._feedPendingWrites]) settle()
+      this._feedPendingWrites.clear()
+      this._detachFeedSinkListeners?.()
+      this._detachFeedSinkListeners = null
       this._feed.close()
       this._feed = null
     }
@@ -4494,6 +4775,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         console.error("Error in onDestroy callback:", e instanceof Error ? e.stack : String(e))
       }
     }
+
+    mark("opentui.destroyCompleted")
 
     // Resolve any pending idle() calls
     this.resolveIdleIfNeeded()
@@ -4523,10 +4806,18 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.renderTimeout = null
     }
     this.rendering = true
+    this.ordinaryRequestsDuringFrame.clear()
     let renderFailed = false
     try {
       // Bump before any work so all callers this iteration see the new id.
       this._frameId++
+
+      const telemetryActive = isTelemetryEnabled()
+      const telemetryFollowup = this.telemetryScheduledAsFollowup
+      const telemetrySource = this.telemetryPendingSource
+      this.telemetryPendingSource = null
+      if (telemetryFollowup) this.telemetryScheduledAsFollowup = false
+      const hadPartialRequest = this.partialFramePending
 
       const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
       const elapsed = this.getElapsedMs(now, this.lastTime)
@@ -4536,7 +4827,17 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
       this.renderStats.frameCount++
       const overallStart = performance.now()
+      if (telemetryActive) {
+        if (this.telemetryRequestQueuedAt > 0) {
+          recordSpan("opentui.frame.queueWait", this.telemetryRequestQueuedAt, overallStart)
+          this.telemetryRequestQueuedAt = 0
+        }
+      } else {
+        this.telemetryRequestQueuedAt = 0
+        this.telemetryPendingSource = null
+      }
 
+      const hadAnimation = this.animationRequest.size > 0
       const frameRequests = Array.from(this.animationRequest.values())
       this.animationRequest.clear()
       const animationRequestStart = performance.now()
@@ -4548,9 +4849,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const animationRequestTime = animationRequestEnd - animationRequestStart
 
       const start = performance.now()
+      // Keep the overwhelmingly common callback-free frame allocation-free.
+      // The abort owner must exist before invoking the first callback because
+      // that callback may call destroy() synchronously.
+      if (this.frameCallbacks.length > 0) this.startFrameCallbackAbort()
+      const frameAbort = this._frameAbort
       for (const frameCallback of this.frameCallbacks) {
+        if (this._destroyPending || !frameAbort) break
         try {
-          await frameCallback(deltaTime)
+          await this.boundFrameCallbackWait(frameCallback(deltaTime), frameAbort)
         } catch (error) {
           console.error("Error in frame callback:", error)
         }
@@ -4558,17 +4865,76 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const end = performance.now()
       this.renderStats.frameCallbackTime = end - start
 
-      this.root.render(this.nextRenderBuffer, deltaTime)
+      // If destroy() was requested during a frame callback (possibly while one
+      // never resolves), exit before layout, native commit and further callbacks.
+      if (this._destroyPending) return
 
-      for (const postProcessFn of this.postProcessFns) {
-        postProcessFn(this.nextRenderBuffer, deltaTime)
+      const partialRegion =
+        this.partialFramePending && this.canPartialRender() ? this.renderPartialFrame(deltaTime) : null
+      // A normal invalidation raised from a partial render was not part of this frame.
+      if (this.scalingCounters && this.partialFramePending && partialRegion) {
+        this.scalingCounters.partialAccepted++
+        this.scalingCounters.frameCounts.partial++
+      }
+      if (partialRegion && this.ordinaryRenderGeneration !== this.committedOrdinaryRenderGeneration) {
+        this.immediateRerenderRequested = true
+        if (this.scalingCounters) {
+          this.scalingCounters.partialToFullPromotions++
+          this.scalingCounters.frameCounts.followup++
+        }
+        if (telemetryActive) increment("frame.promote.partialToFull")
+      }
+      this.partialFramePending = false
+      this.partialRequests.clear()
+
+      if (!partialRegion) {
+        if (this.scalingCounters) this.scalingCounters.frameCounts.full++
+        this.nextRenderBuffer.clear(this.backgroundColor)
+        this.root.render(this.nextRenderBuffer, deltaTime)
+
+        for (const postProcessFn of this.postProcessFns) {
+          postProcessFn(this.nextRenderBuffer, deltaTime)
+        }
+
+        const pendingSource = [...this.ordinaryRequestsDuringFrame].some(
+          (renderable) => !renderable.isDestroyed && renderable.isDirty && renderable.isInRenderPath(),
+        )
+        if (this.root.getLayoutNode().isDirty() || pendingSource) this.immediateRerenderRequested = true
+        else this.committedOrdinaryRenderGeneration = this.ordinaryRenderGeneration
       }
 
-      this._console.renderToBuffer(this.nextRenderBuffer)
+      // First JS render completes once the renderable tree (partial or full) has
+      // been laid out and drawn to the JS-side buffer for this frame.
+      if (telemetryActive && !this.telemetryFirstJsRenderMarked) {
+        this.telemetryFirstJsRenderMarked = true
+        mark("opentui.firstJsRender")
+      }
+
+      this._console?.renderToBuffer(this.nextRenderBuffer)
 
       // If destroy() was requested during this frame, skip native work and scheduling.
       if (!this._isDestroyed) {
-        const nativeStatus = this.renderNative() ?? "rendered"
+        const nativeStatus = this.renderNative(partialRegion) ?? "rendered"
+        if (telemetryActive) {
+          const telemetryType =
+            partialRegion !== null
+              ? "partial"
+              : this._splitHeight > 0 && this._externalOutputMode === "capture-stdout"
+                ? "splitFooter"
+                : "full"
+          const source: TelemetryFrameSource =
+            telemetrySource ??
+            (hadAnimation
+              ? "rAF"
+              : hadPartialRequest && partialRegion !== null
+                ? "requestPartial"
+                : telemetryFollowup
+                  ? "timer"
+                  : this._isRunning
+                    ? "live"
+                    : "request")
+          this.recordFrameTelemetry(telemetryType, source, nativeStatus, telemetryFollowup)
+        }
         if (nativeStatus === "rendered") this.frameCount++
         if (this.getElapsedMs(now, this.lastFpsTime) >= 1000) {
           this.currentFps = this.frameCount
@@ -4606,6 +4972,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           if (this._isRunning || this.immediateRerenderRequested) {
             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime
             const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime))
+            // Best-effort label for the next loop as an immediate-rerender follow-up;
+            // an unrelated loop may consume the flag first (heuristic, label only).
+            // Guarded so the disabled path writes no state at all (strict zero-cost).
+            if (isTelemetryEnabled() && this.immediateRerenderRequested) {
+              this.telemetryScheduledAsFollowup = true
+              this.recordTelemetryRequest("timer")
+            } else if (isTelemetryEnabled() && this._isRunning) {
+              this.recordTelemetryRequest("live")
+            }
             this.immediateRerenderRequested = false
             this.renderTimeout = this.clock.setTimeout(() => {
               this.renderTimeout = null
@@ -4621,6 +4996,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           if (this._isRunning || this.immediateRerenderRequested) {
             const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime
             const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime))
+            // Best-effort label for the next loop as an immediate-rerender follow-up;
+            // an unrelated loop may consume the flag first (heuristic, label only).
+            // Guarded so the disabled path writes no state at all (strict zero-cost).
+            if (isTelemetryEnabled() && this.immediateRerenderRequested) {
+              this.telemetryScheduledAsFollowup = true
+              this.recordTelemetryRequest("timer")
+            } else if (isTelemetryEnabled() && this._isRunning) {
+              this.recordTelemetryRequest("live")
+            }
             this.immediateRerenderRequested = false
             this.renderTimeout = this.clock.setTimeout(() => {
               this.renderTimeout = null
@@ -4642,12 +5026,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
     } catch (error) {
       renderFailed = true
+      this.lastFrameCommitted = false
       const renderError = error instanceof Error ? error : new Error(String(error))
       const event: CliRendererErrorEvent = { error: renderError, renderable: this.root.takeCurrentRenderable() }
       const handled = this.emit(CliRenderEvents.RENDER_ERROR, event)
       if (!handled) this.handleError(renderError)
     } finally {
       this.rendering = false
+      this.stopFrameCallbackAbort()
       if (this._destroyPending) {
         this.finalizeDestroy()
       }
@@ -4664,7 +5050,49 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.loop()
   }
 
-  private renderNative(): "rendered" | "retryable-skip" | "failed" | "blocked" | "backpressured" {
+  private canPartialRender(): boolean {
+    if (this.partialRequests.size === 0) return false
+    if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") return false
+    if (this.forceFullRepaintRequested || !this.lastFrameCommitted) return false
+    if (this._console?.visible || this.debugOverlay.enabled || this.postProcessFns.length > 0) return false
+    if (!this.root.isPartialRenderStateCurrent()) return false
+    if (this.ordinaryRenderGeneration !== this.committedOrdinaryRenderGeneration) return false
+    // Image placement commits are whole-frame transactions, and fallback materialization is not safely repeatable.
+    if (this.lib.hasActiveImageState(this.rendererPtr)) return false
+
+    if (![...this.partialRequests].every((renderable) => !renderable.isDestroyed && renderable.isInRenderPath())) {
+      return false
+    }
+    return this.root.hasSafePartialComposition(this.partialRequests)
+  }
+
+  private renderPartialFrame(deltaTime: number): PartialRenderRegion | null {
+    this.clearHitGridScissorRects()
+
+    let left = this.width
+    let top = this.height
+    let right = 0
+    let bottom = 0
+
+    for (const renderable of this.partialRequests) {
+      if (renderable.isDestroyed) continue
+      const bounds = this.root.renderPartialTarget(renderable, this.nextRenderBuffer, deltaTime)
+      if (!bounds) continue
+
+      left = Math.min(left, Math.max(0, Math.floor(bounds.x) - 1))
+      top = Math.min(top, Math.max(0, Math.floor(bounds.y)))
+      right = Math.max(right, Math.min(this.width, Math.ceil(bounds.x + bounds.width) + 1))
+      bottom = Math.max(bottom, Math.min(this.height, Math.ceil(bounds.y + bounds.height)))
+    }
+
+    if (left >= right || top >= bottom) return null
+    if (this.scalingCounters) this.scalingCounters.partialRegionAreas += (right - left) * (bottom - top)
+    return { x: left, y: top, width: right - left, height: bottom - top }
+  }
+
+  private renderNative(
+    partialRegion: PartialRenderRegion | null = null,
+  ): "rendered" | "retryable-skip" | "failed" | "blocked" | "backpressured" {
     if (this.renderingNative) {
       console.error("Rendering called concurrently")
       throw new Error("Rendering called concurrently")
@@ -4674,6 +5102,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     try {
       if (this.isSplitCursorSeedFrameBlocked()) {
+        this.lastFrameCommitted = false
         return "blocked"
       }
 
@@ -4687,29 +5116,86 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           this.pendingExternalOutputMode === "passthrough",
         )
         if (status === "backpressured") {
+          this.lastFrameCommitted = false
           return "backpressured"
         }
         if (status === "failed") {
+          this.lastFrameCommitted = false
           return "failed"
         }
         this.forceFullRepaintRequested = false
         this.pendingSplitFooterTransition = null
+        this.lastFrameCommitted = true
+        this.recordFirstCommitTelemetry()
         return "rendered"
       }
 
       const force = this.forceFullRepaintRequested
-      const nativeStatus = this.lib.render(this.rendererPtr, force)
+      const commitStart = this.scalingCounters ? performance.now() : 0
+      const nativeStatus = partialRegion
+        ? this.lib.renderPartial(
+            this.rendererPtr,
+            partialRegion.x,
+            partialRegion.y,
+            partialRegion.width,
+            partialRegion.height,
+          )
+        : this.lib.render(this.rendererPtr, force, true)
+      if (this.scalingCounters) this.scalingCounters.commitMs += performance.now() - commitStart
       if (nativeStatus === NATIVE_RENDER_STATUS_SKIPPED || nativeStatus === NATIVE_RENDER_STATUS_FAILED) {
         return this.handleNativeRenderRejection(nativeStatus)
       }
 
       this.forceFullRepaintRequested = false
       this.pendingSplitFooterTransition = null
+      this.lastFrameCommitted = true
+      this.recordFirstCommitTelemetry()
       // this.dumpOutputBuffer(Date.now())
       return "rendered"
     } finally {
       this.renderingNative = false
     }
+  }
+
+  private recordFirstCommitTelemetry(): void {
+    if (!isTelemetryEnabled() || this.telemetryFirstNativeCommitMarked) return
+    this.telemetryFirstNativeCommitMarked = true
+    mark("opentui.firstNativeCommit")
+  }
+
+  private recordTelemetryRequest(source: TelemetryFrameSource): void {
+    if (!isTelemetryEnabled()) return
+    if (this.telemetryRequestQueuedAt === 0) this.telemetryRequestQueuedAt = performance.now()
+    if (this.telemetryPendingSource === null) this.telemetryPendingSource = source
+  }
+
+  private recordFirstOutputWriteTelemetry(): void {
+    if (!isTelemetryEnabled() || this.telemetryFirstOutputWriteMarked || this._bufferedOutputMemory) return
+    this.telemetryFirstOutputWriteMarked = true
+    mark("opentui.firstOutputWrite")
+  }
+
+  private recordFrameTelemetry(
+    type: "full" | "partial" | "splitFooter",
+    source: TelemetryFrameSource,
+    nativeStatus: "rendered" | "retryable-skip" | "failed" | "blocked" | "backpressured",
+    followup: boolean,
+  ): void {
+    increment("frame.total")
+    if (type === "partial") recordHistogramLabel("frame.type.partial")
+    else if (type === "splitFooter") recordHistogramLabel("frame.type.splitFooter")
+    else recordHistogramLabel("frame.type.full")
+    if (source === "rAF") increment("frame.source.rAF")
+    else if (source === "requestPartial") increment("frame.source.requestPartial")
+    else if (source === "timer") increment("frame.source.timer")
+    else if (source === "live") increment("frame.source.live")
+    else increment("frame.source.request")
+    if (followup) increment("frame.followup.immediateRerender")
+    if (nativeStatus === "rendered") increment("frame.native.rendered")
+    else if (nativeStatus === "retryable-skip") increment("frame.native.retryable-skip")
+    else if (nativeStatus === "failed") increment("frame.native.failed")
+    else if (nativeStatus === "blocked") increment("frame.native.blocked")
+    else increment("frame.native.backpressured")
   }
 
   private collectStatSample(frameTime: number): void {
@@ -4753,6 +5239,40 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (!enabled) {
       this.frameTimes = []
     }
+  }
+
+  /**
+   * Attach the opt-in Wave-3 scaling counter (or detach with null). The counters
+   * live here so Renderable reaches them through the shared context cast. Off-state
+   * (null) leaves a zero-cost guard at every instrumentation site.
+   * @internal Wave-3 measurement-only; not part of the public renderer contract.
+   */
+  public attachWave3ScalingCounters(counters: Wave3ScalingCounters | null): void {
+    if (counters && counters !== this.scalingCounters) {
+      this.resetWave3ScalingCounters(counters)
+    }
+    this.scalingCounters = counters
+  }
+
+  public resetWave3ScalingCounters(counters: Wave3ScalingCounters): void {
+    counters.visitedStableNodes = 0
+    counters.updateFromLayoutFfiCalls = 0
+    counters.layoutGenerations = 0
+    counters.dirtySubtreeLayouts = 0
+    counters.renderListRebuilds = 0
+    counters.renderListReuses = 0
+    counters.renderCommands = 0
+    counters.frameCounts = { full: 0, partial: 0, followup: 0 }
+    counters.hasSafePartialCompositionCalls = 0
+    counters.scannedLaterPainters = 0
+    counters.boundsWalks = 0
+    counters.partialAccepted = 0
+    counters.partialRejectedBy = {}
+    counters.partialToFullPromotions = 0
+    counters.partialRegionAreas = 0
+    counters.layoutMs = 0
+    counters.jsRenderMs = 0
+    counters.commitMs = 0
   }
 
   public getSelection(): Selection | null {

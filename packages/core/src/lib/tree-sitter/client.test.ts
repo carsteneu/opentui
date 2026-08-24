@@ -724,6 +724,47 @@ Some text here.`
     }
   }, 10000)
 
+  test("versioned buffers preserve complete injection and conceal metadata exactly", async () => {
+    const client = new TreeSitterClient({ dataPath })
+
+    try {
+      await client.initialize()
+      const initial = `# Code Example
+
+\`\`\`typescript
+const hello: string = "world";
+\`\`\`
+`
+      const created = await client.createBufferWithHighlights(71, initial, "markdown")
+      const initialOracle = await client.highlightOnce(initial, "markdown")
+      expect(created.highlights).toEqual(initialOracle.highlights)
+      expect(created.highlights?.some((highlight) => highlight[3]?.isInjection)).toBe(true)
+
+      const content = `${initial}\nInline \`const answer = 42\`.\n`
+      const start = Buffer.byteLength(initial)
+      const outcome = await client.updateBuffer(
+        71,
+        [
+          {
+            startIndex: start,
+            oldEndIndex: start,
+            newEndIndex: Buffer.byteLength(content),
+            startPosition: { row: 5, column: 0 },
+            oldEndPosition: { row: 5, column: 0 },
+            newEndPosition: { row: 7, column: 0 },
+          },
+        ],
+        content,
+        2,
+      )
+      const oracle = await client.highlightOnce(content, "markdown")
+      expect(outcome.status).toBe("completed")
+      expect(outcome.status === "completed" ? outcome.highlights : undefined).toEqual(oracle.highlights)
+    } finally {
+      await client.destroy()
+    }
+  }, 10000)
+
   test("should highlight tsx code blocks in markdown using language-specific injection", async () => {
     const client = new TreeSitterClient({ dataPath })
 
@@ -1327,7 +1368,10 @@ describe("TreeSitterClient Edge Cases", () => {
     await client.initialize()
 
     const internals = client as unknown as {
-      worker?: { terminate: () => void | Promise<number> }
+      worker?: {
+        onexit?: ((event: { code: number }) => void) | null
+        terminate: () => void | Promise<number>
+      }
     }
     const worker = internals.worker
     expect(worker).toBeDefined()
@@ -1336,12 +1380,14 @@ describe("TreeSitterClient Edge Cases", () => {
     }
 
     const originalTerminate = worker.terminate.bind(worker)
+    const originalExit = worker.onexit
     worker.terminate = async () => {
       throw new Error("synthetic termination failure")
     }
 
     await expect(client.destroy()).rejects.toThrow("synthetic termination failure")
     expect(internals.worker).toBe(worker)
+    expect(worker.onexit).toBe(originalExit)
     await expect(client.initialize()).rejects.toThrow("retry destroy()")
 
     worker.terminate = originalTerminate
@@ -1478,5 +1524,650 @@ describe("TreeSitterClient Edge Cases", () => {
     expect(dataPathsManager.listenerCount("paths:changed")).toBe(0)
 
     destroySingleton("data-paths-opentui")
+  })
+})
+
+describe("TreeSitterClient lifecycle hardening", () => {
+  let dataPath: string
+  const sharedDataPath = join(tmpdir(), "tree-sitter-lifecycle-test-data")
+
+  beforeAll(async () => {
+    await mkdir(sharedDataPath, { recursive: true })
+  })
+
+  beforeEach(() => {
+    dataPath = sharedDataPath
+  })
+
+  const captureWarnTimedOut = () => {
+    const warnings: unknown[][] = []
+    const originalWarn = console.warn
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args)
+    }
+    return {
+      restore: () => {
+        console.warn = originalWarn
+      },
+      hasDisposeTimeoutWarning: () =>
+        warnings.some((args) => Array.from(args).some((arg) => typeof arg === "string" && arg.includes("Timed out"))),
+    }
+  }
+
+  test("removeBuffer cancels the dispose timer on a fast response", async () => {
+    const client = new TreeSitterClient({ dataPath }, { disposeTimeoutMs: 200 })
+    const warn = captureWarnTimedOut()
+    try {
+      await client.initialize()
+      const internals = client as unknown as {
+        worker?: { onmessage: ((event: { data: unknown }) => void) | null }
+      }
+      const worker = internals.worker!
+      await client.createBuffer(1, "const a = 1", "javascript")
+
+      const dispose = client.removeBuffer(1).then(
+        () => "resolved",
+        (error: unknown) => `rejected: ${String(error)}`,
+      )
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      worker.onmessage?.({ data: { type: "BUFFER_DISPOSED", bufferId: 1 } })
+
+      expect(await dispose).toBe("resolved")
+      // Timer must have been cleared on the fast response; wait past the timeout
+      // and assert no stale "Timed out" warning fires.
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      expect(warn.hasDisposeTimeoutWarning()).toBe(false)
+    } finally {
+      warn.restore()
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("removeBuffer dispose timeout settles once and a late response is harmless", async () => {
+    const client = new TreeSitterClient({ dataPath }, { disposeTimeoutMs: 30 })
+    try {
+      await client.initialize()
+      const internals = client as unknown as {
+        worker?: { onmessage: ((event: { data: unknown }) => void) | null }
+      }
+      const worker = internals.worker!
+      await client.createBuffer(1, "const a = 1", "javascript")
+
+      const start = Date.now()
+      await client.removeBuffer(1)
+      expect(Date.now() - start).toBeLessThan(1000)
+
+      // A late BUFFER_DISPOSED after the timeout is harmless (already settled once).
+      worker.onmessage?.({ data: { type: "BUFFER_DISPOSED", bufferId: 1 } })
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("worker error cancels the dispose timer", async () => {
+    const client = new TreeSitterClient({ dataPath }, { disposeTimeoutMs: 200 })
+    const warn = captureWarnTimedOut()
+    try {
+      await client.initialize()
+      const internals = client as unknown as {
+        worker?: {
+          onerror: ((event: { message?: string }) => void) | null
+          postMessage: (message: { type?: string }) => void
+        }
+      }
+      const worker = internals.worker!
+      // Prevent the real worker from resolving the dispose ahead of the synthetic error.
+      const originalPost = worker.postMessage.bind(worker)
+      worker.postMessage = (message) => {
+        if (message.type === "DISPOSE_BUFFER") return
+        originalPost(message)
+      }
+      await client.createBuffer(1, "const a = 1", "javascript")
+
+      const dispose = client.removeBuffer(1).then(
+        () => "resolved",
+        () => "rejected",
+      )
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      worker.onerror?.({ message: "synthetic dispose worker failure" })
+
+      expect(await dispose).toBe("rejected")
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      expect(warn.hasDisposeTimeoutWarning()).toBe(false)
+    } finally {
+      warn.restore()
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("destroy cancels the dispose timer", async () => {
+    const client = new TreeSitterClient({ dataPath }, { disposeTimeoutMs: 50 })
+    try {
+      await client.initialize()
+      const internals = client as unknown as {
+        worker?: {
+          postMessage: (message: { type?: string }) => void
+        }
+      }
+      const worker = internals.worker!
+      // Prevent the real worker from resolving the dispose ahead of destroy().
+      const originalPost = worker.postMessage.bind(worker)
+      worker.postMessage = (message) => {
+        if (message.type === "DISPOSE_BUFFER") return
+        originalPost(message)
+      }
+      await client.createBuffer(1, "const a = 1", "javascript")
+
+      const dispose = client.removeBuffer(1).then(
+        () => "resolved",
+        () => "rejected",
+      )
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      await client.destroy()
+
+      expect(await dispose).toBe("rejected")
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("repeated removeBuffer does not create competing dispose owners", async () => {
+    const client = new TreeSitterClient({ dataPath }, { disposeTimeoutMs: 30 })
+    try {
+      await client.initialize()
+      await client.createBuffer(1, "const a = 1", "javascript")
+
+      const first = client.removeBuffer(1).then(
+        () => "resolved",
+        (error: unknown) => `rejected: ${String(error)}`,
+      )
+      const second = client.removeBuffer(1).then(
+        () => "resolved",
+        (error: unknown) => `rejected: ${String(error)}`,
+      )
+
+      expect(await first).toBe("resolved")
+      expect(await second).toBe("resolved")
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("worker exit propagates once through the failure path", async () => {
+    const client = new TreeSitterClient({ dataPath })
+    try {
+      await client.initialize()
+      const internals = client as unknown as {
+        worker?: {
+          onmessage: ((event: { data: unknown }) => void) | null
+          onexit: ((event: { code: number }) => void) | null
+        }
+        messageCallbacks: Map<string, unknown>
+        buffers: Map<number, unknown>
+      }
+      const worker = internals.worker!
+      await client.createBuffer(1, "const a = 1", "javascript")
+
+      const highlight = client.highlightOnce("const a = 1", "javascript").then(
+        () => "resolved",
+        () => "rejected",
+      )
+      expect(internals.messageCallbacks.size).toBeGreaterThan(0)
+
+      worker.onexit?.({ code: 1 })
+
+      expect(await highlight).toBe("rejected")
+      expect(client.isInitialized()).toBe(false)
+      expect(internals.buffers.size).toBe(0)
+      expect(internals.messageCallbacks.size).toBe(0)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("worker restart budget blocks recreation after consecutive failures", async () => {
+    const client = new TreeSitterClient({ dataPath })
+    try {
+      const internals = client as unknown as {
+        worker?: { onerror: ((event: { message?: string }) => void) | null }
+      }
+
+      // Exercise five real client failure/recreate generations. Successful
+      // initialization alone must not reset the crash-loop budget.
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        await client.initialize()
+        const worker = internals.worker
+        expect(worker).toBeDefined()
+        worker?.onerror?.({ message: `synthetic consecutive failure ${attempt}` })
+        expect(client.isInitialized()).toBe(false)
+      }
+
+      await expect(client.initialize()).rejects.toThrow(/restart budget exceeded/)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  }, 5000)
+
+  test("resetBuffer propagates real debounced work failures", async () => {
+    const client = new TreeSitterClient({ dataPath }, { autoStartWorker: false })
+    try {
+      const internals = client as unknown as {
+        initialized: boolean
+        buffers: Map<number, { id: number; content: string; filetype: string; version: number; hasParser: true }>
+        processEdit: () => Promise<void>
+      }
+      internals.initialized = true
+      internals.buffers.set(1, {
+        id: 1,
+        content: "const a = 1",
+        filetype: "javascript",
+        version: 1,
+        hasParser: true,
+      })
+      internals.processEdit = async () => {
+        throw new Error("synthetic reset send failure")
+      }
+
+      const outcome = await client.resetBuffer(1, 2, "const b = 2").then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      expect(outcome.ok).toBe(false)
+      if (!outcome.ok) {
+        expect(outcome.error).toBeInstanceOf(Error)
+        expect((outcome.error as Error).message).toBe("synthetic reset send failure")
+      }
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("rapid resetBuffer calls settle and only send the latest reset", async () => {
+    const client = new TreeSitterClient({ dataPath }, { autoStartWorker: false })
+    try {
+      const sent: string[] = []
+      const internals = client as unknown as {
+        initialized: boolean
+        buffers: Map<number, { id: number; content: string; filetype: string; version: number; hasParser: true }>
+        processEdit: (
+          bufferId: number,
+          edits: unknown[],
+          content: string,
+          version: number,
+          isReset: boolean,
+        ) => Promise<void>
+      }
+      internals.initialized = true
+      internals.buffers.set(1, {
+        id: 1,
+        content: "const a = 1",
+        filetype: "javascript",
+        version: 1,
+        hasParser: true,
+      })
+      internals.processEdit = async (_bufferId, _edits, content) => {
+        sent.push(content)
+      }
+
+      const first = client.resetBuffer(1, 2, "const b = 2")
+      const second = client.resetBuffer(1, 3, "const c = 3")
+      await Promise.all([first, second])
+
+      expect(sent).toEqual(["const c = 3"])
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("destroying one client does not cancel another client's debounced reset", async () => {
+    const first = new TreeSitterClient({ dataPath }, { autoStartWorker: false })
+    const second = new TreeSitterClient({ dataPath }, { autoStartWorker: false })
+    try {
+      const sent: string[] = []
+      const internals = first as unknown as {
+        initialized: boolean
+        buffers: Map<number, { id: number; content: string; filetype: string; version: number; hasParser: true }>
+        processEdit: (
+          bufferId: number,
+          edits: unknown[],
+          content: string,
+          version: number,
+          isReset: boolean,
+        ) => Promise<void>
+      }
+      internals.initialized = true
+      internals.buffers.set(1, {
+        id: 1,
+        content: "const a = 1",
+        filetype: "javascript",
+        version: 1,
+        hasParser: true,
+      })
+      internals.processEdit = async (_bufferId, _edits, content) => {
+        sent.push(content)
+      }
+
+      const pendingReset = first.resetBuffer(1, 2, "const b = 2")
+      await second.destroy()
+      await pendingReset
+
+      expect(sent).toEqual(["const b = 2"])
+    } finally {
+      await first.destroy().catch(() => {})
+      await second.destroy().catch(() => {})
+    }
+  })
+})
+
+describe("TreeSitterClient backpressure (latest-wins)", () => {
+  const backpressureDataPath = join(tmpdir(), "tree-sitter-backpressure-test-data")
+
+  beforeAll(async () => {
+    await mkdir(backpressureDataPath, { recursive: true })
+  })
+
+  interface HeldHandle {
+    client: TreeSitterClient
+    posted: Array<{ type: string; bufferId: number; version: number; content: string; edits: unknown[] }>
+    fire: (data: unknown) => void
+    worker: { onexit: ((event: { code: number }) => void) | null }
+    internals: any
+  }
+
+  // Initializes a real worker and buffer, then wraps postMessage to HOLD edit
+  // jobs (not forwarded to the worker) so ACKs are delivered deterministically
+  // via `fire`. The client's real onmessage handler is retained.
+  async function seedClient(dataPath: string): Promise<HeldHandle> {
+    const client = new TreeSitterClient({ dataPath })
+    await client.initialize()
+    await client.createBuffer(1, "const a = 1\n", "javascript")
+    const internals = client as unknown as {
+      worker: {
+        postMessage: (m: any) => void
+        onmessage: ((event: any) => void) | null
+        onexit: ((event: { code: number }) => void) | null
+      }
+    }
+    const realWorker = internals.worker
+    const posted: HeldHandle["posted"] = []
+    const originalPost = realWorker.postMessage.bind(realWorker)
+    realWorker.postMessage = (message: any) => {
+      if (message.type === "HANDLE_EDITS" || message.type === "RESET_BUFFER") {
+        posted.push({
+          type: message.type,
+          bufferId: message.bufferId,
+          version: message.version,
+          content: message.content,
+          edits: message.edits,
+        })
+        return
+      }
+      originalPost(message)
+    }
+    return {
+      client,
+      posted,
+      fire: (data) => realWorker.onmessage?.({ data }),
+      worker: realWorker,
+      internals,
+    }
+  }
+
+  function simpleEdit(start: number, newContent: string): any[] {
+    return [
+      {
+        startIndex: start,
+        oldEndIndex: start,
+        newEndIndex: newContent.length,
+        startPosition: { row: 0, column: start },
+        oldEndPosition: { row: 0, column: start },
+        newEndPosition: { row: 0, column: newContent.length },
+      },
+    ]
+  }
+
+  test("latest-wins: 100 same-turn held updates post <=2 jobs, supersede >=98, pending bytes = newest only", async () => {
+    const held = await seedClient(backpressureDataPath)
+    const client = held.client
+    try {
+      const calls: Array<Promise<{ status: string }>> = []
+      const contents: string[] = []
+      for (let i = 2; i <= 101; i++) {
+        const content = `const v = ${i}; ${"x".repeat(i)}`
+        contents.push(content)
+        calls.push(client.updateBuffer(1, simpleEdit(0, content), content, i) as Promise<{ status: string }>)
+      }
+
+      // No ACK released: only the first update should be active-posted.
+      expect(held.posted.length).toBe(1)
+      expect(held.posted[0].version).toBe(2)
+
+      // Release the active v2 -> promotes the single newest pending (v101).
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 2, highlights: [] })
+      expect(held.posted.length).toBe(2)
+      expect(held.posted[1].version).toBe(101)
+      expect(held.posted[1].content).toBe(contents[99])
+
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 101, highlights: [] })
+
+      const outcomes = await Promise.all(calls)
+      const completed = outcomes.filter((o) => o.status === "completed")
+      const superseded = outcomes.filter((o) => o.status === "superseded")
+      expect(completed.length).toBe(2)
+      expect(superseded.length).toBe(98)
+
+      const stats = client.getUpdateQueueStats()
+      expect(stats.posted).toBe(2)
+      expect(stats.superseded).toBe(98)
+      expect(held.posted.length).toBe(2)
+
+      const newestBytes = Buffer.byteLength(contents[99], "utf8")
+      const sumBytes = contents.reduce((a, c) => a + Buffer.byteLength(c, "utf8"), 0)
+      expect(stats.pendingByteHighWater).toBeGreaterThan(0)
+      expect(stats.pendingByteHighWater).toBeLessThanOrEqual(newestBytes)
+      expect(stats.pendingByteHighWater).toBeLessThan(sumBytes)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("an ACK for an older version cannot overwrite a newer version", async () => {
+    const held = await seedClient(backpressureDataPath)
+    const client = held.client
+    try {
+      const active = client.updateBuffer(1, [], "const b = 2", 2)
+      client.updateBuffer(1, [], "const c = 3", 3)
+
+      // A mis-ordered/older ACK (v1) must be ignored: active v2 must not settle.
+      const received: unknown[] = []
+      client.on("highlights:response", (bufferId, version) => {
+        received.push(version)
+      })
+      held.fire({
+        type: "HIGHLIGHT_RESPONSE",
+        bufferId: 1,
+        version: 1,
+        highlights: [{ line: 0, highlights: [], droppedHighlights: [] }],
+      })
+      expect(received.length).toBe(0)
+      expect(held.posted.length).toBe(1)
+
+      // The correct active ACK settles it and promotes the newest pending.
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 2, highlights: [] })
+      expect(held.posted.length).toBe(2)
+      expect(held.posted[1].version).toBe(3)
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 3, highlights: [] })
+
+      const oa = await active
+      expect(oa.status).toBe("completed")
+      expect(received.length).toBe(2)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("an out-of-order newer ACK (e.g. a reset) never settles or promotes an in-flight active edit", async () => {
+    const held = await seedClient(backpressureDataPath)
+    const client = held.client
+    try {
+      const active = client.updateBuffer(1, [], "const b = 2", 2)
+      const pending = client.updateBuffer(1, [], "const c = 3", 3)
+      expect(held.posted.length).toBe(1)
+
+      // A newer version (v3) ACKs first — simulating a concurrent reset or a
+      // pending job completing before the active one. It must NOT settle the
+      // active v2 nor promote/pend anything (no second post).
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 3, highlights: [] })
+      expect(held.posted.length).toBe(1)
+
+      // The true active ACK (v2) settles v2 and promotes the newest pending v3.
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 2, highlights: [] })
+      expect(held.posted.length).toBe(2)
+      expect(held.posted[1].version).toBe(3)
+
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 3, highlights: [] })
+      const oa = await active
+      const op = await pending
+      expect(oa.status).toBe("completed")
+      expect(op.status).toBe("completed")
+      expect(held.posted.length).toBe(2)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("two buffers do not block each other via a global latest-wins policy", async () => {
+    const held = await seedClient(backpressureDataPath)
+    const client = held.client
+    held.internals.buffers.set(2, { id: 2, content: "x", filetype: "javascript", version: 1, hasParser: true })
+    try {
+      const a = client.updateBuffer(1, [], "b1v2", 2)
+      const b = client.updateBuffer(2, [], "b2v2", 2)
+      await Promise.resolve()
+      expect(held.posted.length).toBe(2)
+
+      // Buffer 2 completes independently while buffer 1 is still held.
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 2, version: 2, highlights: [] })
+      await b
+      expect(held.posted.length).toBe(2)
+
+      held.fire({ type: "HIGHLIGHT_RESPONSE", bufferId: 1, version: 2, highlights: [] })
+      const oa = await a
+      expect(oa.status).toBe("completed")
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("destroy settles active and pending jobs exactly once and leaves no works", async () => {
+    const held = await seedClient(backpressureDataPath)
+    const client = held.client
+    try {
+      const active = client.updateBuffer(1, [], "const b = 2", 2)
+      const pending = client.updateBuffer(1, [], "const c = 3", 3)
+      await client.destroy()
+      const [oa, op] = (await Promise.all([active, pending])) as Array<{ status: string }>
+      expect(oa.status).toBe("error")
+      expect(op.status).toBe("error")
+      expect((client as unknown as { works: Map<number, unknown> }).works.size).toBe(0)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("worker exit before/during a job settles active and pending exactly once", async () => {
+    const held = await seedClient(backpressureDataPath)
+    const client = held.client
+    try {
+      const active = client.updateBuffer(1, [], "const b = 2", 2)
+      const pending = client.updateBuffer(1, [], "const c = 3", 3)
+      held.worker.onexit?.({ code: 1 })
+      const [oa, op] = (await Promise.all([active, pending])) as Array<{ status: string }>
+      expect(oa.status).toBe("error")
+      expect(op.status).toBe("error")
+      expect((client as unknown as { works: Map<number, unknown> }).works.size).toBe(0)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("latest-wins output for a real worker matches the highlightOnce oracle", async () => {
+    const client = new TreeSitterClient({ dataPath: backpressureDataPath })
+    try {
+      await client.initialize()
+      const jsCode = 'const hello = "world"\n'
+      const initial = await client.createBufferWithHighlights(1, jsCode, "javascript")
+      const initialOracle = await client.highlightOnce(jsCode, "javascript")
+      expect(initial.hasParser).toBe(true)
+      expect(initial.highlights).toEqual(initialOracle.highlights)
+
+      const final = 'const hello = "world"\nconst add = (a, b) => a + b // tail\n'
+      const appendEdit = [
+        {
+          startIndex: jsCode.length,
+          oldEndIndex: jsCode.length,
+          newEndIndex: final.length,
+          startPosition: { row: 1, column: 0 },
+          oldEndPosition: { row: 1, column: 0 },
+          newEndPosition: { row: 1, column: final.length - jsCode.length },
+        },
+      ]
+
+      const emitted: Array<{ version: number; highlights: unknown[] }> = []
+      client.on("highlights:response", (bufferId, version, highlights) => {
+        emitted.push({ version, highlights })
+      })
+
+      const outcome = await client.updateBuffer(1, appendEdit, final, 2)
+      expect(outcome.status).toBe("completed")
+      const delivered = emitted.find((e) => e.version === 2)
+      expect(delivered).toBeDefined()
+      expect((delivered?.highlights ?? []).length).toBeGreaterThan(0)
+
+      const oracle = await client.highlightOnce(final, "javascript")
+      expect(oracle.error).toBeUndefined()
+      expect(outcome.status === "completed" ? outcome.highlights : undefined).toEqual(oracle.highlights)
+    } finally {
+      await client.destroy().catch(() => {})
+    }
+  })
+
+  test("full-highlight-only buffers preserve the oracle without building legacy line deltas", async () => {
+    const client = new TreeSitterClient({ dataPath: backpressureDataPath })
+    try {
+      await client.initialize()
+      const initial = 'const hello = "world"\n'
+      const created = await client.createBufferWithHighlights(1, initial, "javascript", 1, true, true)
+      expect(created.highlights).toEqual((await client.highlightOnce(initial, "javascript")).highlights)
+
+      const emitted: Array<{ version: number; highlights: unknown[] }> = []
+      client.on("highlights:response", (bufferId, version, highlights) => {
+        if (bufferId === 1) emitted.push({ version, highlights })
+      })
+
+      const final = `${initial}const tail = true\n`
+      const outcome = await client.updateBuffer(
+        1,
+        [
+          {
+            startIndex: initial.length,
+            oldEndIndex: initial.length,
+            newEndIndex: final.length,
+            startPosition: { row: 1, column: 0 },
+            oldEndPosition: { row: 1, column: 0 },
+            newEndPosition: { row: 2, column: 0 },
+          },
+        ],
+        final,
+        2,
+      )
+
+      expect(outcome.status === "completed" ? outcome.highlights : undefined).toEqual(
+        (await client.highlightOnce(final, "javascript")).highlights,
+      )
+      expect(emitted.find((event) => event.version === 2)?.highlights).toEqual([])
+    } finally {
+      await client.destroy().catch(() => {})
+    }
   })
 })

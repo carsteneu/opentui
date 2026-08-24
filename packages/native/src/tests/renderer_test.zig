@@ -84,6 +84,73 @@ const SlowThreadSafeOutput = struct {
         io.sleep(.fromNanoseconds(self.delay_ns), .awake) catch unreachable;
     }
 };
+
+test "renderer retained regions update only bounded cells" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    defer link.deinitGlobalLinkPool();
+    var test_renderer = try TestRenderer.create(std.testing.allocator, 8, 1, pool);
+    defer test_renderer.deinit();
+
+    const white = ansi.rgbColor(255, 255, 255, 255);
+    const next = test_renderer.renderer.getNextBuffer();
+    try next.drawText("abcdefgh", 0, 0, white, null, 0);
+    try std.testing.expectEqual(renderer.RenderStatus.rendered, test_renderer.renderer.renderRetained(true));
+    try std.testing.expectEqual(@as(u32, 'g'), next.get(6, 0).?.char);
+
+    try next.drawText("X", 1, 0, white, null, 0);
+    try next.drawText("Y", 6, 0, white, null, 0);
+    try std.testing.expectEqual(
+        renderer.RenderStatus.rendered,
+        test_renderer.renderer.renderRegion(.{ .x = 0, .y = 0, .width = 3, .height = 1 }),
+    );
+
+    try std.testing.expectEqual(@as(u32, 'X'), test_renderer.renderer.getCurrentBuffer().get(1, 0).?.char);
+    try std.testing.expectEqual(@as(u32, 'g'), test_renderer.renderer.getCurrentBuffer().get(6, 0).?.char);
+    try std.testing.expect(std.mem.indexOfScalar(u8, test_renderer.memory.lastWrite(), 'X') != null);
+    try std.testing.expect(std.mem.indexOfScalar(u8, test_renderer.memory.lastWrite(), 'Y') == null);
+
+    try std.testing.expectEqual(
+        renderer.RenderStatus.rendered,
+        test_renderer.renderer.renderRegion(.{ .x = 5, .y = 0, .width = 3, .height = 1 }),
+    );
+    try std.testing.expectEqual(@as(u32, 'Y'), test_renderer.renderer.getCurrentBuffer().get(6, 0).?.char);
+}
+
+test "renderer rejects partial regions while image state is active" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    defer link.deinitGlobalLinkPool();
+    var test_renderer = try TestRenderer.create(std.testing.allocator, 2, 1, pool);
+    defer test_renderer.deinit();
+    const value = try image.createFromRgba(std.testing.allocator, &[_]u8{ 255, 0, 0, 255 }, 1, 1, 4);
+    const image_handle = try handles.insert(.image, @ptrCast(value));
+    defer {
+        const token = handles.beginDestroy(image_handle, .image, image.Image).?;
+        token.ptr.deinit();
+        handles.finishDestroy(token.handle);
+    }
+    test_renderer.renderer.terminal.caps.kitty_graphics = true;
+    test_renderer.renderer.terminal.multiplexer = .none;
+
+    try std.testing.expect(try test_renderer.renderer.getNextBuffer().drawImage(value, image_handle, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, .auto));
+    try std.testing.expectEqual(renderer.RenderStatus.rendered, test_renderer.renderer.renderRetained(true));
+    try std.testing.expect(test_renderer.renderer.hasActiveImageState());
+    const output_len = test_renderer.memory.bytes.items.len;
+
+    try std.testing.expectEqual(
+        renderer.RenderStatus.failed,
+        test_renderer.renderer.renderRegion(.{ .x = 0, .y = 0, .width = 1, .height = 1 }),
+    );
+    try std.testing.expectEqual(output_len, test_renderer.memory.bytes.items.len);
+    try std.testing.expectEqual(@as(usize, 1), test_renderer.renderer.currentImages.items.len);
+
+    test_renderer.renderer.getNextBuffer().clear(ansi.rgbColor(0, 0, 0, 0), null);
+    try std.testing.expectEqual(renderer.RenderStatus.rendered, test_renderer.renderer.renderRetained(false));
+    try std.testing.expect(!test_renderer.renderer.hasActiveImageState());
+    try std.testing.expect(std.mem.indexOf(u8, test_renderer.memory.lastWrite(), "a=d,d=I") != null);
+}
+
 test "renderer emits Kitty image once and leaves unchanged frame empty" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();

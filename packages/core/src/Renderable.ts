@@ -22,6 +22,7 @@ import {
 import { maybeMakeRenderable, type VNode } from "./renderables/composition/vnode.js"
 import type { MouseEvent } from "./renderer.js"
 import type { RenderContext } from "./types.js"
+import type { ScalingCounterHost, Wave3ScalingCounters } from "./benchmark/wave3-scaling-counters.js"
 import {
   validateOptions,
   isPositionType,
@@ -140,6 +141,8 @@ export abstract class BaseRenderable extends EventEmitter {
   protected _id: string
   public readonly num: number
   protected _dirty: boolean = false
+  // Opt-in only: the renderer still promotes unsafe partial requests to full frames.
+  protected _partialEligible: boolean = false
   public parent: BaseRenderable | null = null
   protected _visible: boolean = true
 
@@ -202,6 +205,21 @@ interface LayoutGenerationContext extends RenderContext {
   __otuiRenderListRevision?: number
 }
 
+// Render-list builds are synchronous. Collecting here avoids a context lookup for every node.
+let activeUpdatables: Renderable[] | null = null
+let activeRenderListReusable = true
+
+function beginRenderListCollection(updatables: Renderable[]): void {
+  activeUpdatables = updatables
+  activeRenderListReusable = true
+}
+
+function endRenderListCollection(): boolean {
+  const reusable = activeRenderListReusable
+  activeUpdatables = null
+  return reusable
+}
+
 function getLayoutGeneration(ctx: RenderContext): number {
   return (ctx as LayoutGenerationContext).__otuiLayoutGeneration ?? 0
 }
@@ -222,10 +240,13 @@ function bumpRenderListRevision(ctx: RenderContext): void {
   generationContext.__otuiRenderListRevision = getRenderListRevision(ctx) + 1
 }
 
+let updatePassId = 0
+
 export abstract class Renderable extends BaseRenderable {
   static renderablesByNumber: Map<number, Renderable> = new Map()
 
-  protected _isDestroyed: boolean = false
+  // Hot render-list loops read this directly; callers outside the renderer use isDestroyed.
+  public _isDestroyed: boolean = false
   protected _ctx: RenderContext
   protected _translateX: number = 0
   protected _translateY: number = 0
@@ -277,6 +298,12 @@ export abstract class Renderable extends BaseRenderable {
 
   // Frame id of the last updateFromLayout(); -1 ensures the first call runs.
   private _lastLayoutFrame: number = -1
+  private _layoutEpoch: number = -1
+  private _lastOnUpdatePass = -1
+  private _needsFrameUpdate = false
+  private _reuseScissorOk = false
+  private _reuseFilterOk = false
+  private _renderCommandReusable = true
 
   public onLifecyclePass: (() => void) | null = null
 
@@ -310,6 +337,10 @@ export abstract class Renderable extends BaseRenderable {
     this._live = options.live ?? false
     this._liveCount = this._live && this._visible ? 1 : 0
     this._opacity = options.opacity !== undefined ? Math.max(0, Math.min(1, options.opacity)) : 1.0
+
+    this._needsFrameUpdate = this.onUpdate !== Renderable.prototype.onUpdate
+    this._reuseScissorOk = this.getScissorRect === Renderable.prototype.getScissorRect || this.isScissorRectReusable()
+    this._reuseFilterOk = !this._hasVisibleChildFilter() || this.isVisibleChildFilterReusable()
 
     this.yogaNode = Yoga.Node.createForOpenTUI()
     this.yogaNode.setDisplay(this._visible ? Display.Flex : Display.None)
@@ -511,7 +542,15 @@ export abstract class Renderable extends BaseRenderable {
 
   public requestRender() {
     this.markDirty()
-    this._ctx.requestRender()
+    if (this._partialEligible && this._ctx.requestPartialRender) {
+      this._ctx.requestPartialRender(this)
+      return
+    }
+    this._ctx.requestRender(this)
+  }
+
+  public setPartialEligible(on: boolean): void {
+    this._partialEligible = on
   }
 
   public get translateX(): number {
@@ -763,6 +802,7 @@ export abstract class Renderable extends BaseRenderable {
     if (this._overflow !== "visible") {
       node.setOverflow(parseOverflow(this._overflow))
     }
+    this.recomputeRenderCommandReusable()
 
     // TODO: flatten position properties internally as well
     const hasPositionProps =
@@ -856,6 +896,7 @@ export abstract class Renderable extends BaseRenderable {
     if (!isOverflowType(overflow) || this._overflow === overflow) return
 
     this._overflow = overflow
+    this.recomputeRenderCommandReusable()
     this.yogaNode.setOverflow(parseOverflow(overflow))
     bumpRenderListRevision(this._ctx)
     this.requestRender()
@@ -1083,8 +1124,19 @@ export abstract class Renderable extends BaseRenderable {
     }
   }
 
+  // NOTE: updateFromLayout() caches FFI reads per ctx layout generation. That
+  // invariant assumes every computed-layout change for this node passes through
+  // calculateLayout()/syncExternalLayoutGeneration(), which bump the generation.
+  // Direct calculateLayout()/set*(...) calls on the raw node return through the
+  // normal dirty→calculateLayout pipeline next frame, so the cache stays valid;
+  // only a raw calculateLayout() that never marks dirty would be missed.
   public getLayoutNode(): YogaNode {
     return this.yogaNode
+  }
+
+  /** Opt-in scaling counter (Wave-3 Loop D). Null in the off-state (cheap guard). */
+  protected scalingCounters(): Wave3ScalingCounters | null {
+    return (this._ctx as ScalingCounterHost).scalingCounters ?? null
   }
 
   public updateFromLayout(): void {
@@ -1092,6 +1144,25 @@ export abstract class Renderable extends BaseRenderable {
     const frameId = this._ctx.frameId
     if (this._lastLayoutFrame === frameId) return
     this._lastLayoutFrame = frameId
+
+    // A node's computed layout can only change after a Yoga layout pass, and
+    // every layout pass bumps the ctx layout generation. While the generation
+    // is unchanged, getComputedLayout would return the same values we cached on
+    // the previous read, so the per-node FFI round-trip can be skipped entirely.
+    // Screen coordinates still derive from the (possibly translated) parent
+    // chain, so culled position reads stay current.
+    const layoutGeneration = getLayoutGeneration(this._ctx)
+    if (layoutGeneration === this._layoutEpoch) {
+      const cachedParentScreenX = this.parent ? this.parent._screenX : 0
+      const cachedParentScreenY = this.parent ? this.parent._screenY : 0
+      this._screenX = cachedParentScreenX + this._x + this._translateX
+      this._screenY = cachedParentScreenY + this._y + this._translateY
+      return
+    }
+    this._layoutEpoch = layoutGeneration
+
+    const counters = this.scalingCounters()
+    if (counters) counters.updateFromLayoutFfiCalls++
 
     const layout = this.yogaNode.getComputedLayout()
 
@@ -1382,7 +1453,10 @@ export abstract class Renderable extends BaseRenderable {
   public updateLayout(deltaTime: number, renderList: RenderCommand[] = []): void {
     if (!this.visible) return
 
-    this.onUpdate(deltaTime)
+    const counters = this.scalingCounters()
+    if (counters) counters.visitedStableNodes++
+
+    if (this._needsFrameUpdate) this.runFrameUpdate(deltaTime)
 
     // If destroyed during onUpdate, don't add to render list
     if (this._isDestroyed) return
@@ -1400,7 +1474,7 @@ export abstract class Renderable extends BaseRenderable {
     // This ensures their positions are current when culling happens
     if (this._shouldUpdateBefore.size > 0) {
       for (const child of this._shouldUpdateBefore) {
-        if (!child.isDestroyed) {
+        if (!child._isDestroyed) {
           child.updateFromLayout()
         }
       }
@@ -1417,6 +1491,10 @@ export abstract class Renderable extends BaseRenderable {
     }
 
     renderList.push({ action: "render", renderable: this })
+    if (activeUpdatables !== null) {
+      if (this._needsFrameUpdate) activeUpdatables.push(this)
+      if (activeRenderListReusable && !this._renderCommandReusable) activeRenderListReusable = false
+    }
 
     this.ensureZIndexSorted()
 
@@ -1445,7 +1523,7 @@ export abstract class Renderable extends BaseRenderable {
       // and drops content that shifted this frame. The per-frame guard in
       // updateFromLayout keeps this at one FFI call per child per frame.
       for (const child of this._childrenInZIndexOrder) {
-        if (child.isDestroyed) continue
+        if (child._isDestroyed) continue
         child.updateFromLayout()
       }
       const visibleChildren = this._getVisibleChildren()
@@ -1495,6 +1573,92 @@ export abstract class Renderable extends BaseRenderable {
     }
   }
 
+  public renderPartial(
+    buffer: OptimizedBuffer,
+    deltaTime: number,
+  ): { x: number; y: number; width: number; height: number } | null {
+    const ancestors: Renderable[] = []
+    let parent = this.parent
+    while (parent instanceof Renderable) {
+      ancestors.push(parent)
+      parent = parent.parent
+    }
+
+    let left = this._screenX
+    let top = this._screenY
+    let right = left + this.width
+    let bottom = top + this.height
+    const stack: Array<"opacity" | "scissor"> = []
+
+    ancestors.reverse().forEach((ancestor) => {
+      if (ancestor._opacity < 1) {
+        buffer.pushOpacity(ancestor._opacity)
+        stack.push("opacity")
+      }
+      if (ancestor._overflow === "visible" || ancestor.width <= 0 || ancestor.height <= 0) return
+
+      const rect = ancestor.getScissorRect()
+      buffer.pushScissorRect(rect.x, rect.y, rect.width, rect.height)
+      this._ctx.pushHitGridScissorRect(ancestor._screenX, ancestor._screenY, rect.width, rect.height)
+      stack.push("scissor")
+      left = Math.max(left, rect.x)
+      top = Math.max(top, rect.y)
+      right = Math.min(right, rect.x + rect.width)
+      bottom = Math.min(bottom, rect.y + rect.height)
+    })
+
+    if (this._opacity < 1) {
+      buffer.pushOpacity(this._opacity)
+      stack.push("opacity")
+    }
+
+    try {
+      this.render(buffer, deltaTime)
+    } finally {
+      stack.reverse().forEach((entry) => {
+        if (entry === "opacity") {
+          buffer.popOpacity()
+          return
+        }
+        buffer.popScissorRect()
+        this._ctx.popHitGridScissorRect()
+      })
+    }
+
+    if (left >= right || top >= bottom) return null
+    return { x: left, y: top, width: right - left, height: bottom - top }
+  }
+
+  public getVisibleRenderBounds(
+    width: number,
+    height: number,
+  ): {
+    left: number
+    top: number
+    right: number
+    bottom: number
+  } | null {
+    let left = Math.max(0, this._screenX)
+    let top = Math.max(0, this._screenY)
+    let right = Math.min(width, this._screenX + this.width)
+    let bottom = Math.min(height, this._screenY + this.height)
+    let parent = this.parent
+
+    while (parent) {
+      if (parent._overflow !== "visible" && parent.width > 0 && parent.height > 0) {
+        const rect = parent.getScissorRect()
+        left = Math.max(left, rect.x)
+        top = Math.max(top, rect.y)
+        right = Math.min(right, rect.x + rect.width)
+        bottom = Math.min(bottom, rect.y + rect.height)
+      }
+      parent = parent.parent
+    }
+
+    if (left >= right || top >= bottom) return null
+    return { left, top, right, bottom }
+  }
+
   protected _hasVisibleChildFilter(): boolean {
     // Presume an override of _getVisibleChildren means this subclass is using
     // the legacy filtering hook, so existing custom renderables keep working.
@@ -1505,12 +1669,39 @@ export abstract class Renderable extends BaseRenderable {
     return this._childrenInZIndexOrder.map((child) => child.num)
   }
 
+  public isInRenderPath(): boolean {
+    if (!this.visible) return false
+    let node: Renderable = this
+    let parent = this.parent
+    while (parent) {
+      if (!(parent instanceof Renderable) || !parent.visible) return false
+      if (parent._hasVisibleChildFilter() && !parent._getVisibleChildren().includes(node.num)) return false
+      node = parent
+      parent = parent.parent
+    }
+    return node instanceof RootRenderable
+  }
+
   public canReuseRenderCommandList(): boolean {
-    return (
-      this.onUpdate === Renderable.prototype.onUpdate &&
-      (this._overflow === "visible" || this.getScissorRect === Renderable.prototype.getScissorRect) &&
-      !this._hasVisibleChildFilter()
-    )
+    return this._renderCommandReusable
+  }
+
+  private recomputeRenderCommandReusable(): void {
+    this._renderCommandReusable = (this._overflow === "visible" || this._reuseScissorOk) && this._reuseFilterOk
+  }
+
+  protected isVisibleChildFilterReusable(): boolean {
+    return false
+  }
+
+  protected isScissorRectReusable(): boolean {
+    return false
+  }
+
+  public runFrameUpdate(deltaTime: number): void {
+    if (this._lastOnUpdatePass === updatePassId) return
+    this._lastOnUpdatePass = updatePassId
+    this.onUpdate(deltaTime)
   }
 
   protected onUpdate(deltaTime: number): void {
@@ -1738,12 +1929,24 @@ export type RenderCommand =
   | RenderCommandPushOpacity
   | RenderCommandPopOpacity
 
+type RenderBounds = NonNullable<ReturnType<Renderable["getVisibleRenderBounds"]>>
+
+function renderBoundsOverlap(left: RenderBounds, right: RenderBounds): boolean {
+  return left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top
+}
+
+function recordPartialRejection(counters: Wave3ScalingCounters, reason: string): void {
+  counters.partialRejectedBy[reason] = (counters.partialRejectedBy[reason] ?? 0) + 1
+}
+
 export class RootRenderable extends Renderable {
   private renderList: RenderCommand[] = []
+  private renderIndices = new Map<Renderable, number>()
   private _currentRenderable: Renderable | undefined
   private appliedLayoutGeneration: number = -1
   private appliedRenderListRevision: number = -1
   private renderListReusable: boolean = false
+  private updatables: Renderable[] = []
 
   constructor(ctx: RenderContext) {
     super(ctx, {
@@ -1777,13 +1980,73 @@ export class RootRenderable extends Renderable {
     return renderable
   }
 
+  public renderPartialTarget(
+    renderable: Renderable,
+    buffer: OptimizedBuffer,
+    deltaTime: number,
+  ): { x: number; y: number; width: number; height: number } | null {
+    this._currentRenderable = renderable
+    const bounds = renderable.renderPartial(buffer, deltaTime)
+    this._currentRenderable = undefined
+    return bounds
+  }
+
+  public isPartialRenderStateCurrent(): boolean {
+    // Partial frames skip layout, command-list rebuilding, and the root's live-update pass.
+    return (
+      this._liveCount === 0 &&
+      !this.yogaNode.isDirty() &&
+      !this.yogaNode.hasNewLayout() &&
+      this.appliedLayoutGeneration === getLayoutGeneration(this._ctx) &&
+      this.appliedRenderListRevision === getRenderListRevision(this._ctx)
+    )
+  }
+
+  public hasSafePartialComposition(renderables: ReadonlySet<Renderable>): boolean {
+    const counters = this.scalingCounters()
+    if (counters) counters.hasSafePartialCompositionCalls++
+    for (const renderable of renderables) {
+      let current: Renderable | null = renderable
+      while (current) {
+        if (counters) counters.boundsWalks++
+        if (current.opacity < 1) {
+          if (counters) recordPartialRejection(counters, "translucent-ancestor")
+          return false
+        }
+        current = current.parent
+      }
+
+      const index = this.renderIndices.get(renderable)
+      if (index === undefined) {
+        if (counters) recordPartialRejection(counters, "not-in-render-list")
+        return false
+      }
+      const bounds = renderable.getVisibleRenderBounds(this.width, this.height)
+      if (!bounds) continue
+
+      // This is a frame-time guard. Avoid allocating a sliced command list on
+      // every streaming update while conservatively checking later painters.
+      for (let i = index + 1; i < this.renderList.length; i++) {
+        if (counters) counters.scannedLaterPainters++
+        const command = this.renderList[i]
+        if (command.action !== "render" || command.renderable._isDestroyed) continue
+        const later = command.renderable.getVisibleRenderBounds(this.width, this.height)
+        if (later && renderBoundsOverlap(bounds, later)) {
+          if (counters) recordPartialRejection(counters, "overlap-later-painter")
+          return false
+        }
+      }
+    }
+    return true
+  }
+
   public render(buffer: OptimizedBuffer, deltaTime: number): void {
     this._currentRenderable = undefined
     if (!this.visible) return
 
     // 0. Run lifecycle pass
     for (const renderable of this._ctx.getLifecyclePasses()) {
-      if (!renderable.isDestroyed) {
+      if (!renderable._isDestroyed) {
         renderable.onLifecyclePass?.call(renderable)
       }
     }
@@ -1796,10 +2059,20 @@ export class RootRenderable extends Renderable {
     // but that's only possible if we move the layout tree to native.
 
     // 1. Calculate layout from root
+    const rCounters = this.scalingCounters()
+    const layoutStart = rCounters ? performance.now() : 0
     if (this.yogaNode.isDirty()) {
       this.calculateLayout()
+      if (rCounters) rCounters.dirtySubtreeLayouts++
     } else {
       this.syncExternalLayoutGeneration()
+    }
+    if (rCounters) rCounters.layoutMs += performance.now() - layoutStart
+
+    updatePassId++
+    // Reusable command lists must not suppress per-frame onUpdate callbacks.
+    for (const updatable of this.updatables) {
+      if (!updatable._isDestroyed && updatable.visible) updatable.runFrameUpdate(deltaTime)
     }
 
     // 2. Update layout throughout the tree and collect render list
@@ -1811,21 +2084,38 @@ export class RootRenderable extends Renderable {
       this.appliedRenderListRevision === renderListRevision
 
     if (!canReuseRenderList) {
+      if (rCounters) rCounters.renderListRebuilds++
+      this.updatables.length = 0
+      beginRenderListCollection(this.updatables)
       this.renderList.length = 0
-      super.updateLayout(deltaTime, this.renderList)
-      this.appliedLayoutGeneration = layoutGeneration
-      this.appliedRenderListRevision = getRenderListRevision(this._ctx)
-      this.renderListReusable = this.canReuseCurrentRenderList()
+      this.renderIndices.clear()
+      try {
+        super.updateLayout(deltaTime, this.renderList)
+        this.renderList.forEach((command, index) => {
+          if (command.action === "render") this.renderIndices.set(command.renderable, index)
+        })
+        this.appliedLayoutGeneration = layoutGeneration
+        this.appliedRenderListRevision = getRenderListRevision(this._ctx)
+        this.renderListReusable = endRenderListCollection()
+      } catch (error) {
+        endRenderListCollection()
+        this.renderListReusable = false
+        throw error
+      }
+    } else {
+      if (rCounters) rCounters.renderListReuses++
     }
+    if (rCounters) rCounters.renderCommands += this.renderList.length
 
     // 3. Render all collected renderables
+    const jsRenderStart = rCounters ? performance.now() : 0
     this._ctx.clearHitGridScissorRects()
     for (let i = 1; i < this.renderList.length; i++) {
       const command = this.renderList[i]
       switch (command.action) {
         case "render":
           // Skip if renderable was destroyed during a previous render callback
-          if (!command.renderable.isDestroyed) {
+          if (!command.renderable._isDestroyed) {
             this._currentRenderable = command.renderable
             command.renderable.render(buffer, deltaTime)
             this._currentRenderable = undefined
@@ -1847,6 +2137,7 @@ export class RootRenderable extends Renderable {
           break
       }
     }
+    if (rCounters) rCounters.jsRenderMs += performance.now() - jsRenderStart
   }
 
   protected propagateLiveCount(delta: number): void {
@@ -1861,6 +2152,8 @@ export class RootRenderable extends Renderable {
   }
 
   public calculateLayout(): void {
+    const counters = this.scalingCounters()
+    if (counters) counters.layoutGenerations++
     this.yogaNode.calculateLayout(this.width, this.height, Direction.LTR)
     bumpLayoutGeneration(this._ctx)
     this.yogaNode.markLayoutSeen()
@@ -1871,17 +2164,6 @@ export class RootRenderable extends Renderable {
     if (!this.yogaNode.hasNewLayout()) return
     bumpLayoutGeneration(this._ctx)
     this.yogaNode.markLayoutSeen()
-  }
-
-  private canReuseCurrentRenderList(): boolean {
-    if (this._liveCount > 0) return false
-
-    for (const command of this.renderList) {
-      if (command.action !== "render") continue
-      if (!command.renderable.canReuseRenderCommandList()) return false
-    }
-
-    return true
   }
 
   public resize(width: number, height: number): void {

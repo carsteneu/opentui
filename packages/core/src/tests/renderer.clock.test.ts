@@ -2,6 +2,13 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { SystemClock } from "../lib/clock.js"
 import { createTestRenderer, type TestRenderer } from "../testing/test-renderer.js"
 import { ManualClock } from "../testing/manual-clock.js"
+import { Renderable } from "../Renderable.js"
+
+class PartialRenderable extends Renderable {
+  constructor(renderer: TestRenderer, options: any) {
+    super(renderer, options)
+  }
+}
 
 let clock: ManualClock
 let renderer: TestRenderer
@@ -280,4 +287,154 @@ test("start() does not double-schedule frames when a render was already queued",
   expect(clock.timers.size).toBe(1)
   expect(renderCalls).toBeGreaterThanOrEqual(25)
   expect(renderCalls).toBeLessThanOrEqual(40)
+})
+
+test("destroy() cancels a pending one-shot render timer and resets updateScheduled", async () => {
+  let renderCalled = false
+  // @ts-expect-error - intercept private render method in regression test
+  renderer.renderNative = () => {
+    renderCalled = true
+  }
+
+  renderer.requestRender()
+  // @ts-expect-error - inspect private scheduler state in regression test
+  expect(renderer.updateScheduled).toBe(true)
+  // @ts-expect-error - inspect private manual clock timers in regression test
+  expect(clock.timers.size).toBe(1)
+
+  renderer.destroy()
+
+  // The delayed activation must be fully cancelled: no stale timer in the clock,
+  // and updateScheduled must be reset so a later valid generation can re-arm.
+  // @ts-expect-error - inspect private manual clock timers in regression test
+  expect(clock.timers.size).toBe(0)
+  // @ts-expect-error - inspect private scheduler state in regression test
+  expect(renderer.updateScheduled).toBe(false)
+
+  clock.advance(100)
+  await Promise.resolve()
+  expect(renderCalled).toBe(false)
+})
+
+test("suspend() cancels a pending one-shot render timer", async () => {
+  let renderCalled = false
+  // @ts-expect-error - intercept private render method in regression test
+  renderer.renderNative = () => {
+    renderCalled = true
+  }
+
+  renderer.requestRender()
+  // @ts-expect-error - inspect private manual clock timers in regression test
+  expect(clock.timers.size).toBe(1)
+
+  renderer.suspend()
+
+  // @ts-expect-error - inspect private manual clock timers in regression test
+  expect(clock.timers.size).toBe(0)
+  // @ts-expect-error - inspect private scheduler state in regression test
+  expect(renderer.updateScheduled).toBe(false)
+
+  clock.advance(100)
+  await Promise.resolve()
+  expect(renderCalled).toBe(false)
+})
+
+test("a stale nextTick after a cancel does not render; the new generation does", async () => {
+  let renderCalls = 0
+  // @ts-expect-error - intercept private render method in regression test
+  renderer.renderNative = () => {
+    renderCalls++
+  }
+
+  // Force the first request onto the uncancellable process.nextTick path (delay 0).
+  clock.setTime(10_000)
+  // @ts-expect-error - inspect private renderer timing state in regression test
+  renderer.lastTime = 9_000
+  renderer.requestRender()
+  // @ts-expect-error - inspect private scheduler state in regression test
+  expect(renderer.updateScheduled).toBe(true)
+
+  // Cancel: a control transition invalidates the queued (uncancellable) nextTick.
+  renderer.suspend()
+
+  // A new valid generation resumes in IDLE; its activation is a delayed timer.
+  // @ts-expect-error - inspect private renderer timing state in regression test
+  renderer.lastTime = 10_000
+  renderer.resume()
+  // @ts-expect-error - inspect private manual clock timers in regression test
+  expect(clock.timers.size).toBe(1)
+
+  // Flush only microtasks: the stale nextTick fires and MUST NOT render.
+  await Promise.resolve()
+  expect(renderCalls).toBe(0)
+
+  // The new generation's timer renders exactly once.
+  clock.advance(50)
+  await Promise.resolve()
+  expect(renderCalls).toBe(1)
+})
+
+test("repeated requestRender() schedules at most one activation owner", async () => {
+  renderer.requestRender()
+  renderer.requestRender()
+  renderer.requestRender()
+
+  // @ts-expect-error - inspect private manual clock timers in regression test
+  expect(clock.timers.size).toBe(1)
+  // @ts-expect-error - inspect private scheduler state in regression test
+  expect(renderer.updateScheduled).toBe(true)
+})
+
+test("requestRender() and requestPartialRender() share one delayed activation owner", async () => {
+  const partial = new PartialRenderable(renderer, {
+    x: 0,
+    y: 0,
+    width: renderer.width,
+    height: renderer.height,
+  })
+
+  renderer.requestRender()
+  renderer.requestPartialRender(partial)
+
+  // @ts-expect-error - inspect private manual clock timers in regression test
+  expect(clock.timers.size).toBe(1)
+  // @ts-expect-error - inspect private scheduler state in regression test
+  expect(renderer.updateScheduled).toBe(true)
+})
+
+test("an old activation completion cannot clear a newer scheduled generation", async () => {
+  let resolveFirst!: () => void
+  const firstLoop = new Promise<void>((resolve) => {
+    resolveFirst = resolve
+  })
+  let loopCalls = 0
+  const internals = renderer as any
+  internals.loop = () => {
+    loopCalls++
+    return loopCalls === 1 ? firstLoop : Promise.resolve()
+  }
+
+  renderer.requestRender()
+  clock.advance(17)
+  expect(loopCalls).toBe(1)
+
+  // Invalidate the in-flight owner and schedule a replacement while its
+  // asynchronous loop is still pending.
+  internals.cancelDelayedActivation()
+  internals.lastTime = clock.now()
+  renderer.requestRender()
+  expect(internals.updateScheduled).toBe(true)
+  expect(internals.activationTimer).not.toBeNull()
+
+  resolveFirst()
+  await Promise.resolve()
+  await Promise.resolve()
+
+  // The old activateFrame finally block must not erase the replacement.
+  expect(internals.updateScheduled).toBe(true)
+  expect(internals.activationTimer).not.toBeNull()
+
+  clock.advance(17)
+  await Promise.resolve()
+  expect(loopCalls).toBe(2)
 })

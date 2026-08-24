@@ -2744,6 +2744,83 @@ test("internalBlockMode=top-level preserves top-level block boundaries", async (
   expect(md._stableBlockCount).toBe(3)
 })
 
+test("streaming top-level prose defers duplicate highlighting until completion", async () => {
+  const client = createMockTreeSitterClient()
+  client.setMockResult({ highlights: [] })
+  const md = createMarkdownRenderable({
+    id: "markdown-top-level-deferred-highlight",
+    content: "Already parsed and styled prose",
+    syntaxStyle,
+    treeSitterClient: client,
+    streaming: true,
+    internalBlockMode: "top-level",
+  })
+
+  renderer.root.add(md)
+  await renderOnce()
+  expect(client.isHighlighting()).toBe(false)
+
+  md.streaming = false
+  await renderOnce()
+  expect(client.isHighlighting()).toBe(true)
+})
+
+test("streaming top-level prose keeps concealed styled snapshots fresh", async () => {
+  const client = createMockTreeSitterClient()
+  client.setMockResult({ highlights: [] })
+  const md = createMarkdownRenderable({
+    id: "markdown-top-level-concealed-snapshot",
+    content: "This has **bold** text.",
+    syntaxStyle,
+    treeSitterClient: client,
+    streaming: true,
+    internalBlockMode: "top-level",
+  })
+
+  renderer.root.add(md)
+  await renderOnce()
+  expect(captureFrame()).toContain("This has bold text.")
+  expect(captureFrame()).not.toContain("**bold**")
+  expect(client.isHighlighting()).toBe(false)
+
+  md.content = "This has **bold** text and *italic*."
+  await renderOnce()
+  expect(captureFrame()).toContain("This has bold text and italic.")
+  expect(captureFrame()).not.toContain("**bold**")
+  expect(captureFrame()).not.toContain("*italic*")
+  expect(client.isHighlighting()).toBe(false)
+})
+
+test("retained rendering follows the markdown streaming lifecycle", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-top-level-retained-rendering",
+    content: "Streaming prose",
+    syntaxStyle,
+    streaming: true,
+    retainedRendering: true,
+    internalBlockMode: "top-level",
+    bg: RGBA.fromValues(0, 0, 0, 1),
+  })
+
+  renderer.root.add(md)
+  await renderOnce()
+  const code = () => md._blockStates[0]?.renderable as CodeRenderable
+  expect(code()).toBeInstanceOf(CodeRenderable)
+  expect(code().retainedRendering).toBe(true)
+
+  md.streaming = false
+  await renderOnce()
+  expect(code().retainedRendering).toBe(false)
+
+  md.streaming = true
+  await renderOnce()
+  expect(code().retainedRendering).toBe(true)
+
+  md.retainedRendering = false
+  await renderOnce()
+  expect(code().retainedRendering).toBe(false)
+})
+
 test("internalBlockMode=top-level reuses table renderable when rows stream in", async () => {
   const md = createMarkdownRenderable({
     id: "markdown-top-level-table-reuse",
@@ -3320,6 +3397,108 @@ test("internalBlockMode=top-level exposes a conservative stable block prefix", a
 
   expect(md._blockStates.map((state) => state.token.type)).toEqual(["heading", "paragraph", "paragraph"])
   expect(md._stableBlockCount).toBe(1)
+})
+
+test("internalBlockMode=top-level does not scan stable blocks while streaming", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-top-level-skips-stable-prefix",
+    content: "# Title\n\nPara 1\n\nPara 2\n\nPara 3\n\n",
+    syntaxStyle,
+    streaming: true,
+    internalBlockMode: "top-level",
+  })
+
+  renderer.root.add(md)
+  await renderMarkdownRenderable(md)
+
+  const stableState = md._blockStates[0]!
+  let stableTokenReads = 0
+  md._blockStates[0] = new Proxy(stableState, {
+    get(target, property, receiver) {
+      if (property === "token") stableTokenReads += 1
+      return Reflect.get(target, property, receiver)
+    },
+  })
+
+  md.content += "Para 4"
+
+  expect(md._stableBlockCount).toBe(3)
+  expect(stableTokenReads).toBe(0)
+  await renderMarkdownRenderable(md)
+  expect(captureFrame()).toContain("Para 4")
+})
+
+test("contentUpdate applies a trusted streaming suffix", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-trusted-streaming-suffix",
+    content: "Stable paragraph\n\nStreaming tail",
+    syntaxStyle,
+    streaming: true,
+    internalBlockMode: "top-level",
+  })
+
+  renderer.root.add(md)
+  await renderMarkdownRenderable(md)
+
+  Object.assign(md, {
+    contentUpdate: {
+      content: "Stable paragraph\n\nStreaming tail grows",
+      appended: " grows",
+    },
+  })
+
+  expect(md.content).toBe("Stable paragraph\n\nStreaming tail grows")
+  await renderMarkdownRenderable(md)
+  expect(captureFrame()).toContain("Streaming tail grows")
+})
+
+test("contentUpdate rejects an inconsistent streaming suffix", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-inconsistent-streaming-suffix",
+    content: "Hello",
+    syntaxStyle,
+    streaming: true,
+    internalBlockMode: "top-level",
+  })
+
+  renderer.root.add(md)
+  await renderMarkdownRenderable(md)
+
+  Object.assign(md, {
+    contentUpdate: {
+      content: "Jello world",
+      appended: " world",
+    },
+  })
+
+  expect(md._blockStates[0]?.tokenRaw).toBe("Jello world")
+  await renderMarkdownRenderable(md)
+  expect(captureFrame()).toContain("Jello world")
+  expect(captureFrame()).not.toContain("Hello world")
+})
+
+test("contentUpdate refreshes a paragraph completed before a blank line", async () => {
+  const md = createMarkdownRenderable({
+    id: "markdown-trusted-blank-line-suffix",
+    content: "Hello",
+    syntaxStyle,
+    streaming: true,
+    internalBlockMode: "top-level",
+  })
+
+  renderer.root.add(md)
+  await renderMarkdownRenderable(md)
+
+  Object.assign(md, {
+    contentUpdate: {
+      content: "Hello continued\n\nNext",
+      appended: " continued\n\nNext",
+    },
+  })
+
+  expect(md._blockStates.map((state) => state.tokenRaw)).toEqual(["Hello continued", "Next"])
+  await renderMarkdownRenderable(md)
+  expect(captureFrame()).toContain("Hello continued")
 })
 
 test("default block mode still coalesces ordinary markdown blocks", async () => {
@@ -4081,6 +4260,28 @@ The table alignment uses:
   expect(headingSpan2!.fg.g).toBe(1)
   expect(headingSpan2!.fg.b).toBe(0)
   expect(headingSpan2!.attributes & TextAttributes.BOLD).toBeTruthy()
+})
+
+test("top-level streaming prose reapplies styled text when the theme changes", async () => {
+  const red = RGBA.fromValues(1, 0, 0, 1)
+  const blue = RGBA.fromValues(0, 0, 1, 1)
+  const md = createMarkdownRenderable({
+    id: "markdown-top-level-theme-refresh",
+    content: "Theme text",
+    syntaxStyle: SyntaxStyle.fromStyles({ default: { fg: red } }),
+    fg: red,
+    streaming: true,
+    internalBlockMode: "top-level",
+  })
+
+  renderer.root.add(md)
+  await renderMarkdownRenderable(md)
+  expect(findSpanContaining(captureSpans(), "Theme text")?.fg.toInts()).toEqual(red.toInts())
+
+  md.syntaxStyle = SyntaxStyle.fromStyles({ default: { fg: blue } })
+  await renderMarkdownRenderable(md)
+
+  expect(findSpanContaining(captureSpans(), "Theme text")?.fg.toInts()).toEqual(blue.toInts())
 })
 
 // Paragraph rendering tests
