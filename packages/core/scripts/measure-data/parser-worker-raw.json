@@ -1,0 +1,458 @@
+{
+  "ts": 1786952586211,
+  "samples": 30,
+  "warmup": 3,
+  "bunVersion": "1.3.14",
+  "raw": [
+    {
+      "scenario": "worker-resolve",
+      "idx": 0,
+      "ns": 650968.9999999999
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 0,
+      "ns": 68029934
+    },
+    {
+      "scenario": "root",
+      "idx": 0,
+      "ns": 319496082
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 1,
+      "ns": 593660.0000000034
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 1,
+      "ns": 63612548
+    },
+    {
+      "scenario": "root",
+      "idx": 1,
+      "ns": 282960804
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 2,
+      "ns": 514468.0000000008
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 2,
+      "ns": 57279789
+    },
+    {
+      "scenario": "root",
+      "idx": 2,
+      "ns": 278777694
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 3,
+      "ns": 756640.0000000044
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 3,
+      "ns": 64883787.99999999
+    },
+    {
+      "scenario": "root",
+      "idx": 3,
+      "ns": 225892005.99999997
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 4,
+      "ns": 506192.99999999965
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 4,
+      "ns": 69110690
+    },
+    {
+      "scenario": "root",
+      "idx": 4,
+      "ns": 228075020
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 5,
+      "ns": 535679.9999999993
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 5,
+      "ns": 64095859.00000001
+    },
+    {
+      "scenario": "root",
+      "idx": 5,
+      "ns": 342457641.99999994
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 6,
+      "ns": 798898.9999999987
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 6,
+      "ns": 72486393.99999999
+    },
+    {
+      "scenario": "root",
+      "idx": 6,
+      "ns": 426394583
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 7,
+      "ns": 1389264.0000000042
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 7,
+      "ns": 62793870.99999999
+    },
+    {
+      "scenario": "root",
+      "idx": 7,
+      "ns": 239020297.00000003
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 8,
+      "ns": 729988.9999999963
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 8,
+      "ns": 44296916.00000001
+    },
+    {
+      "scenario": "root",
+      "idx": 8,
+      "ns": 260265880.99999997
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 9,
+      "ns": 615210.9999999986
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 9,
+      "ns": 66939640
+    },
+    {
+      "scenario": "root",
+      "idx": 9,
+      "ns": 387407290
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 10,
+      "ns": 2289986.9999999963
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 10,
+      "ns": 47888440
+    },
+    {
+      "scenario": "root",
+      "idx": 10,
+      "ns": 352729306
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 11,
+      "ns": 814940
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 11,
+      "ns": 73152551.00000001
+    },
+    {
+      "scenario": "root",
+      "idx": 11,
+      "ns": 370674652.00000006
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 12,
+      "ns": 667861.000000002
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 12,
+      "ns": 60580800.99999999
+    },
+    {
+      "scenario": "root",
+      "idx": 12,
+      "ns": 227358687
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 13,
+      "ns": 582787.9999999972
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 13,
+      "ns": 54994570.99999999
+    },
+    {
+      "scenario": "root",
+      "idx": 13,
+      "ns": 257734214
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 14,
+      "ns": 660736.9999999974
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 14,
+      "ns": 80222995
+    },
+    {
+      "scenario": "root",
+      "idx": 14,
+      "ns": 242762888.00000003
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 15,
+      "ns": 510882.00000000227
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 15,
+      "ns": 43364230.99999999
+    },
+    {
+      "scenario": "root",
+      "idx": 15,
+      "ns": 262150927.99999997
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 16,
+      "ns": 507415.9999999992
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 16,
+      "ns": 44554004.99999999
+    },
+    {
+      "scenario": "root",
+      "idx": 16,
+      "ns": 217695671
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 17,
+      "ns": 429286.00000000116
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 17,
+      "ns": 29679441.999999996
+    },
+    {
+      "scenario": "root",
+      "idx": 17,
+      "ns": 139320002
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 18,
+      "ns": 409710.00000000047
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 18,
+      "ns": 24299585.999999996
+    },
+    {
+      "scenario": "root",
+      "idx": 18,
+      "ns": 266592359
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 19,
+      "ns": 653843.9999999994
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 19,
+      "ns": 49568327.00000001
+    },
+    {
+      "scenario": "root",
+      "idx": 19,
+      "ns": 239555033.99999997
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 20,
+      "ns": 676648.0000000001
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 20,
+      "ns": 41707009.00000001
+    },
+    {
+      "scenario": "root",
+      "idx": 20,
+      "ns": 285142235
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 21,
+      "ns": 1149998.0000000037
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 21,
+      "ns": 108812514
+    },
+    {
+      "scenario": "root",
+      "idx": 21,
+      "ns": 469030368.99999994
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 22,
+      "ns": 631291.0000000045
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 22,
+      "ns": 113823096.99999999
+    },
+    {
+      "scenario": "root",
+      "idx": 22,
+      "ns": 611226613.9999999
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 23,
+      "ns": 622635.0000000024
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 23,
+      "ns": 106884204.00000001
+    },
+    {
+      "scenario": "root",
+      "idx": 23,
+      "ns": 440095804.00000006
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 24,
+      "ns": 721181.9999999988
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 24,
+      "ns": 54264191
+    },
+    {
+      "scenario": "root",
+      "idx": 24,
+      "ns": 416640344
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 25,
+      "ns": 862851.9999999966
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 25,
+      "ns": 67703612.99999999
+    },
+    {
+      "scenario": "root",
+      "idx": 25,
+      "ns": 551960605.0000001
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 26,
+      "ns": 1462263
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 26,
+      "ns": 94945628.00000001
+    },
+    {
+      "scenario": "root",
+      "idx": 26,
+      "ns": 408398451.99999994
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 27,
+      "ns": 810192.0000000007
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 27,
+      "ns": 110745972
+    },
+    {
+      "scenario": "root",
+      "idx": 27,
+      "ns": 529711801.00000006
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 28,
+      "ns": 1368904.9999999981
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 28,
+      "ns": 92587021
+    },
+    {
+      "scenario": "root",
+      "idx": 28,
+      "ns": 513041592.00000006
+    },
+    {
+      "scenario": "worker-resolve",
+      "idx": 29,
+      "ns": 4990716.999999996
+    },
+    {
+      "scenario": "runtime-assets",
+      "idx": 29,
+      "ns": 81707971.00000001
+    },
+    {
+      "scenario": "root",
+      "idx": 29,
+      "ns": 398962969
+    }
+  ]
+}
