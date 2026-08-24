@@ -93,6 +93,9 @@ pub const UnifiedTextBuffer = struct {
     styled_text_mem_id: ?u8,
     styled_buffer: ?[]u8,
     styled_capacity: usize,
+    styled_append_mem_ids: std.ArrayListUnmanaged(u8),
+    styled_chunk_count: usize,
+    styled_style_ids: std.AutoHashMapUnmanaged(ss.StyleDefinition, u32),
 
     tab_width: u8,
 
@@ -227,6 +230,9 @@ pub const UnifiedTextBuffer = struct {
             .styled_text_mem_id = null,
             .styled_buffer = null,
             .styled_capacity = 0,
+            .styled_append_mem_ids = .empty,
+            .styled_chunk_count = 0,
+            .styled_style_ids = .empty,
             .tab_width = 2,
         };
 
@@ -267,6 +273,8 @@ pub const UnifiedTextBuffer = struct {
             tracker.deinit();
         }
 
+        self.styled_append_mem_ids.deinit(self.global_allocator);
+        self.styled_style_ids.deinit(self.global_allocator);
         self.mem_registry.deinit();
         self.arena.deinit();
         global_allocator.destroy(self.arena);
@@ -357,6 +365,9 @@ pub const UnifiedTextBuffer = struct {
     pub fn clear(self: *Self) void {
         self.clearLinkRefs();
         self._rope.clear();
+        self.clearStyledAppendBuffers();
+        self.styled_chunk_count = 0;
+        self.styled_style_ids.clearRetainingCapacity();
         self.markAllViewsDirty();
     }
 
@@ -382,15 +393,25 @@ pub const UnifiedTextBuffer = struct {
         self.styled_buffer = null;
         self.styled_text_mem_id = null;
         self.styled_capacity = 0;
+        self.styled_chunk_count = 0;
+        self.styled_style_ids.clearRetainingCapacity();
 
         // Now reset the arena (frees all the internal memory)
         _ = self.arena.reset(if (self.arena.queryCapacity() > 0) .retain_capacity else .free_all);
 
         self.mem_registry.clear();
+        self.styled_append_mem_ids.clearRetainingCapacity();
 
         self._rope = UnifiedRope.init(self.allocator) catch return;
 
         self.markAllViewsDirty();
+    }
+
+    fn clearStyledAppendBuffers(self: *Self) void {
+        for (self.styled_append_mem_ids.items) |mem_id| {
+            self.mem_registry.unregister(mem_id) catch {};
+        }
+        self.styled_append_mem_ids.clearRetainingCapacity();
     }
 
     // Default colors/attributes
@@ -415,6 +436,7 @@ pub const UnifiedTextBuffer = struct {
     fn onSyntaxStyleDestroyed(ctx_ptr: *anyopaque) void {
         const self = @as(*Self, @ptrCast(@alignCast(ctx_ptr)));
         self.syntax_style = null;
+        self.styled_style_ids.clearRetainingCapacity();
     }
 
     pub fn setSyntaxStyle(self: *Self, syntax_style: ?*const SyntaxStyle) void {
@@ -427,6 +449,7 @@ pub const UnifiedTextBuffer = struct {
             (@constCast(prev)).offDestroy(@ptrCast(self), onSyntaxStyleDestroyed);
         }
         self.syntax_style = syntax_style;
+        self.styled_style_ids.clearRetainingCapacity();
     }
 
     pub fn getSyntaxStyle(self: *const Self) ?*const SyntaxStyle {
@@ -1076,6 +1099,142 @@ pub const UnifiedTextBuffer = struct {
         return count;
     }
 
+    fn addStyledHighlightByCharRange(
+        self: *Self,
+        char_start: u32,
+        char_end: u32,
+        style_id: u32,
+        line_hint: *u32,
+    ) void {
+        if (char_start >= char_end) return;
+
+        const line_count = self.getLineCount();
+        var line_idx = line_hint.*;
+        while (line_idx < line_count) {
+            const marker = self._rope.getMarker(.linestart, line_idx) orelse break;
+            const line_start = marker.global_weight - line_idx;
+            const line_width = iter_mod.lineWidthAt(&self._rope, line_idx);
+            const line_end = line_start + line_width;
+
+            if (line_end <= char_start) {
+                line_idx += 1;
+                continue;
+            }
+            if (line_start >= char_end) break;
+
+            const col_start = if (char_start > line_start) char_start - line_start else 0;
+            const col_end = if (char_end < line_end) char_end - line_start else line_width;
+            self.addHighlightInternal(line_idx, col_start, col_end, style_id, 1, 0, true) catch {};
+
+            if (line_end >= char_end) break;
+            line_idx += 1;
+        }
+        line_hint.* = line_idx;
+    }
+
+    fn applyStyledChunks(
+        self: *Self,
+        chunks: []const StyledChunk,
+        initial_char_pos: u32,
+        chunk_index_offset: usize,
+        initial_line_hint: u32,
+    ) void {
+        const style = self.syntax_style orelse return;
+
+        var seen_link_ids: std.AutoHashMapUnmanaged(u32, void) = .empty;
+        defer seen_link_ids.deinit(self.global_allocator);
+
+        self.startHighlightsTransaction();
+        defer self.endHighlightsTransaction();
+
+        var char_pos = initial_char_pos;
+        var line_hint = initial_line_hint;
+        for (chunks, 0..) |chunk, i| {
+            const chunk_text = chunk.text_ptr[0..chunk.text_len];
+            const chunk_len = self.measureText(chunk_text);
+
+            if (chunk_len > 0) {
+                const fg = if (chunk.fg_ptr) |fgPtr| utils.ptrToRGBA(fgPtr) else null;
+                const bg = if (chunk.bg_ptr) |bgPtr| utils.ptrToRGBA(bgPtr) else null;
+
+                var attributes = chunk.attributes;
+                if (chunk.link_ptr) |link_ptr| {
+                    if (chunk.link_len > 0) {
+                        const tracker = self.getLinkTracker();
+                        const url = link_ptr[0..chunk.link_len];
+                        const link_id = tracker.pool.alloc(url) catch 0;
+                        if (link_id != 0) {
+                            const maybe_seen = seen_link_ids.getOrPut(self.global_allocator, link_id) catch null;
+                            const should_track = if (maybe_seen) |seen| !seen.found_existing else true;
+                            if (should_track) {
+                                tracker.addCellRef(link_id);
+                            }
+                            attributes = ansi.TextAttributes.setLinkId(attributes, link_id);
+                        }
+                    }
+                }
+
+                const definition: ss.StyleDefinition = .{
+                    .fg = fg,
+                    .bg = bg,
+                    .attributes = attributes,
+                };
+                const style_id = self.styled_style_ids.get(definition) orelse register: {
+                    var style_name_buf: [64]u8 = undefined;
+                    const style_name = std.fmt.bufPrint(&style_name_buf, "chunk{d}", .{chunk_index_offset + i}) catch continue;
+                    const registered_id = (@constCast(style)).registerStyleDefinition(style_name, definition) catch continue;
+                    self.styled_style_ids.put(self.global_allocator, definition, registered_id) catch {};
+                    break :register registered_id;
+                };
+
+                self.addStyledHighlightByCharRange(char_pos, char_pos + chunk_len, style_id, &line_hint);
+            }
+
+            char_pos += chunk_len;
+        }
+    }
+
+    /// Append styled chunks while retaining a native-owned copy of their text.
+    /// Callers must only use this when the existing styled prefix is unchanged.
+    pub fn appendStyledText(self: *Self, chunks: []const StyledChunk) TextBufferError!void {
+        if (chunks.len == 0) return;
+
+        var total_len: usize = 0;
+        for (chunks) |chunk| {
+            total_len = std.math.add(usize, total_len, chunk.text_len) catch return TextBufferError.OutOfMemory;
+        }
+        if (total_len == 0) return;
+
+        const next_chunk_count = std.math.add(usize, self.styled_chunk_count, chunks.len) catch return TextBufferError.OutOfMemory;
+        try self.styled_append_mem_ids.ensureUnusedCapacity(self.global_allocator, 1);
+
+        const owned_text = self.global_allocator.alloc(u8, total_len) catch return TextBufferError.OutOfMemory;
+        var owned_by_registry = false;
+        defer if (!owned_by_registry) self.global_allocator.free(owned_text);
+
+        var offset: usize = 0;
+        for (chunks) |chunk| {
+            if (chunk.text_len == 0) continue;
+            const chunk_text = chunk.text_ptr[0..chunk.text_len];
+            @memcpy(owned_text[offset .. offset + chunk.text_len], chunk_text);
+            offset += chunk.text_len;
+        }
+
+        const mem_id = try self.mem_registry.register(owned_text, true);
+        owned_by_registry = true;
+        var tracked = false;
+        defer if (!tracked) self.styled_append_mem_ids.appendAssumeCapacity(mem_id);
+
+        const initial_char_pos = self.getLength();
+        const initial_line_hint = self.getLineCount() -| 1;
+        try self.appendInternal(mem_id, owned_text);
+        self.styled_append_mem_ids.appendAssumeCapacity(mem_id);
+        tracked = true;
+
+        self.applyStyledChunks(chunks, initial_char_pos, self.styled_chunk_count, initial_line_hint);
+        self.styled_chunk_count = next_chunk_count;
+    }
+
     /// Set styled text from chunks with individual styling
     /// Accepts StyledChunk array for FFI compatibility
     /// TODO: This is for backward compatibility, there should be a better way to do this.
@@ -1137,53 +1296,8 @@ pub const UnifiedTextBuffer = struct {
 
         try self.setTextInternal(self.styled_text_mem_id.?, full_text);
 
-        if (self.syntax_style) |style| {
-            var seen_link_ids: std.AutoHashMapUnmanaged(u32, void) = .empty;
-            defer seen_link_ids.deinit(self.global_allocator);
-
-            self.startHighlightsTransaction();
-            defer self.endHighlightsTransaction();
-
-            var char_pos: u32 = 0;
-            for (chunks, 0..) |chunk, i| {
-                const chunk_text = chunk.text_ptr[0..chunk.text_len];
-                const chunk_len = self.measureText(chunk_text);
-
-                if (chunk_len > 0) {
-                    const fg = if (chunk.fg_ptr) |fgPtr| utils.ptrToRGBA(fgPtr) else null;
-                    const bg = if (chunk.bg_ptr) |bgPtr| utils.ptrToRGBA(bgPtr) else null;
-
-                    var attributes = chunk.attributes;
-                    if (chunk.link_ptr) |link_ptr| {
-                        if (chunk.link_len > 0) {
-                            const tracker = self.getLinkTracker();
-                            const url = link_ptr[0..chunk.link_len];
-                            const link_id = tracker.pool.alloc(url) catch 0;
-                            if (link_id != 0) {
-                                const maybe_seen = seen_link_ids.getOrPut(self.global_allocator, link_id) catch null;
-                                const should_track = if (maybe_seen) |seen| !seen.found_existing else true;
-                                if (should_track) {
-                                    tracker.addCellRef(link_id);
-                                }
-                                attributes = ansi.TextAttributes.setLinkId(attributes, link_id);
-                            }
-                        }
-                    }
-
-                    var style_name_buf: [64]u8 = undefined;
-                    const style_name = std.fmt.bufPrint(&style_name_buf, "chunk{d}", .{i}) catch continue;
-                    const style_id = (@constCast(style)).registerStyleDefinition(style_name, .{
-                        .fg = fg,
-                        .bg = bg,
-                        .attributes = attributes,
-                    }) catch continue;
-
-                    self.addHighlightByCharRangeInternal(char_pos, char_pos + chunk_len, style_id, 1, 0, true) catch {};
-                }
-
-                char_pos += chunk_len;
-            }
-        }
+        self.applyStyledChunks(chunks, 0, 0, 0);
+        self.styled_chunk_count = chunks.len;
     }
 
     /// Load text from a file path (relative to cwd)

@@ -2229,6 +2229,19 @@ export fn textBufferSetStyledText(
     object_ptr.setStyledText(chunks) catch {};
 }
 
+export fn textBufferAppendStyledText(
+    tb_handle: NativeHandle,
+    chunksPtr: ?[*]const text_buffer.StyledChunk,
+    chunkCount: u32,
+) bool {
+    const object_ptr = acquireTextBuffer(tb_handle) orelse return false;
+    if (chunkCount == 0) return true;
+    const chunks_ptr = chunksPtr orelse return false;
+    const chunks = chunks_ptr[0..@as(usize, chunkCount)];
+    object_ptr.appendStyledText(chunks) catch return false;
+    return true;
+}
+
 export fn textBufferGetLineCount(tb_handle: NativeHandle) u32 {
     const object_ptr = acquireTextBuffer(tb_handle) orelse return 0;
     return object_ptr.getLineCount();

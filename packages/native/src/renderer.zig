@@ -2350,10 +2350,6 @@ pub const CliRenderer = struct {
     /// (buffered frame append or feed streaming) without dispatch in the render path.
     /// `sync_started` is true only when the caller already opened the
     /// synchronized-update envelope for a batched split-footer commit.
-<<<<<<< HEAD:packages/native/src/renderer.zig
-    pub fn prepareRenderFrameWithWriter(self: *CliRenderer, writer: anytype, force: bool, sync_started: bool) void {
-        const renderStartTime = std.Io.Clock.now(.awake, io).toMicroseconds();
-=======
     pub fn prepareRenderFrameWithWriter(
         self: *CliRenderer,
         writer: anytype,
@@ -2362,8 +2358,7 @@ pub const CliRenderer = struct {
         requested_region: ?RenderRegion,
         clear_next: bool,
     ) void {
-        const renderStartTime = std.time.microTimestamp();
->>>>>>> e7e3c6e8 (perf(core): port retained partial rendering):packages/core/src/zig/renderer.zig
+        const renderStartTime = std.Io.Clock.now(.awake, io).toMicroseconds();
         var cellsUpdated: u32 = 0;
         const palette_force = self.last_rendered_palette_epoch == null or self.last_rendered_palette_epoch.? != self.palette_epoch;
         const should_force = force or self.force_full_repaint or palette_force;

@@ -6,6 +6,7 @@ import {
   InputRenderable,
   InputRenderableEvents,
   isTextNodeRenderable,
+  MarkdownRenderable,
   parseColor,
   Renderable,
   RootTextNodeRenderable,
@@ -227,6 +228,8 @@ export const {
   },
 
   setProperty(node: DomNode, name: string, value: any, prev: any): void {
+    if (node instanceof Renderable && node.isDestroyed) return
+
     if (name.startsWith("on:")) {
       const eventName = name.slice(3)
       if (value) {
@@ -355,6 +358,12 @@ export const {
         node[name] = textValue
         break
       }
+
+      case "contentUpdate":
+        if (node instanceof MarkdownRenderable && value !== undefined) {
+          node.contentUpdate = value
+        }
+        break
 
       default:
         // @ts-expect-error todo validate if prop is actually settable

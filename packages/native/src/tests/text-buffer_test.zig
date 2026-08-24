@@ -3,6 +3,7 @@ const text_buffer = @import("../text-buffer.zig");
 const gp = @import("../grapheme.zig");
 const link = @import("../link.zig");
 const iter_mod = @import("../text-buffer-iterators.zig");
+const ansi = @import("../ansi.zig");
 
 const TextBuffer = text_buffer.UnifiedTextBuffer;
 
@@ -1673,6 +1674,95 @@ test "TextBuffer setStyledText - repeated calls with SyntaxStyle (crash reproduc
     // Max 50KB growth is reasonable for rope structure
     const max_expected_growth = 50000;
     try std.testing.expect(arena_growth < max_expected_growth);
+}
+
+test "TextBuffer appendStyledText - appends content and preserves styled ownership" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .unicode);
+    defer tb.deinit();
+
+    const ss = @import("../syntax-style.zig");
+    const style = try ss.SyntaxStyle.init(std.testing.allocator);
+    defer style.deinit();
+    tb.setSyntaxStyle(style);
+
+    const initial_text = "const initial = 1";
+    const tail_text = "\nconst tail = \"👩🏽‍💻\"";
+    const url = "https://example.test/source";
+    const initial_fg = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const tail_fg = ansi.rgbaFromFloats(0.0, 1.0, 0.0, 1.0);
+    const initial_chunks = [_]text_buffer.StyledChunk{.{
+        .text_ptr = initial_text.ptr,
+        .text_len = initial_text.len,
+        .fg_ptr = @ptrCast(&initial_fg),
+        .bg_ptr = null,
+        .attributes = 1,
+        .link_ptr = url.ptr,
+        .link_len = url.len,
+    }};
+    const tail_chunks = [_]text_buffer.StyledChunk{.{
+        .text_ptr = tail_text.ptr,
+        .text_len = tail_text.len,
+        .fg_ptr = @ptrCast(&tail_fg),
+        .bg_ptr = null,
+        .attributes = 2,
+        .link_ptr = url.ptr,
+        .link_len = url.len,
+    }};
+
+    try tb.setStyledText(&initial_chunks);
+    try tb.appendStyledText(&tail_chunks);
+
+    var out_buffer: [128]u8 = undefined;
+    const written = tb.getPlainTextIntoBuffer(&out_buffer);
+    try std.testing.expectEqualStrings(initial_text ++ tail_text, out_buffer[0..written]);
+    try std.testing.expectEqual(@as(u32, 2), tb.getHighlightCount());
+    try std.testing.expectEqual(@as(u64, 1), link_pool.getLiveSlotCount());
+    try std.testing.expectEqual(@as(usize, 2), tb.memRegistry().getUsedSlots());
+
+    try tb.setStyledText(&initial_chunks);
+    try std.testing.expectEqualStrings(initial_text, out_buffer[0..tb.getPlainTextIntoBuffer(&out_buffer)]);
+    try std.testing.expectEqual(@as(usize, 1), tb.memRegistry().getUsedSlots());
+    try std.testing.expectEqual(@as(u64, 1), link_pool.getLiveSlotCount());
+}
+
+test "TextBuffer styled chunks - reuse identical native style definitions" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    const link_pool = link.initGlobalLinkPool(std.testing.allocator);
+    defer link.deinitGlobalLinkPool();
+
+    var tb = try TextBuffer.init(std.testing.allocator, pool, link_pool, .unicode);
+    defer tb.deinit();
+
+    const ss = @import("../syntax-style.zig");
+    const style = try ss.SyntaxStyle.init(std.testing.allocator);
+    defer style.deinit();
+    tb.setSyntaxStyle(style);
+
+    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const green = ansi.rgbaFromFloats(0.0, 1.0, 0.0, 1.0);
+    const text = "x";
+    var chunks: [100]text_buffer.StyledChunk = undefined;
+    for (&chunks, 0..) |*chunk, i| {
+        chunk.* = .{
+            .text_ptr = text.ptr,
+            .text_len = text.len,
+            .fg_ptr = if (i % 2 == 0) @ptrCast(&red) else @ptrCast(&green),
+            .bg_ptr = null,
+            .attributes = @intCast(i % 2),
+        };
+    }
+
+    try tb.setStyledText(&chunks);
+    try std.testing.expectEqual(@as(usize, 2), style.getStyleCount());
+    try tb.appendStyledText(&chunks);
+    try std.testing.expectEqual(@as(usize, 2), style.getStyleCount());
+    try std.testing.expectEqual(@as(u32, 200), tb.getLength());
 }
 
 test "addHighlightByCharRange - single line highlight should not extend to EOL" {
