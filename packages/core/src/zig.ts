@@ -15,20 +15,20 @@ import { mark } from "./telemetry.js"
 import { opentuiCoreSymbols } from "./zig-symbol-stage.js"
 import { existsSync, writeFileSync } from "fs"
 import { EventEmitter } from "events"
-  import {
-    type CursorStyle,
-    type CursorStyleOptions,
-    type SelectionOccupancy,
-    type SelectionBehavior,
-    type TargetChannel,
-    type DebugOverlayCorner,
-    type WidthMethod,
-    type TerminalCapabilities,
-    type Highlight,
-    type LineInfo,
-    type MousePointerStyle,
-    type ImageRenderProtocol,
-  } from "./types.js"
+import {
+  type CursorStyle,
+  type CursorStyleOptions,
+  type SelectionOccupancy,
+  type SelectionBehavior,
+  type TargetChannel,
+  type DebugOverlayCorner,
+  type WidthMethod,
+  type TerminalCapabilities,
+  type Highlight,
+  type LineInfo,
+  type MousePointerStyle,
+  type ImageRenderProtocol,
+} from "./types.js"
 export type {
   LineInfo,
   AllocatorStats,
@@ -488,11 +488,11 @@ const opentuiSymbolDefs = {
     args: ["u32", "u32", "bool"],
     returns: "u64",
   },
-    // Single FFI entrypoint for split commit append. beginFrame/finalizeFrame let
-    // native code decide whether this call is a standalone commit or part of a
-    // larger batched frame envelope.
-    commitSplitFooterSnapshot: {
-      args: ["u32", "u32", "u32", "u8", "u32"],
+  // Single FFI entrypoint for split commit append. beginFrame/finalizeFrame let
+  // native code decide whether this call is a standalone commit or part of a
+  // larger batched frame envelope.
+  commitSplitFooterSnapshot: {
+    args: ["u32", "u32", "u32", "u8", "u32"],
     returns: "u64",
   },
   getNextBuffer: {
@@ -3223,6 +3223,8 @@ export interface RenderLib extends AudioEngineLib {
     focusY: number,
     bgColor: RGBA | null,
     fgColor: RGBA | null,
+    updateCursor: boolean,
+    followCursor: boolean,
     behavior?: SelectionBehavior,
   ) => boolean
 
@@ -3235,6 +3237,8 @@ export interface RenderLib extends AudioEngineLib {
     focusY: number,
     bgColor: RGBA | null,
     fgColor: RGBA | null,
+    updateCursor: boolean,
+    followCursor: boolean,
     behavior?: SelectionBehavior,
   ) => boolean
 
