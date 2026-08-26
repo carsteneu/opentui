@@ -56,7 +56,7 @@ describe("wave5 staged binding", () => {
   const nativeLib = findNativeLibrary()
   const requiresNative = {
     skip: !nativeLib,
-    reason: "no SRC-native libopentui.so found under packages/core/src/zig/lib",
+    reason: "no SRC-native libopentui.so found under packages/native/lib",
   }
 
   test(
@@ -145,7 +145,11 @@ describe("wave5 staged binding", () => {
 })
 
 function findNativeLibrary(): string | null {
-  const libRoot = join(PACKAGE_ROOT, "src", "zig", "lib")
+  // Upstream v0.5.5 moved the Zig sources/build output to packages/native
+  // (PR #1391); the old packages/core/src/zig/lib layout no longer exists.
+  // build:native writes packages/native/lib/<zig-target>/libopentui.so and
+  // then mirrors it into node_modules/@opentui/core-linux-x64/.
+  const libRoot = join(PACKAGE_ROOT, "..", "native", "lib")
   if (!existsSync(libRoot)) return null
   for (const entry of readdirSync(libRoot, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.includes("darwin") || entry.name.includes("win32")) continue
