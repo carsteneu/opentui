@@ -15,18 +15,20 @@ import { mark } from "./telemetry.js"
 import { opentuiCoreSymbols } from "./zig-symbol-stage.js"
 import { existsSync, writeFileSync } from "fs"
 import { EventEmitter } from "events"
-import {
-  type CursorStyle,
-  type CursorStyleOptions,
-  type TargetChannel,
-  type DebugOverlayCorner,
-  type WidthMethod,
-  type TerminalCapabilities,
-  type Highlight,
-  type LineInfo,
-  type MousePointerStyle,
-  type ImageRenderProtocol,
-} from "./types.js"
+  import {
+    type CursorStyle,
+    type CursorStyleOptions,
+    type SelectionOccupancy,
+    type SelectionBehavior,
+    type TargetChannel,
+    type DebugOverlayCorner,
+    type WidthMethod,
+    type TerminalCapabilities,
+    type Highlight,
+    type LineInfo,
+    type MousePointerStyle,
+    type ImageRenderProtocol,
+  } from "./types.js"
 export type {
   LineInfo,
   AllocatorStats,
@@ -357,6 +359,23 @@ function optionalRgbaBuffer(value: RGBA | null | undefined): Uint16Array | null 
   return value ? rgbaBuffer(value) : null
 }
 
+function selectionBehaviorByte(behavior?: SelectionBehavior): number {
+  return behavior === "word" ? 1 : behavior === "line" ? 2 : 0
+}
+
+function editorLocalSelectionFlags(updateCursor: boolean, followCursor: boolean, behavior?: SelectionBehavior): number {
+  return ffiBool(updateCursor) | (ffiBool(followCursor) << 1) | (selectionBehaviorByte(behavior) << 2)
+}
+
+function widthMethodCode(widthMethod: WidthMethod): number {
+  return widthMethod === "wcwidth" ? 0 : widthMethod === "unicode-wide" ? 3 : 1
+}
+
+function widthMethodFromCode(code: number): WidthMethod {
+  if (code === 0) return "wcwidth"
+  return code === 3 ? "unicode-wide" : "unicode"
+}
+
 const opentuiSymbolDefs = {
   // Logging
   setLogCallback: {
@@ -469,11 +488,11 @@ const opentuiSymbolDefs = {
     args: ["u32", "u32", "bool"],
     returns: "u64",
   },
-  // Single FFI entrypoint for split commit append. beginFrame/finalizeFrame let
-  // native code decide whether this call is a standalone commit or part of a
-  // larger batched frame envelope.
-  commitSplitFooterSnapshot: {
-    args: ["u32", "u32", "u32", "bool", "bool", "u32", "bool", "bool", "bool"],
+    // Single FFI entrypoint for split commit append. beginFrame/finalizeFrame let
+    // native code decide whether this call is a standalone commit or part of a
+    // larger batched frame envelope.
+    commitSplitFooterSnapshot: {
+      args: ["u32", "u32", "u32", "u8", "u32"],
     returns: "u64",
   },
   getNextBuffer: {
@@ -499,12 +518,16 @@ const opentuiSymbolDefs = {
   },
 
   createOptimizedBuffer: {
-    args: ["u32", "u32", "bool", "u8", "buffer", "u32"],
+    args: ["u32", "u32", "u8", "u8", "buffer", "u32"],
     returns: "u32",
   },
   destroyOptimizedBuffer: {
     args: ["u32"],
     returns: "void",
+  },
+  getBufferWidthMethod: {
+    args: ["u32"],
+    returns: "u8",
   },
 
   drawFrameBuffer: {
@@ -634,7 +657,7 @@ const opentuiSymbolDefs = {
 
   // Debug overlay
   setDebugOverlay: {
-    args: ["u32", "bool", "u8"],
+    args: ["u32", "u8", "u8"],
     returns: "void",
   },
 
@@ -1054,7 +1077,7 @@ const opentuiSymbolDefs = {
     returns: "u64",
   },
   textBufferViewSetLocalSelection: {
-    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr"],
+    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr", "u8"],
     returns: "bool",
   },
   textBufferViewUpdateSelection: {
@@ -1062,12 +1085,20 @@ const opentuiSymbolDefs = {
     returns: "void",
   },
   textBufferViewUpdateLocalSelection: {
-    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr"],
+    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr", "u8"],
     returns: "bool",
   },
   textBufferViewResetLocalSelection: {
     args: ["u32"],
     returns: "void",
+  },
+  textBufferViewSetSelectionOccupancy: {
+    args: ["u32", "u8"],
+    returns: "void",
+  },
+  textBufferViewGetSelectionOccupancy: {
+    args: ["u32"],
+    returns: "u8",
   },
   textBufferViewSetWrapWidth: {
     args: ["u32", "u32"],
@@ -1360,7 +1391,7 @@ const opentuiSymbolDefs = {
     returns: "u64",
   },
   editorViewSetLocalSelection: {
-    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr", "bool", "bool"],
+    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr", "u8"],
     returns: "bool",
   },
   editorViewUpdateSelection: {
@@ -1368,11 +1399,27 @@ const opentuiSymbolDefs = {
     returns: "void",
   },
   editorViewUpdateLocalSelection: {
-    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr", "bool", "bool"],
+    args: ["u32", "i32", "i32", "i32", "i32", "ptr", "ptr", "u8"],
     returns: "bool",
   },
   editorViewResetLocalSelection: {
     args: ["u32"],
+    returns: "void",
+  },
+  editorViewConvertSelectionToCell: {
+    args: ["u32"],
+    returns: "bool",
+  },
+  editorViewSetSelectionOccupancy: {
+    args: ["u32", "u8"],
+    returns: "void",
+  },
+  editorViewSetSelectionInclusive: {
+    args: ["u32", "u32", "u32", "ptr", "ptr"],
+    returns: "void",
+  },
+  editorViewSetSelectionColors: {
+    args: ["u32", "ptr", "ptr"],
     returns: "void",
   },
   editorViewGetSelectedTextBytes: {
@@ -1428,6 +1475,10 @@ const opentuiSymbolDefs = {
   },
   editorViewGetVisualEOL: {
     args: ["u32", "ptr"],
+    returns: "void",
+  },
+  editorViewGotoVisualLineEnd: {
+    args: ["u32"],
     returns: "void",
   },
   editorViewSetPlaceholderStyledText: {
@@ -1886,7 +1937,7 @@ const opentuiSymbolDefs = {
     returns: "i32",
   },
   audioEnableTap: {
-    args: ["u32", "bool", "u32"],
+    args: ["u32", "u8", "u32"],
     returns: "i32",
   },
   audioReadTap: {
@@ -3029,6 +3080,7 @@ export interface RenderLib extends AudioEngineLib {
     focusY: number,
     bgColor: RGBA | null,
     fgColor: RGBA | null,
+    behavior?: SelectionBehavior,
   ) => boolean
   textBufferViewUpdateSelection: (
     view: TextBufferViewHandle,
@@ -3044,8 +3096,11 @@ export interface RenderLib extends AudioEngineLib {
     focusY: number,
     bgColor: RGBA | null,
     fgColor: RGBA | null,
+    behavior?: SelectionBehavior,
   ) => boolean
   textBufferViewResetLocalSelection: (view: TextBufferViewHandle) => void
+  textBufferViewSetSelectionOccupancy: (view: TextBufferViewHandle, occupancy: SelectionOccupancy) => void
+  textBufferViewGetSelectionOccupancy: (view: TextBufferViewHandle) => SelectionOccupancy
   textBufferViewSetWrapWidth: (view: TextBufferViewHandle, width: number) => void
   textBufferViewSetWrapMode: (view: TextBufferViewHandle, mode: "none" | "char" | "word") => void
   textBufferViewSetFirstLineOffset: (view: TextBufferViewHandle, offset: number) => void
@@ -3168,8 +3223,7 @@ export interface RenderLib extends AudioEngineLib {
     focusY: number,
     bgColor: RGBA | null,
     fgColor: RGBA | null,
-    updateCursor: boolean,
-    followCursor: boolean,
+    behavior?: SelectionBehavior,
   ) => boolean
 
   editorViewUpdateSelection: (view: EditorViewHandle, end: number, bgColor: RGBA | null, fgColor: RGBA | null) => void
@@ -3181,11 +3235,20 @@ export interface RenderLib extends AudioEngineLib {
     focusY: number,
     bgColor: RGBA | null,
     fgColor: RGBA | null,
-    updateCursor: boolean,
-    followCursor: boolean,
+    behavior?: SelectionBehavior,
   ) => boolean
 
   editorViewResetLocalSelection: (view: EditorViewHandle) => void
+  editorViewConvertSelectionToCell: (view: EditorViewHandle) => boolean
+  editorViewSetSelectionOccupancy: (view: EditorViewHandle, occupancy: SelectionOccupancy) => void
+  editorViewSetSelectionInclusive: (
+    view: EditorViewHandle,
+    start: number,
+    end: number,
+    bgColor: RGBA | null,
+    fgColor: RGBA | null,
+  ) => void
+  editorViewSetSelectionColors: (view: EditorViewHandle, bgColor: RGBA | null, fgColor: RGBA | null) => void
   editorViewGetSelectedTextBytes: (view: EditorViewHandle, maxLength: number) => Uint8Array | null
   editorViewGetCursor: (view: EditorViewHandle) => { row: number; col: number }
   editorViewGetText: (view: EditorViewHandle, maxLength: number) => Uint8Array | null
@@ -3199,6 +3262,7 @@ export interface RenderLib extends AudioEngineLib {
   editorViewGetEOL: (view: EditorViewHandle) => VisualCursor
   editorViewGetVisualSOL: (view: EditorViewHandle) => VisualCursor
   editorViewGetVisualEOL: (view: EditorViewHandle) => VisualCursor
+  editorViewGotoVisualLineEnd: (view: EditorViewHandle) => void
   editorViewGetLineInfo: (view: EditorViewHandle) => LineInfo
   editorViewGetLogicalLineInfo: (view: EditorViewHandle) => LineInfo
   editorViewSetPlaceholderStyledText: (
@@ -3952,8 +4016,9 @@ class FFIRenderLib implements RenderLib {
 
     const width = this.opentui.symbols.getBufferWidth(bufferPtr)
     const height = this.opentui.symbols.getBufferHeight(bufferPtr)
+    const widthMethod = widthMethodFromCode(this.opentui.symbols.getBufferWidthMethod(bufferPtr))
 
-    return new OptimizedBuffer(this, bufferPtr, width, height, { id: "next buffer", widthMethod: "unicode" })
+    return new OptimizedBuffer(this, bufferPtr, width, height, { id: "next buffer", widthMethod })
   }
 
   public getCurrentBuffer(renderer: Pointer): OptimizedBuffer {
@@ -3964,8 +4029,9 @@ class FFIRenderLib implements RenderLib {
 
     const width = this.opentui.symbols.getBufferWidth(bufferPtr)
     const height = this.opentui.symbols.getBufferHeight(bufferPtr)
+    const widthMethod = widthMethodFromCode(this.opentui.symbols.getBufferWidthMethod(bufferPtr))
 
-    return new OptimizedBuffer(this, bufferPtr, width, height, { id: "current buffer", widthMethod: "unicode" })
+    return new OptimizedBuffer(this, bufferPtr, width, height, { id: "current buffer", widthMethod })
   }
 
   public rendererSetPaletteState(
@@ -4452,18 +4518,14 @@ class FFIRenderLib implements RenderLib {
     finalizeFrame: boolean = true,
   ): NativeRenderOperationResult {
     this.maybeScheduleFullBind()
+    const flags =
+      ffiBool(startOnNewLine) |
+      (ffiBool(trailingNewline) << 1) |
+      (ffiBool(force) << 2) |
+      (ffiBool(beginFrame) << 3) |
+      (ffiBool(finalizeFrame) << 4)
     return this.unpackRenderOperationResult(
-      this.opentui.symbols.commitSplitFooterSnapshot(
-        renderer,
-        snapshot.ptr,
-        rowColumns,
-        ffiBool(startOnNewLine),
-        ffiBool(trailingNewline),
-        pinnedRenderOffset,
-        ffiBool(force),
-        ffiBool(beginFrame),
-        ffiBool(finalizeFrame),
-      ),
+      this.opentui.symbols.commitSplitFooterSnapshot(renderer, snapshot.ptr, rowColumns, flags, pinnedRenderOffset),
     )
   }
 
@@ -4478,14 +4540,13 @@ class FFIRenderLib implements RenderLib {
       console.error(new Error(`Invalid dimensions for OptimizedBuffer: ${width}x${height}`).stack)
     }
 
-    const widthMethodCode = widthMethod === "wcwidth" ? 0 : 1
     const idToUse = id || "unnamed buffer"
     const idBytes = this.encoder.encode(idToUse)
     const bufferPtr = this.opentui.symbols.createOptimizedBuffer(
       width,
       height,
       ffiBool(respectAlpha),
-      widthMethodCode,
+      widthMethodCode(widthMethod),
       idBytes,
       idBytes.byteLength,
     )
@@ -5092,8 +5153,7 @@ class FFIRenderLib implements RenderLib {
 
   // TextBuffer methods
   public createTextBuffer(widthMethod: WidthMethod): TextBuffer {
-    const widthMethodCode = widthMethod === "wcwidth" ? 0 : 1
-    const bufferPtr = this.opentui.symbols.createTextBuffer(widthMethodCode)
+    const bufferPtr = this.opentui.symbols.createTextBuffer(widthMethodCode(widthMethod))
     if (!bufferPtr) {
       throw new Error(`Failed to create TextBuffer`)
     }
@@ -5349,10 +5409,22 @@ class FFIRenderLib implements RenderLib {
     focusY: number,
     bgColor: RGBA | null,
     fgColor: RGBA | null,
+    behavior?: SelectionBehavior,
   ): boolean {
     const bg = optionalRgbaBuffer(bgColor)
     const fg = optionalRgbaBuffer(fgColor)
-    return Boolean(this.opentui.symbols.textBufferViewSetLocalSelection(view, anchorX, anchorY, focusX, focusY, bg, fg))
+    return Boolean(
+      this.opentui.symbols.textBufferViewSetLocalSelection(
+        view,
+        anchorX,
+        anchorY,
+        focusX,
+        focusY,
+        bg,
+        fg,
+        selectionBehaviorByte(behavior),
+      ),
+    )
   }
 
   public textBufferViewUpdateSelection(view: Pointer, end: number, bgColor: RGBA | null, fgColor: RGBA | null): void {
@@ -5369,16 +5441,34 @@ class FFIRenderLib implements RenderLib {
     focusY: number,
     bgColor: RGBA | null,
     fgColor: RGBA | null,
+    behavior?: SelectionBehavior,
   ): boolean {
     const bg = optionalRgbaBuffer(bgColor)
     const fg = optionalRgbaBuffer(fgColor)
     return Boolean(
-      this.opentui.symbols.textBufferViewUpdateLocalSelection(view, anchorX, anchorY, focusX, focusY, bg, fg),
+      this.opentui.symbols.textBufferViewUpdateLocalSelection(
+        view,
+        anchorX,
+        anchorY,
+        focusX,
+        focusY,
+        bg,
+        fg,
+        selectionBehaviorByte(behavior),
+      ),
     )
   }
 
   public textBufferViewResetLocalSelection(view: Pointer): void {
     this.opentui.symbols.textBufferViewResetLocalSelection(view)
+  }
+
+  public textBufferViewSetSelectionOccupancy(view: Pointer, occupancy: SelectionOccupancy): void {
+    this.opentui.symbols.textBufferViewSetSelectionOccupancy(view, occupancy === "boundary" ? 1 : 0)
+  }
+
+  public textBufferViewGetSelectionOccupancy(view: Pointer): SelectionOccupancy {
+    return this.opentui.symbols.textBufferViewGetSelectionOccupancy(view) === 1 ? "boundary" : "cell"
   }
 
   public textBufferViewSetWrapWidth(view: Pointer, width: number): void {
@@ -5701,8 +5791,10 @@ class FFIRenderLib implements RenderLib {
 
   // EditBuffer implementations
   public createEditBuffer(widthMethod: WidthMethod): EditBufferHandle {
-    const widthMethodCode = widthMethod === "wcwidth" ? 0 : 1
-    const bufferPtr = this.opentui.symbols.createEditBuffer(widthMethodCode, this.eventSinkPtr ?? 0) as EditBufferHandle
+    const bufferPtr = this.opentui.symbols.createEditBuffer(
+      widthMethodCode(widthMethod),
+      this.eventSinkPtr ?? 0,
+    ) as EditBufferHandle
     if (!bufferPtr) {
       throw new Error("Failed to create EditBuffer")
     }
@@ -5976,6 +6068,7 @@ class FFIRenderLib implements RenderLib {
     fgColor: RGBA | null,
     updateCursor: boolean,
     followCursor: boolean,
+    behavior?: SelectionBehavior,
   ): boolean {
     const bg = optionalRgbaBuffer(bgColor)
     const fg = optionalRgbaBuffer(fgColor)
@@ -5988,8 +6081,7 @@ class FFIRenderLib implements RenderLib {
         focusY,
         bg,
         fg,
-        ffiBool(updateCursor),
-        ffiBool(followCursor),
+        editorLocalSelectionFlags(updateCursor, followCursor, behavior),
       ),
     )
   }
@@ -6010,6 +6102,7 @@ class FFIRenderLib implements RenderLib {
     fgColor: RGBA | null,
     updateCursor: boolean,
     followCursor: boolean,
+    behavior?: SelectionBehavior,
   ): boolean {
     const bg = optionalRgbaBuffer(bgColor)
     const fg = optionalRgbaBuffer(fgColor)
@@ -6022,14 +6115,39 @@ class FFIRenderLib implements RenderLib {
         focusY,
         bg,
         fg,
-        ffiBool(updateCursor),
-        ffiBool(followCursor),
+        editorLocalSelectionFlags(updateCursor, followCursor, behavior),
       ),
     )
   }
 
   public editorViewResetLocalSelection(view: Pointer): void {
     this.opentui.symbols.editorViewResetLocalSelection(view)
+  }
+
+  public editorViewConvertSelectionToCell(view: Pointer): boolean {
+    return Boolean(this.opentui.symbols.editorViewConvertSelectionToCell(view))
+  }
+
+  public editorViewSetSelectionOccupancy(view: Pointer, occupancy: SelectionOccupancy): void {
+    this.opentui.symbols.editorViewSetSelectionOccupancy(view, occupancy === "boundary" ? 1 : 0)
+  }
+
+  public editorViewSetSelectionInclusive(
+    view: Pointer,
+    start: number,
+    end: number,
+    bgColor: RGBA | null,
+    fgColor: RGBA | null,
+  ): void {
+    const bg = optionalRgbaBuffer(bgColor)
+    const fg = optionalRgbaBuffer(fgColor)
+    this.opentui.symbols.editorViewSetSelectionInclusive(view, start, end, bg, fg)
+  }
+
+  public editorViewSetSelectionColors(view: Pointer, bgColor: RGBA | null, fgColor: RGBA | null): void {
+    const bg = optionalRgbaBuffer(bgColor)
+    const fg = optionalRgbaBuffer(fgColor)
+    this.opentui.symbols.editorViewSetSelectionColors(view, bg, fg)
   }
 
   public editorViewGetSelectedTextBytes(view: Pointer, maxLength: number): Uint8Array | null {
@@ -6113,6 +6231,10 @@ class FFIRenderLib implements RenderLib {
     return { ...cursor }
   }
 
+  public editorViewGotoVisualLineEnd(view: Pointer): void {
+    this.opentui.symbols.editorViewGotoVisualLineEnd(view)
+  }
+
   public bufferPushScissorRect(buffer: Pointer, x: number, y: number, width: number, height: number): void {
     this.opentui.symbols.bufferPushScissorRect(buffer, x, y, width, height)
   }
@@ -6187,7 +6309,6 @@ class FFIRenderLib implements RenderLib {
     widthMethod: WidthMethod,
   ): { ptr: Pointer; data: Array<{ width: number; char: number }> } | null {
     const textBytes = this.encoder.encode(text)
-    const widthMethodCode = widthMethod === "wcwidth" ? 0 : 1
 
     const outPtrBuffer = new ArrayBuffer(8) // Pointer-sized out slot
     const outLenBuffer = new ArrayBuffer(8) // Native length out slot
@@ -6197,7 +6318,7 @@ class FFIRenderLib implements RenderLib {
       textBytes.byteLength,
       outPtrBuffer,
       outLenBuffer,
-      widthMethodCode,
+      widthMethodCode(widthMethod),
     )
 
     if (!success) {

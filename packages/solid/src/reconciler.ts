@@ -7,6 +7,7 @@ import {
   InputRenderableEvents,
   isTextNodeRenderable,
   MarkdownRenderable,
+  isEditBufferRenderable,
   parseColor,
   Renderable,
   RootTextNodeRenderable,
@@ -337,6 +338,9 @@ export const {
       case "style":
         const nextStyle = value ?? {}
         const previousStyle = prev ?? {}
+        if (isEditBufferRenderable(node) && previousStyle.selectionOccupancy && !nextStyle.selectionOccupancy) {
+          node.selectionOccupancy = undefined
+        }
         if (node instanceof ImageRenderable) {
           for (const prop in previousStyle) {
             if (Object.prototype.hasOwnProperty.call(nextStyle, prop)) continue

@@ -227,6 +227,31 @@ test "graphics identity - malformed XTVERSION cannot reuse environment version" 
     try testing.expect(!term.caps.sixel);
 }
 
+test "refusesForcedSixel - XTVERSION replaces leftover Apple Terminal env" {
+    var leftover = std.process.Environ.Map.init(testing.allocator);
+    defer leftover.deinit();
+    try leftover.put("TERM_PROGRAM", "Apple_Terminal");
+    var foot = Terminal.init(.{ .env_map = &leftover });
+    foot.processCapabilityResponse("\x1bP>|foot(1.20.2)\x1b\\");
+    try testing.expect(!foot.refusesForcedSixel());
+
+    var iterm = Terminal.init(.{});
+    iterm.processCapabilityResponse("\x1bP>|iTerm2 3.6.9\x1b\\");
+    try testing.expect(!iterm.refusesForcedSixel());
+}
+
+test "refusesForcedSixel - tmux XTVERSION is not a Sixel endpoint" {
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("TERM_PROGRAM", "Apple_Terminal");
+    var term = Terminal.init(.{ .env_map = &env });
+    term.processCapabilityResponse("\x1bP>|tmux 3.5a\x1b\\");
+    try testing.expect(term.refusesForcedSixel());
+
+    term.processCapabilityResponse("\x1b[?62;4c");
+    try testing.expect(!term.refusesForcedSixel());
+}
+
 test "graphics identity - environment name alone is not authoritative" {
     var env = std.process.Environ.Map.init(testing.allocator);
     defer env.deinit();
@@ -487,8 +512,10 @@ test "remote detection - auto mode ignores local capabilities after forwarded SS
     try term.setHostEnvVar(testing.allocator, "SSH_CONNECTION", "192.0.2.1 54231 192.0.2.2 22");
     try term.setHostEnvVar(testing.allocator, "TERM", "xterm-256color");
     try term.setHostEnvVar(testing.allocator, "TERM_PROGRAM", "ghostty");
+    try term.setHostEnvVar(testing.allocator, "TERM_PROGRAM_VERSION", "1.3.1");
 
     try testing.expect(term.caps.remote);
+    try testing.expectEqual(utf8.WidthMethod.unicode, term.caps.unicode);
     try testing.expect(!term.caps.ansi256);
     try testing.expect(!term.caps.notifications);
     try testing.expectEqualStrings("", term.getTerminalName());
@@ -507,8 +534,9 @@ test "remote detection - explicit local mode ignores SSH environment" {
 
 test "processCapabilityResponse captures startup cursor report before home probes" {
     var term = Terminal.init(.{});
-    term.startup_cursor_query_pending = true;
-    term.startup_cursor_query_captured = false;
+    var writer = TestWriter.init(testing.allocator);
+    defer writer.deinit();
+    try term.queryTerminalSend(&writer);
 
     term.processCapabilityResponse("\x1b[7;11R\x1b[1;2R\x1b[1;3R");
 
@@ -519,6 +547,34 @@ test "processCapabilityResponse captures startup cursor report before home probe
     try testing.expect(!term.startup_cursor_query_pending);
     try testing.expect(term.caps.explicit_width);
     try testing.expect(term.caps.scaled_text);
+}
+
+test "processCapabilityResponse only accepts exact ordered explicit width probe reports" {
+    var unrelated = Terminal.init(.{});
+    unrelated.processCapabilityResponse("\x1b[1;5R");
+    try testing.expect(!unrelated.caps.explicit_width);
+    try testing.expect(!unrelated.caps.scaled_text);
+
+    var startup_on_row_one = Terminal.init(.{});
+    var startup_writer = TestWriter.init(testing.allocator);
+    defer startup_writer.deinit();
+    try startup_on_row_one.queryTerminalSend(&startup_writer);
+    startup_on_row_one.processCapabilityResponse("\x1b[1;5R");
+    startup_on_row_one.processCapabilityResponse("\x1b[1;2R");
+    startup_on_row_one.processCapabilityResponse("\x1b[1;3R");
+    const cursor = startup_on_row_one.getCursorPosition();
+    try testing.expectEqual(@as(u32, 5), cursor.x);
+    try testing.expectEqual(@as(u32, 1), cursor.y);
+    try testing.expect(startup_on_row_one.caps.explicit_width);
+    try testing.expect(startup_on_row_one.caps.scaled_text);
+
+    var echoed = Terminal.init(.{});
+    var echoed_writer = TestWriter.init(testing.allocator);
+    defer echoed_writer.deinit();
+    try echoed.queryTerminalSend(&echoed_writer);
+    echoed.processCapabilityResponse("\x1b[7;11R\x1b[1;12R\x1b[1;8R");
+    try testing.expect(!echoed.caps.explicit_width);
+    try testing.expect(!echoed.caps.scaled_text);
 }
 
 test "environment variables - should be overridden by xtversion" {
@@ -1555,12 +1611,12 @@ fn forwardScreenDcs(input: []const u8, output: []u8) ![]const u8 {
     return output[0..output_offset];
 }
 
-test "queryTerminalSend - skips OSC 66 queries when OPENTUI_FORCE_EXPLICIT_WIDTH=false" {
+test "queryTerminalSend - force-off rejects unrelated row-1 cursor reports" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
     var env = std.process.Environ.Map.init(testing.allocator);
     defer env.deinit();
-    try env.put("OPENTUI_FORCE_EXPLICIT_WIDTH", "false");
+    try env.put("OPENTUI_FORCE_EXPLICIT_WIDTH", "0");
 
     var term = Terminal.init(.{ .env_map = &env });
 
@@ -1580,6 +1636,10 @@ test "queryTerminalSend - skips OSC 66 queries when OPENTUI_FORCE_EXPLICIT_WIDTH
     // Verify the flag was set correctly
     try testing.expect(term.skip_explicit_width_query);
     try testing.expect(!term.caps.explicit_width);
+
+    term.processCapabilityResponse("\x1b[1;2R");
+    try testing.expect(!term.caps.explicit_width);
+    try testing.expect(!term.caps.scaled_text);
 }
 
 test "queryTerminalSend - sends OSC 66 queries by default" {
@@ -1649,6 +1709,71 @@ test "enableDetectedFeatures - sends initial theme queries" {
     try testing.expect(std.mem.find(u8, output, "\x1b]11;?\x07") != null);
     try testing.expect(std.mem.find(u8, output, "\x1b[?996n") == null);
     try testing.expect(term.state.theme_queries_sent);
+}
+
+const WidthEnv = struct { key: []const u8, value: []const u8 };
+
+fn expectWidthMethodForEnv(entries: []const WidthEnv, expected: utf8.WidthMethod) !void {
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    for (entries) |entry| try env.put(entry.key, entry.value);
+    const term = Terminal.init(.{ .env_map = &env });
+    try testing.expectEqual(expected, term.caps.unicode);
+}
+
+test "Ghostty width profile requires a direct terminal" {
+    try expectWidthMethodForEnv(&.{.{ .key = "TERM_PROGRAM", .value = "WezTerm" }}, .unicode);
+    try expectWidthMethodForEnv(&.{
+        .{ .key = "TMUX", .value = "/tmp/tmux-1000/default,12345,0" },
+        .{ .key = "TERM_PROGRAM", .value = "ghostty" },
+        .{ .key = "TERM_PROGRAM_VERSION", .value = "1.3.1" },
+    }, .wcwidth);
+    try expectWidthMethodForEnv(&.{
+        .{ .key = "TERM_PROGRAM", .value = "ghostty" },
+        .{ .key = "TERM_PROGRAM_VERSION", .value = "1.2.3" },
+    }, .unicode);
+    try expectWidthMethodForEnv(&.{
+        .{ .key = "TERM_PROGRAM", .value = "ghostty" },
+        .{ .key = "TERM_PROGRAM_VERSION", .value = "0.0.0-20260223.r14707.gc61f184" },
+    }, .unicode);
+    try expectWidthMethodForEnv(&.{
+        .{ .key = "TERM_PROGRAM", .value = "ghostty" },
+        .{ .key = "TERM_PROGRAM_VERSION", .value = "0.0.0-20260224.r14762.gc51f0d7" },
+    }, .unicode_wide);
+}
+
+test "Ghostty width profile preserves explicit wcwidth override" {
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("TERM_PROGRAM", "ghostty");
+    try env.put("TERM_PROGRAM_VERSION", "1.3.1");
+    try env.put("OPENTUI_FORCE_WCWIDTH", "1");
+
+    var term = Terminal.init(.{ .env_map = &env });
+    try testing.expectEqual(utf8.WidthMethod.wcwidth, term.caps.unicode);
+    term.processCapabilityResponse("\x1b[?2027;2$y\x1bP>|ghostty 1.3.1\x1b\\");
+    var writer = TestWriter.init(testing.allocator);
+    defer writer.deinit();
+    try term.enableDetectedFeatures(&writer, false);
+    try testing.expectEqual(utf8.WidthMethod.wcwidth, term.caps.unicode);
+}
+
+test "Ghostty width profile enables mode 2027 and remains stable after setup starts" {
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("TERM_PROGRAM", "ghostty");
+    try env.put("TERM_PROGRAM_VERSION", "1.3.1");
+
+    var term = Terminal.init(.{ .env_map = &env });
+    try testing.expectEqual(utf8.WidthMethod.unicode_wide, term.caps.unicode);
+    var writer = TestWriter.init(testing.allocator);
+    defer writer.deinit();
+    try term.queryTerminalSend(&writer);
+
+    term.processCapabilityResponse("\x1b[?2027;2$y\x1bP>|WezTerm 20240203-110809-5046fc22\x1b\\");
+    try term.enableDetectedFeatures(&writer, false);
+    try testing.expectEqual(utf8.WidthMethod.unicode_wide, term.caps.unicode);
+    try testing.expect(std.mem.find(u8, writer.getWritten(), ansi.ANSI.unicodeSet) != null);
 }
 
 test "setMouseMode - enable without movement keeps click/drag only" {

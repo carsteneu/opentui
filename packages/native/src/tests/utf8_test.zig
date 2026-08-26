@@ -3692,6 +3692,19 @@ test "calculateTextWidth: Malayalam script" {
     try testing.expect(width >= 4 and width <= 5);
 }
 
+test "calculateTextWidth: Malayalam report matches Ghostty grapheme widths" {
+    const report = "OpenCode search configuration പരിശോധിക്കൽ";
+    try testing.expectEqual(@as(u32, 36), utf8.calculateTextWidth(report, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 2), utf8.calculateTextWidth("രി", 4, false, .unicode_wide));
+    try testing.expectEqual(@as(u32, 2), utf8.calculateTextWidth("ശോ", 4, false, .unicode_wide));
+    try testing.expectEqual(@as(u32, 2), utf8.calculateTextWidth("ധി", 4, false, .unicode_wide));
+    try testing.expectEqual(@as(u32, 2), utf8.calculateTextWidth("ക്ക", 4, false, .unicode_wide));
+    try testing.expectEqual(
+        @as(u32, 40),
+        utf8.calculateTextWidth(report, 4, false, .unicode_wide),
+    );
+}
+
 test "calculateTextWidth: Oriya script" {
     const oriya = "ଓଡ଼ିଆ";
     const width = utf8.calculateTextWidth(oriya, 4, false, .unicode);
@@ -4028,9 +4041,14 @@ test "Thai: mixed Thai and emoji" {
     try testing.expectEqual(@as(u32, 11), utf8.calculateTextWidth(text, 4, false, .unicode));
 }
 
-test "Thai: คำว่า width should be 3" {
+test "Thai: คำว่า width should be 4" {
     const text = "คำว่า";
-    try testing.expectEqual(@as(u32, 3), utf8.calculateTextWidth(text, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 4), utf8.calculateTextWidth(text, 4, false, .unicode));
+}
+
+test "Thai: น้ำ width should be 2" {
+    const text = "น้ำ";
+    try testing.expectEqual(@as(u32, 2), utf8.calculateTextWidth(text, 4, false, .unicode));
 }
 
 test "Thai: ว่ width should be 1" {

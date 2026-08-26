@@ -11,6 +11,7 @@ import {
   type RenderContext,
   type TerminalCapabilities,
   type ThemeMode,
+  type SelectionBehavior,
   type ViewportBounds,
   type WidthMethod,
 } from "./types.js"
@@ -526,7 +527,7 @@ class ScrollbackSnapshotRenderContext extends EventEmitter implements RenderCont
     return this.lifecyclePasses
   }
   public clearSelection(): void {}
-  public startSelection(_renderable: Renderable, _x: number, _y: number): void {}
+  public startSelection(_renderable: Renderable, _x: number, _y: number, _behavior?: SelectionBehavior): void {}
   public updateSelection(
     _currentRenderable: Renderable | undefined,
     _x: number,
@@ -767,6 +768,7 @@ export enum RendererControlState {
 }
 
 type TelemetryFrameSource = "rAF" | "requestPartial" | "timer" | "live" | "request"
+const CLICK_REPEAT_INTERVAL_MS = 500
 
 export class CliRenderer extends EventEmitter implements RenderContext {
   private static animationFrameId = 0
@@ -906,6 +908,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private currentSelection: Selection | null = null
   private selectionContainers: Renderable[] = []
+  private lastClick: { count: number; time: number; x: number; y: number; renderableId: number } | null = null
   private clipboard: Clipboard
 
   private _splitHeight: number = 0
@@ -1546,8 +1549,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public get widthMethod(): WidthMethod {
-    const caps = this.capabilities
-    return caps?.unicode === "wcwidth" ? "wcwidth" : "unicode"
+    return this.capabilities?.unicode ?? this.nextRenderBuffer.widthMethod
   }
 
   public get frameId(): number {
@@ -3826,7 +3828,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       )
 
       if (canStartSelection && maybeRenderable) {
-        this.startSelection(maybeRenderable, mouseEvent.x, mouseEvent.y)
+        this.startSelection(
+          maybeRenderable,
+          mouseEvent.x,
+          mouseEvent.y,
+          this.nextClickBehavior(maybeRenderable, mouseEvent.x, mouseEvent.y),
+        )
         this.dispatchMouseEvent(maybeRenderable, mouseEvent)
         return true
       }
@@ -3846,7 +3853,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return true
     }
 
-    if (mouseEvent.type === "up" && this.currentSelection?.isDragging) {
+    if (mouseEvent.type === "up" && mouseEvent.button === MouseButton.LEFT && this.currentSelection?.isDragging) {
       if (maybeRenderable) {
         const event = new MouseEvent(maybeRenderable, {
           ...mouseEvent,
@@ -3932,7 +3939,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.lastOverRenderable = undefined
     }
 
-    if (!event?.defaultPrevented && mouseEvent.type === "down" && this.currentSelection) {
+    if (
+      !event?.defaultPrevented &&
+      mouseEvent.type === "down" &&
+      mouseEvent.button === MouseButton.LEFT &&
+      this.currentSelection
+    ) {
       this.clearSelection()
     }
 
@@ -5288,6 +5300,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public clearSelection(): void {
+    this.clearSelectionState()
+    this.lastClick = null
+  }
+
+  private clearSelectionState(): void {
     if (this.currentSelection) {
       for (const renderable of this.currentSelection.touchedRenderables) {
         if (renderable.selectable && !renderable.isDestroyed) {
@@ -5303,15 +5320,28 @@ export class CliRenderer extends EventEmitter implements RenderContext {
    * Start a new selection at the given coordinates.
    * Used by both mouse and keyboard selection.
    */
-  public startSelection(renderable: Renderable, x: number, y: number): void {
+  public startSelection(renderable: Renderable, x: number, y: number, behavior: SelectionBehavior = "cell"): void {
     if (!renderable.selectable) return
 
-    this.clearSelection()
+    this.clearSelectionState()
     this.selectionContainers.push(renderable.parent || this.root)
-    this.currentSelection = new Selection(renderable, { x, y }, { x, y })
+    this.currentSelection = new Selection(renderable, { x, y }, { x, y }, behavior)
     this.currentSelection.isStart = true
 
     this.notifySelectablesOfSelectionChange()
+  }
+
+  private nextClickBehavior(renderable: Renderable, x: number, y: number): SelectionBehavior {
+    const now = this.clock.now()
+    const last = this.lastClick
+    const continued =
+      last !== null &&
+      renderable.num === last.renderableId &&
+      now - last.time <= CLICK_REPEAT_INTERVAL_MS &&
+      Math.max(Math.abs(x - last.x), Math.abs(y - last.y)) <= 1
+    const count = continued ? Math.min(last.count + 1, 3) : 1
+    this.lastClick = { count, time: now, x, y, renderableId: renderable.num }
+    return count === 1 ? "cell" : count === 2 ? "word" : "line"
   }
 
   public updateSelection(

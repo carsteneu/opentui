@@ -165,6 +165,8 @@ sixel_query_pending: bool = false,
 capability_queries_pending: bool = false,
 startup_cursor_query_pending: bool = false,
 startup_cursor_query_captured: bool = false,
+explicit_width_probe_reports_pending: u8 = 0,
+unicode_wide_locked: ?bool = null,
 
 state: struct {
     alt_screen: bool = false,
@@ -294,6 +296,7 @@ pub fn exitAltScreen(self: *Terminal, tty: anytype) !void {
 
 pub fn queryTerminalSend(self: *Terminal, tty: anytype) !void {
     self.checkEnvironmentOverrides();
+    self.unicode_wide_locked = self.caps.unicode == .unicode_wide;
     self.graphics_query_pending = !self.skip_graphics_query;
     self.sixel_query_pending = !self.skip_graphics_query;
     self.capability_queries_pending = false;
@@ -342,12 +345,15 @@ pub fn queryTerminalSend(self: *Terminal, tty: anytype) !void {
     }
 
     if (!self.skip_explicit_width_query) {
+        self.explicit_width_probe_reports_pending = 2;
         try tty.writeAll(ansi.ANSI.home ++
             ansi.ANSI.explicitWidthQuery ++
             ansi.ANSI.cursorPositionRequest ++
             ansi.ANSI.home ++
             ansi.ANSI.scaledTextQuery ++
             ansi.ANSI.cursorPositionRequest);
+    } else {
+        self.explicit_width_probe_reports_pending = 0;
     }
 
     try tty.writeAll(ansi.ANSI.restoreCursorState);
@@ -412,7 +418,7 @@ pub fn enableDetectedFeatures(self: *Terminal, tty: anytype, use_kitty_keyboard:
         try self.setKittyKeyboard(tty, true, self.opts.kitty_keyboard_flags);
     }
 
-    if (self.caps.unicode == .unicode and !self.caps.explicit_width) {
+    if ((self.caps.unicode == .unicode or self.caps.unicode == .unicode_wide) and !self.caps.explicit_width) {
         try tty.writeAll(ansi.ANSI.unicodeSet);
     }
 
@@ -688,6 +694,7 @@ fn checkEnvironmentOverrides(self: *Terminal) void {
     }
 
     const env_is_forwarded = if (self.host_env_map) |*host_env_map| env_map == host_env_map else false;
+    self.applyKnownUnicodeWidthIdentity();
     if (self.opts.remote_mode == .auto and self.remote and env_is_forwarded) {
         return;
     }
@@ -849,6 +856,8 @@ fn checkEnvironmentOverrides(self: *Terminal) void {
             self.caps.kitty_graphics = false;
         }
     }
+
+    self.applyKnownUnicodeWidthIdentity();
 
     if (env_map.get("OPENTUI_FORCE_WCWIDTH")) |_| {
         self.caps.unicode = .wcwidth;
@@ -1152,6 +1161,16 @@ fn semanticVersionAtLeast(version: []const u8, required_major: u32, required_min
     return true;
 }
 
+fn ghosttyWideGraphemeWidths(version: []const u8) bool {
+    if (semanticVersionAtLeast(version, 1, 3)) return true;
+    const prefix = "0.0.0-";
+    if (!std.mem.startsWith(u8, version, prefix) or version.len <= prefix.len + 8 or version[prefix.len + 8] != '.') return false;
+    const date_text = version[prefix.len .. prefix.len + 8];
+    for (date_text) |char| if (!std.ascii.isDigit(char)) return false;
+    const date = std.fmt.parseInt(u32, date_text, 10) catch return false;
+    return date >= 20260224;
+}
+
 fn wezTermBuildAtLeast(version: []const u8, required_date: u32) bool {
     var parts = std.mem.splitAny(u8, version, "-._");
     const date_text = parts.next() orelse return false;
@@ -1197,6 +1216,27 @@ fn applyKnownGraphicsIdentity(self: *Terminal) void {
     if (std.ascii.eqlIgnoreCase(name, "wezterm") and wezTermBuildAtLeast(version, 20200620)) {
         self.caps.sixel = true;
     }
+}
+
+fn applyKnownUnicodeWidthIdentity(self: *Terminal) void {
+    if (self.unicode_wide_locked) |enabled| {
+        if (enabled) {
+            self.caps.unicode = .unicode_wide;
+        }
+        return;
+    }
+
+    if (self.caps.unicode == .unicode_wide) {
+        self.caps.unicode = .unicode;
+    }
+    if (self.remote or self.multiplexer != .none) return;
+    const env_map = self.opts.env_map orelse return;
+    const term_program = env_map.get("TERM_PROGRAM") orelse return;
+    if (!std.ascii.eqlIgnoreCase(term_program, "ghostty")) return;
+    const version = env_map.get("TERM_PROGRAM_VERSION") orelse return;
+    if (!ghosttyWideGraphemeWidths(version)) return;
+    if (self.term_info.from_xtversion and !std.ascii.eqlIgnoreCase(self.getTerminalName(), "ghostty")) return;
+    self.caps.unicode = .unicode_wide;
 }
 
 pub fn processCapabilityResponse(self: *Terminal, response: []const u8) void {
@@ -1263,13 +1303,14 @@ pub fn processCapabilityResponse(self: *Terminal, response: []const u8) void {
             self.setCursorPosition(col, row, self.state.cursor.visible);
             self.startup_cursor_query_captured = true;
             self.startup_cursor_query_pending = false;
-        }
+        } else if (self.explicit_width_probe_reports_pending > 0) {
+            const probe_index = 2 - self.explicit_width_probe_reports_pending;
+            self.explicit_width_probe_reports_pending -= 1;
 
-        if (row == 1) {
-            if (col >= 2) {
+            if (row == 1 and probe_index == 0 and col == 2) {
                 self.caps.explicit_width = true;
-            }
-            if (col >= 3) {
+            } else if (row == 1 and probe_index == 1 and col == 3) {
+                self.caps.explicit_width = true;
                 self.caps.scaled_text = true;
             }
         }
@@ -1759,6 +1800,19 @@ pub fn getTerminalInfo(self: *Terminal) TerminalInfo {
 
 pub fn getTerminalName(self: *Terminal) []const u8 {
     return self.term_info.name[0..self.term_info.name_len];
+}
+
+/// Forced Sixel bypasses detection. Refuse it when identity cannot be a
+/// Sixel host. After XTVERSION, a multiplexer is not the host; DA still
+/// wins if the host reported Sixel through it. Apple Terminal has no
+/// XTVERSION, so TERM_PROGRAM is the only identity.
+pub fn refusesForcedSixel(self: *Terminal) bool {
+    if (self.caps.sixel) return false;
+    if (self.term_info.from_xtversion) {
+        if (self.multiplexer != .none) return true;
+        return std.ascii.eqlIgnoreCase(self.getTerminalName(), "kitty");
+    }
+    return std.ascii.eqlIgnoreCase(self.getTerminalName(), "Apple_Terminal");
 }
 
 pub fn getTerminalVersion(self: *Terminal) []const u8 {
