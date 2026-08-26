@@ -56,7 +56,7 @@ describe("wave5 staged binding", () => {
   const nativeLib = findNativeLibrary()
   const requiresNative = {
     skip: !nativeLib,
-    reason: "no SRC-native libopentui.so found under packages/native/lib",
+    reason: "no libopentui.so found under packages/native/lib",
   }
 
   test(
