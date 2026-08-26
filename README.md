@@ -19,8 +19,8 @@ OpenTUI is a library to build terminal user interfaces.
 
 > [!NOTE]
 > **This fork carries a performance-hardening line** (released as
-> [`v0.5.6-perf.3`](https://github.com/carsteneu/opentui/releases/tag/v0.5.6-perf.3), based on
-> upstream v0.5.5): cold start −75 % (time to first native frame), code streaming −83 % cold /
+> [`v0.5.6-perf.5`](https://github.com/carsteneu/opentui/releases/tag/v0.5.6-perf.5), based on
+> upstream v0.5.8): cold start −75 % (time to first native frame), code streaming −83 % cold /
 > −93 % warm main-thread, zero FFI layout reads on scroll frames in culled lists, and a
 > tree-sitter memory-leak fix — each verified by paired A/B gates with confidence intervals.
 > Full report, methodology, and reproduction commands: [`PERFORMANCE.md`](PERFORMANCE.md).
