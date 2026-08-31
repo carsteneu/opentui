@@ -142,12 +142,13 @@ export class EmbeddedTerminalRenderable extends Renderable {
   public encodeKey(key: KeyEvent): Uint8Array {
     if (!this.handle) return new Uint8Array()
     const text = textualKey(key)
+    const physical = physicalKey(key)
     return this.lib.embeddedTerminalEncodeKey(this.handle, {
       action: key.eventType === "release" ? "release" : key.repeated ? "repeat" : "press",
-      key: physicalKey(key),
+      key: physical,
       mods: modifiers(key),
       text,
-      unshiftedCodepoint: key.baseCode ?? physicalUnshiftedCodepoint(key.code),
+      unshiftedCodepoint: key.baseCode ?? physicalUnshiftedCodepoint(physical),
     })
   }
 
@@ -173,6 +174,15 @@ export class EmbeddedTerminalRenderable extends Renderable {
       this.requestRender()
       return false
     }
+
+    // Only gate the start of a cell drag; returning to the anchor after dragging is a valid selection.
+    if (
+      !this.selection &&
+      local.behavior === "cell" &&
+      local.anchorX === local.focusX &&
+      local.anchorY === local.focusY
+    )
+      return false
 
     const point = (x: number, y: number) => {
       if (y < 0) return { x: 0, y: 0 }
@@ -371,7 +381,9 @@ function modifiers(input: {
 }
 
 function physicalKey(key: KeyEvent) {
-  if (key.code) return key.code
+  if (key.code && !key.code.startsWith("[")) return key.code
+  if (/^[a-z]$/i.test(key.name)) return `Key${key.name.toUpperCase()}`
+  if (/^[0-9]$/.test(key.name)) return `Digit${key.name}`
   return (
     {
       backspace: "Backspace",

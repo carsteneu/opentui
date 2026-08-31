@@ -108,6 +108,18 @@ registerEnvVar({
   default: false,
 })
 
+export type KittyImageTransport = "raw" | "zlib" | "file"
+const KITTY_IMAGE_TRANSPORTS: KittyImageTransport[] = ["raw", "zlib", "file"]
+
+export interface KittyImageTransportStatus {
+  requested: KittyImageTransport
+  effective: "raw" | "zlib" | "png" | "file"
+  fileState: "disabled" | "probing" | "ready" | "unsupported" | "timeout" | "io-error" | "cancelled"
+  fallback: "none" | "not-ready" | "unavailable" | "budget" | "busy" | "preparation" | "compression"
+  pendingFiles: number
+  pendingBytes: number
+}
+
 export interface CliRendererConfig {
   // Read input from this stream. Defaults to process.stdin. Any `Readable`
   // works; capabilities like `setRawMode` are duck-typed and used when present.
@@ -131,6 +143,9 @@ export interface CliRendererConfig {
   // native startup auto-detects SSH/mosh sessions; custom stdout feed output
   // defaults to remote because it is not connected to the host TTY directly.
   remote?: boolean
+
+  // Raw is the default. File requires a local terminal with medium and upload ACK support.
+  kittyImageTransport?: KittyImageTransport
 
   // Use an in-memory native buffered output destination instead of process stdout.
   // Intended for test helpers that need native rendering without terminal I/O.
@@ -537,6 +552,7 @@ class ScrollbackSnapshotRenderContext extends EventEmitter implements RenderCont
 }
 
 const DEFAULT_FORWARDED_ENV_KEYS = [
+  "TMPDIR",
   "SSH_CONNECTION",
   "SSH_CLIENT",
   "SSH_TTY",
@@ -833,6 +849,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   // cancelled, so it is guarded by the token instead).
   private activationTimer: TimerHandle | null = null
   private activationToken: number = 0
+  private updateGeneration = 0
 
   private liveRequestCounter: number = 0
   private _controlState: RendererControlState = RendererControlState.IDLE
@@ -885,6 +902,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private resizeTimeoutId: TimerHandle | null = null
   private capabilityTimeoutId: TimerHandle | null = null
+  private kittyTransportTimer: TimerHandle | null = null
+  private kittyTransportMode: KittyImageTransport
   private terminalKeepAliveTimer: ReturnType<typeof setInterval> | null = null
   private xtVersionWaiters = new Set<() => void>()
   private splitStartupSeedTimeoutId: TimerHandle | null = null
@@ -933,9 +952,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private _useConsole: boolean = false
   private sigwinchHandler: () => void = (() => {
-    const width = this.stdout.columns || 80
-    const height = this.stdout.rows || 24
-    this.handleResize(width, height)
+    const width = this.stdout.columns
+    const height = this.stdout.rows
+    if (width > 0 && height > 0) this.handleResize(width, height)
   }).bind(this)
   private _capabilities: TerminalCapabilities | null = null
   private _latestPointer: { x: number; y: number } = { x: 0, y: 0 }
@@ -1044,6 +1063,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _feedSinkTerminal = false
   private _detachFeedSinkListeners: (() => void) | null = null
   private feedIdleRenderScheduled = false
+  private feedIdleWaitPending = false
   private ordinaryFrameWaitingForFeed = false
   private ordinaryFrameWaitControlState: RendererControlState | null = null
 
@@ -1102,6 +1122,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     const { screenMode, footerHeight, externalOutputMode } = resolveModes(config)
     const initialGeometry = calculateRenderGeometry(screenMode, width, height, footerHeight)
     const remoteMode = config.remote ?? (useFeedOutput ? true : undefined)
+    this.kittyTransportMode = config.kittyImageTransport ?? "raw"
+    const transportCode = KITTY_IMAGE_TRANSPORTS.indexOf(this.kittyTransportMode)
+    if (transportCode < 0) throw new TypeError("Invalid kittyImageTransport")
 
     if (rendererTracker.streamOwners.get(stdin)) {
       throw new Error("Cannot create CliRenderer: stdin is already used by another CliRenderer")
@@ -1145,7 +1168,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       feed?.close()
       throw new Error("Failed to create renderer")
     }
-    mark("opentui.rendererCreated")
+  lib.setKittyImageTransport(rendererPtr, transportCode)
+  mark("opentui.rendererCreated")
 
     // Threading defaults (on everywhere except linux, where it currently
     // crashes — likely a missing build dep).
@@ -1230,6 +1254,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         })
       })
       this._detachFeedError = feed.onError((code) => {
+        if (this.kittyTransportTimer !== null) this.kittyOutputErrorHandler()
         console.error(`[CliRenderer] NativeSpanFeed error: code=${code}`)
       })
     }
@@ -1384,7 +1409,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return id
     }
     global.cancelAnimationFrame = (handle: number) => {
-      this.animationRequest.delete(handle)
+      if (this.animationRequest.delete(handle)) this.dropLive()
     }
 
     const window = global.window
@@ -1578,42 +1603,57 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private scheduleRenderAfterFeedIdle(): void {
     const feed = this._feed
-    if (!feed || this.feedIdleRenderScheduled || this._isDestroyed) return
+    if (!feed || this._isDestroyed || this._controlState === RendererControlState.EXPLICIT_SUSPENDED) return
 
     this.feedIdleRenderScheduled = true
-    // Feed backpressure wait (render stalls until native output drains).
-    const feedIdleStart = isTelemetryEnabled() ? performance.now() : 0
-    feed.idle().then(() => {
-      if (isTelemetryEnabled() && feedIdleStart > 0) {
-        recordSpan("opentui.feedWait", feedIdleStart, performance.now())
-      }
-      this.feedIdleRenderScheduled = false
-      const ordinaryFrameWasWaiting = this.ordinaryFrameWaitingForFeed
-      const ordinaryFrameWaitControlState = this.ordinaryFrameWaitControlState
-      this.ordinaryFrameWaitingForFeed = false
-      this.ordinaryFrameWaitControlState = null
-      if (
-        this._isDestroyed ||
-        (ordinaryFrameWasWaiting &&
-          this._controlState !== ordinaryFrameWaitControlState &&
-          (this._controlState === RendererControlState.EXPLICIT_PAUSED ||
-            this._controlState === RendererControlState.EXPLICIT_STOPPED ||
-            this._controlState === RendererControlState.EXPLICIT_SUSPENDED))
-      ) {
-        this.resolveIdleIfNeeded()
-        return
-      }
+      if (this.feedIdleWaitPending) return
+      this.feedIdleWaitPending = true
+      // Feed backpressure wait (render stalls until native output drains).
+      const feedIdleStart = isTelemetryEnabled() ? performance.now() : 0
+      feed.idle().then(() => {
+        this.feedIdleWaitPending = false
+        if (isTelemetryEnabled() && feedIdleStart > 0) {
+          recordSpan("opentui.feedWait", feedIdleStart, performance.now())
+        }
+        if (!this.feedIdleRenderScheduled) return
+        // New output may arrive after the feed resolves but before this continuation.
+        if (feed.isBackpressured()) {
+          this.scheduleRenderAfterFeedIdle()
+          return
+        }
 
-      this.scheduleRenderTimer()
-      this.resolveIdleIfNeeded()
-    })
+        this.feedIdleRenderScheduled = false
+        const ordinaryFrameWasWaiting = this.ordinaryFrameWaitingForFeed
+        const ordinaryFrameWaitControlState = this.ordinaryFrameWaitControlState
+        this.ordinaryFrameWaitingForFeed = false
+        this.ordinaryFrameWaitControlState = null
+        if (
+          this._isDestroyed ||
+          (ordinaryFrameWasWaiting &&
+            this._controlState !== ordinaryFrameWaitControlState &&
+            (this._controlState === RendererControlState.EXPLICIT_PAUSED ||
+              this._controlState === RendererControlState.EXPLICIT_STOPPED ||
+              this._controlState === RendererControlState.EXPLICIT_SUSPENDED))
+        ) {
+          this.resolveIdleIfNeeded()
+          return
+        }
+
+        this.scheduleRenderTimer()
+        this.resolveIdleIfNeeded()
+      })
+    }
+
+  private cancelRenderAfterFeedIdle(): void {
+    if (!this.feedIdleRenderScheduled) return
+    // Cancel scheduler demand without releasing bytes still owned by the sink.
+    this.feedIdleRenderScheduled = false
+    this.immediateRerenderRequested = false
   }
 
   private handleNativeRenderRejection(status: number): "retryable-skip" | "backpressured" | "failed" {
     this.lastFrameCommitted = false
     if (status === NATIVE_RENDER_STATUS_SKIPPED && this._feed) {
-      this.ordinaryFrameWaitingForFeed = true
-      this.ordinaryFrameWaitControlState = this._controlState
       this.scheduleRenderAfterFeedIdle()
       return "retryable-skip"
     }
@@ -1679,105 +1719,106 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
-    if (this._isRunning) {
-      if (!this.rendering && !this.renderTimeout && !this.ordinaryFrameWaitingForFeed) {
-        this.scheduleRenderTimer()
+      if (this._isRunning) {
+        if (!this.rendering && !this.renderTimeout && !this.ordinaryFrameWaitingForFeed) {
+          this.scheduleRenderTimer()
+        }
+        return
       }
-      return
+
+      if (this.ordinaryFrameWaitingForFeed) {
+        return
+      }
+
+      this.scheduleDelayedActivation()
     }
 
-    if (this.ordinaryFrameWaitingForFeed) {
-      return
-    }
+    public requestPartialRender(renderable: Renderable) {
+      if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED || renderable.isDestroyed) return
 
-    this.scheduleDelayedActivation()
-  }
+      this.recordTelemetryRequest("requestPartial")
 
-  public requestPartialRender(renderable: Renderable) {
-    if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED || renderable.isDestroyed) return
+      this.partialRequests.add(renderable)
+      this.partialFramePending = true
 
-    this.recordTelemetryRequest("requestPartial")
+      if (this.feedIdleRenderScheduled || this.ordinaryFrameWaitingForFeed) return
 
-    this.partialRequests.add(renderable)
-    this.partialFramePending = true
-
-    if (this.feedIdleRenderScheduled || this.ordinaryFrameWaitingForFeed) return
-
-    if (this.rendering) {
+      if (this.rendering) {
       this.immediateRerenderRequested = true
       return
     }
 
-    if (this._isRunning) {
-      if (!this.renderTimeout) this.scheduleRenderTimer()
-      return
-    }
-
-    this.scheduleDelayedActivation()
-  }
-
-  /**
-   * Schedules the single one-shot activation owner shared by full and partial
-   * render requests issued outside the running loop. Coalesces repeated
-   * invalidations into at most one pending timer/microtask.
-   */
-  private scheduleDelayedActivation(): void {
-    if (this.updateScheduled || this.renderTimeout) return
-
-    this.updateScheduled = true
-    const token = ++this.activationToken
-    const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
-    const elapsed = this.getElapsedMs(now, this.lastTime)
-    const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
-
-    if (delay === 0) {
-      // process.nextTick cannot be cancelled; guard it with the activation token so a
-      // stale tick after a control transition neither renders nor clears a newer owner.
-      process.nextTick(() => {
-        void this.activateFrame(token)
-      })
-      return
-    }
-
-    this.activationTimer = this.clock.setTimeout(() => {
-      this.activationTimer = null
-      void this.activateFrame(token)
-    }, delay)
-  }
-
-  /**
-   * Cancels any pending delayed activation. Called by suspend, by the
-   * transition to the continuous loop (internalStart), and on destroy.
-   * Bumping the token invalidates an already-queued process.nextTick, because
-   * that microtask itself cannot be removed.
-   */
-  private cancelDelayedActivation(): void {
-    this.activationToken++
-    if (this.activationTimer !== null) {
-      this.clock.clearTimeout(this.activationTimer)
-      this.activationTimer = null
-    }
-    this.updateScheduled = false
-  }
-
-  private async activateFrame(token: number = this.activationToken) {
-    if (token !== this.activationToken || !this.updateScheduled) {
-      this.resolveIdleIfNeeded()
-      return
-    }
-
-    try {
-      await this.loop()
-    } finally {
-      // A control transition can invalidate this owner while loop() is
-      // awaiting asynchronous frame work, then schedule a newer activation.
-      // Only the still-current owner may clear the shared scheduled flag.
-      if (token === this.activationToken) {
-        this.updateScheduled = false
+      if (this._isRunning) {
+        if (!this.renderTimeout) this.scheduleRenderTimer()
+        return
       }
-      this.resolveIdleIfNeeded()
+
+      this.scheduleDelayedActivation()
     }
-  }
+
+    /**
+     * Schedules the single one-shot activation owner shared by full and partial
+     * render requests issued outside the running loop. Coalesces repeated
+     * invalidations into at most one pending timer/microtask.
+     */
+    private scheduleDelayedActivation(): void {
+      if (this.updateScheduled || this.renderTimeout) return
+
+      this.updateScheduled = true
+      const token = ++this.activationToken
+      const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
+      const elapsed = this.getElapsedMs(now, this.lastTime)
+      const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
+
+      if (delay === 0) {
+        // process.nextTick cannot be cancelled; guard it with the activation token so a
+        // stale tick after a control transition neither renders nor clears a newer owner.
+        process.nextTick(() => {
+          void this.activateFrame(token)
+        })
+        return
+      }
+
+      this.activationTimer = this.clock.setTimeout(() => {
+        this.activationTimer = null
+        void this.activateFrame(token)
+      }, delay)
+    }
+
+    /**
+     * Cancels any pending delayed activation. Called by suspend, by the
+     * transition to the continuous loop (internalStart), and on destroy.
+     * Bumping the token invalidates an already-queued process.nextTick, because
+     * that microtask itself cannot be removed.
+     */
+    private cancelDelayedActivation(): void {
+      this.activationToken++
+      this.updateGeneration++
+      if (this.activationTimer !== null) {
+        this.clock.clearTimeout(this.activationTimer)
+        this.activationTimer = null
+      }
+      this.updateScheduled = false
+    }
+
+    private async activateFrame(token: number = this.activationToken) {
+      if (token !== this.activationToken || !this.updateScheduled) {
+        this.resolveIdleIfNeeded()
+        return
+      }
+
+      try {
+        await this.loop()
+      } finally {
+        // A control transition can invalidate this owner while loop() is
+        // awaiting asynchronous frame work, then schedule a newer activation.
+        // Only the still-current owner may clear the shared scheduled flag.
+        if (token === this.activationToken) {
+          this.updateScheduled = false
+        }
+        this.resolveIdleIfNeeded()
+      }
+    }
 
   public get consoleMode(): ConsoleMode {
     return this._useConsole ? "console-overlay" : "disabled"
@@ -2097,6 +2138,57 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   public get capabilities(): TerminalCapabilities | null {
     return this._capabilities
+  }
+
+  public get kittyImageTransport(): KittyImageTransport {
+    return this.kittyTransportMode
+  }
+
+  public set kittyImageTransport(mode: KittyImageTransport) {
+    const code = KITTY_IMAGE_TRANSPORTS.indexOf(mode)
+    if (code < 0) throw new TypeError("Invalid kittyImageTransport")
+    if (this._isDestroyed || mode === this.kittyTransportMode) return
+    this.kittyTransportMode = mode
+    this.startKittyTransportPolling()
+    this.lib.setKittyImageTransport(this.rendererPtr, code)
+    this.requestRender()
+  }
+
+  private startKittyTransportPolling(): void {
+    if (!this._terminalIsSetup || this.kittyTransportMode !== "file" || this.kittyTransportTimer !== null) return
+    // Old file transfers still need ACKs, expiry, and error cleanup after selecting an inline mode.
+    this.stdout.on("error", this.kittyOutputErrorHandler)
+    this.kittyTransportTimer = this.clock.setInterval(() => {
+      if (!this._isDestroyed && this.lib.pollKittyImageTransport(this.rendererPtr)) this.requestRender()
+    }, 1000)
+  }
+
+  public get kittyImageTransportStatus(): KittyImageTransportStatus {
+    const [mode, effective, fileState, fallback, pendingFiles, pendingBytes] = this.lib.getKittyImageTransport(
+      this.rendererPtr,
+    )
+    return {
+      requested: KITTY_IMAGE_TRANSPORTS[mode]!,
+      effective: (["raw", "zlib", "png", "file"] as const)[effective]!,
+      fileState: (["disabled", "probing", "ready", "unsupported", "timeout", "io-error", "cancelled"] as const)[
+        fileState
+      ]!,
+      fallback: (["none", "not-ready", "unavailable", "budget", "busy", "preparation", "compression"] as const)[
+        fallback
+      ]!,
+      pendingFiles,
+      pendingBytes,
+    }
+  }
+
+  public cancelKittyImageTransport(): void {
+    if (this._isDestroyed) return
+    this.lib.cancelKittyImageTransport(this.rendererPtr, false)
+    this.requestRender()
+  }
+
+  private kittyOutputErrorHandler = (): void => {
+    if (!this._isDestroyed) this.lib.cancelKittyImageTransport(this.rendererPtr, true)
   }
 
   public triggerNotification(message: string, title?: string): boolean {
@@ -2907,6 +2999,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         forceCommit,
         beginFrame,
         finalizeFrame,
+        drainAll,
       )
       if (nativeResult.status === NATIVE_RENDER_STATUS_SKIPPED) {
         nativeBackpressured = true
@@ -3423,6 +3516,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       explicitWidthCprActive: true,
       startupCursorCprActive,
     })
+    this.startKittyTransportPolling()
     this.lib.setupTerminal(this.rendererPtr, this._screenMode === "alternate-screen")
     this._capabilities = this.lib.getTerminalCapabilities(this.rendererPtr)
 
@@ -3639,6 +3733,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private handleStdinEvent(event: StdinEvent): void {
+    // Native resume can publish probes before the JS control state is restored.
+    if (event.type === "response" && event.sequence.startsWith("\x1b_G")) {
+      const result = this.lib.processKittyImageReply(this.rendererPtr, event.sequence)
+      if (result !== 0) {
+        if (result === 2) this.requestRender()
+        return
+      }
+    }
     if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED) {
       if (event.type === "response" && isPixelResolutionResponse(event.sequence)) {
         this.dispatchSequenceHandlers(event.sequence)
@@ -4346,15 +4448,31 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (this._controlState === RendererControlState.IDLE && this.liveRequestCounter > 0) {
       this._controlState = RendererControlState.AUTO_STARTED
       this.internalStart()
+    } else if (
+      this._controlState === RendererControlState.EXPLICIT_SUSPENDED &&
+      this._previousControlState === RendererControlState.IDLE
+    ) {
+      this._previousControlState = RendererControlState.AUTO_STARTED
     }
   }
 
   public dropLive(): void {
-    this.liveRequestCounter = Math.max(0, this.liveRequestCounter - 1)
+    if (this.liveRequestCounter === 0) return
+    this.liveRequestCounter--
+
+    if (
+      this.liveRequestCounter === 0 &&
+      this._controlState === RendererControlState.EXPLICIT_SUSPENDED &&
+      this._previousControlState === RendererControlState.AUTO_STARTED
+    ) {
+      this._previousControlState = RendererControlState.IDLE
+    }
 
     if (this._controlState === RendererControlState.AUTO_STARTED && this.liveRequestCounter === 0) {
       this._controlState = RendererControlState.IDLE
-      this.internalPause()
+      // Return to demand-driven mode without cancelling coalesced tree/output updates.
+      this._isRunning = false
+      this.resolveIdleIfNeeded()
     }
   }
 
@@ -4392,8 +4510,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   public suspend(): void {
     this._previousControlState = this._controlState
 
-    this._controlState = RendererControlState.EXPLICIT_SUSPENDED
-    this.cancelDelayedActivation()
+      this._controlState = RendererControlState.EXPLICIT_SUSPENDED
+      this.cancelDelayedActivation()
     this.internalPause()
 
     if (this._terminalIsSetup) {
@@ -4490,6 +4608,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private internalPause(): void {
     this._isRunning = false
+    this.cancelRenderAfterFeedIdle()
 
     if (this.renderTimeout) {
       this.clock.clearTimeout(this.renderTimeout)
@@ -4507,25 +4626,16 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private internalStop(): void {
-    if (this.isRunning && !this._isDestroyed) {
-      this._isRunning = false
+    this.updateScheduled = false
+    this.updateGeneration++
+    this.immediateRerenderRequested = false
 
-      if (this.memorySnapshotTimer) {
-        this.clock.clearInterval(this.memorySnapshotTimer)
-        this.memorySnapshotTimer = null
-      }
-
-      if (this.renderTimeout) {
-        this.clock.clearTimeout(this.renderTimeout)
-        this.renderTimeout = null
-      }
-
-      // If we're currently rendering, the frame will resolve idle when it completes
-      // Otherwise, resolve immediately
-      if (!this.rendering) {
-        this.resolveIdleIfNeeded()
-      }
+    if (this.memorySnapshotTimer) {
+      this.clock.clearInterval(this.memorySnapshotTimer)
+      this.memorySnapshotTimer = null
     }
+
+    this.internalPause()
   }
 
   public destroy(): void {
@@ -4550,6 +4660,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private cleanupBeforeDestroy(): void {
     if (this._destroyCleanupPrepared) return
     this._destroyCleanupPrepared = true
+    this.cancelRenderAfterFeedIdle()
+    if (this.kittyTransportTimer !== null) {
+      this.clock.clearInterval(this.kittyTransportTimer)
+      this.kittyTransportTimer = null
+      this.stdout.off("error", this.kittyOutputErrorHandler)
+      this.lib.cancelKittyImageTransport(this.rendererPtr, false)
+    }
 
     if (this._usesProcessStdout) {
       process.removeListener("SIGWINCH", this.sigwinchHandler)
@@ -4813,6 +4930,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private async loop(): Promise<void> {
     if (this.rendering || this._isDestroyed) return
+    const startedWhileRunning = this._isRunning
     if (this.renderTimeout) {
       this.clock.clearTimeout(this.renderTimeout)
       this.renderTimeout = null
@@ -4821,6 +4939,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.ordinaryRequestsDuringFrame.clear()
     let renderFailed = false
     try {
+      // Admit one ordinary frame at a time, before animation/GPU callbacks or
+      // composition. Drained spans still own memory until Writable callbacks settle.
+      // Control and shutdown writes bypass this gate and preserve committed ANSI.
+      if (this._feed?.isBackpressured()) {
+        this.handleNativeRenderRejection(NATIVE_RENDER_STATUS_SKIPPED)
+        this.immediateRerenderRequested = false
+        return
+      }
+
       // Bump before any work so all callers this iteration see the new id.
       this._frameId++
 
@@ -5027,7 +5154,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
             this.renderTimeout = null
           }
         } else if (nativeStatus === "backpressured") {
-          this.scheduleRenderAfterBackpressure()
+          // Automatic live completion still owes its final frame; explicit pause/stop does not.
+          if (
+            !startedWhileRunning ||
+            this._isRunning ||
+            this.immediateRerenderRequested ||
+            this._controlState === RendererControlState.IDLE
+          ) {
+            this.scheduleRenderAfterBackpressure()
+          }
         } else if (nativeStatus === "retryable-skip") {
           this.immediateRerenderRequested = false
           this.renderTimeout = null

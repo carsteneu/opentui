@@ -12,6 +12,7 @@ const logger = @import("logger.zig");
 const NativeSpanFeed = @import("native-span-feed.zig");
 const output = @import("renderer-output.zig");
 const terminal_image = @import("terminal-image.zig");
+const kitty_transport = @import("kitty-transport.zig");
 const native_image = @import("image.zig");
 
 pub const RGBA = ansi.RGBA;
@@ -209,6 +210,7 @@ pub const CliRenderer = struct {
     terminal: Terminal,
     useAlternateScreen: bool = true,
     terminalSetup: bool = false,
+    terminalSuspended: bool = false,
     clearOnShutdown: bool = true,
 
     splitScrollback: split_scrollback.SplitScrollback = .{},
@@ -307,6 +309,7 @@ pub const CliRenderer = struct {
     sixelCacheClock: u64 = 0,
     sixelCacheHits: u64 = 0,
     sixelCacheMisses: u64 = 0,
+    kittyTransport: kitty_transport.Transport = .{},
 
     pub const OutputTarget = union(enum) {
         stdout,
@@ -504,6 +507,7 @@ pub const CliRenderer = struct {
     pub fn setupTerminal(self: *CliRenderer, useAlternateScreen: bool) void {
         self.useAlternateScreen = useAlternateScreen;
         self.terminalSetup = true;
+        self.terminalSuspended = false;
 
         // Build capability query into a stack buffer, then emit via backend.
         // Buffer sized to accommodate all capability-query sequences with margin.
@@ -513,6 +517,8 @@ pub const CliRenderer = struct {
             logger.warn("Failed to query terminal capabilities", .{});
         };
         self.backend.writeOut(writer.buffered());
+
+        self.startKittyFileProbe();
 
         self.setupTerminalWithoutDetection(useAlternateScreen, true);
     }
@@ -544,7 +550,9 @@ pub const CliRenderer = struct {
 
     pub fn resumeRenderer(self: *CliRenderer) void {
         if (!self.terminalSetup) return;
+        self.terminalSuspended = false;
         self.setupTerminalWithoutDetection(self.useAlternateScreen, self.renderOffset == 0);
+        self.startKittyFileProbe();
     }
 
     fn clearSplitFooterSurface(self: *CliRenderer, writer: anytype) void {
@@ -558,6 +566,8 @@ pub const CliRenderer = struct {
     }
 
     pub fn performShutdownSequence(self: *CliRenderer) void {
+        self.terminalSuspended = true;
+        self.kittyTransport.cancel(.cancelled);
         if (!self.terminalSetup) return;
 
         if (self.hasCommittedProtocol(.kitty)) {
@@ -876,6 +886,7 @@ pub const CliRenderer = struct {
     }
 
     fn finishFailedFrame(self: *CliRenderer) RenderStatus {
+        self.kittyTransport.cancel(.io_error);
         self.pendingImages.clearRetainingCapacity();
         @memset(self.nextHitGrid, 0);
         self.force_full_repaint = true;
@@ -1123,13 +1134,42 @@ pub const CliRenderer = struct {
         begin_frame: bool,
         finalize_frame: bool,
     ) RenderResult {
+        return self.commitSplitFooterSnapshotWithOptions(
+            snapshot,
+            row_columns,
+            start_on_new_line,
+            trailing_newline,
+            pinned_render_offset,
+            force,
+            .{ .begin_frame = begin_frame, .finalize_frame = finalize_frame },
+        );
+    }
+
+    pub fn commitSplitFooterSnapshotWithOptions(
+        self: *CliRenderer,
+        snapshot: *OptimizedBuffer,
+        row_columns: u32,
+        start_on_new_line: bool,
+        trailing_newline: bool,
+        pinned_render_offset: u32,
+        force: bool,
+        options: struct {
+            begin_frame: bool = true,
+            finalize_frame: bool = true,
+            control_output: bool = false,
+        },
+    ) RenderResult {
         // Batched commit protocol:
         // - first call starts frame and appends payload
         // - middle calls append payload only
         // - final call renders footer diff/cursor and closes frame
         // This avoids repeated syncSet/syncReset and cursor toggles per chunk.
-        if (begin_frame) {
-            if (self.backend.prepareFrame() != .ok) {
+        if (options.begin_frame) {
+            const ready = if (options.control_output)
+                self.backend.prepareControlFrame()
+            else
+                self.backend.prepareFrame();
+            if (ready != .ok) {
                 const status = self.finishSkippedFrame();
                 return self.renderResult(status);
             }
@@ -1155,7 +1195,7 @@ pub const CliRenderer = struct {
 
                     // Track batch lifetime so subsequent calls can append into the same
                     // output buffer without restarting frame state.
-                    self.splitBatchActive = !finalize_frame;
+                    self.splitBatchActive = !options.finalize_frame;
                     self.splitBatchRedrawFooter = false;
                     self.splitBatchDeltaTime = deltaTime;
 
@@ -1172,7 +1212,7 @@ pub const CliRenderer = struct {
                         break :blk false;
                     };
 
-                    if (finalize_frame) {
+                    if (options.finalize_frame) {
                         self.prepareRenderFrameWithWriter(&w, redraw_footer, true, null, true);
                         if (self.imageRenderFailed) b.failFrame();
                         write_status = b.endFrame();
@@ -1200,15 +1240,14 @@ pub const CliRenderer = struct {
         // Defensive fallback: if caller forgot begin_frame, execute through a
         // single-call frame instead of appending into undefined batch state.
         if (!self.splitBatchActive) {
-            return self.commitSplitFooterSnapshotBatched(
+            return self.commitSplitFooterSnapshotWithOptions(
                 snapshot,
                 row_columns,
                 start_on_new_line,
                 trailing_newline,
                 pinned_render_offset,
                 force,
-                true,
-                true,
+                .{ .control_output = options.control_output },
             );
         }
 
@@ -1231,7 +1270,7 @@ pub const CliRenderer = struct {
                 };
                 self.splitBatchRedrawFooter = self.splitBatchRedrawFooter or redraw_footer;
 
-                if (finalize_frame) {
+                if (options.finalize_frame) {
                     self.prepareRenderFrameWithWriter(&w, self.splitBatchRedrawFooter, true, null, true);
                     if (self.imageRenderFailed) b.failFrame();
                     write_status = b.endFrame();
@@ -1423,7 +1462,22 @@ pub const CliRenderer = struct {
     ) !void {
         const transmit = try self.kittyPlacementTransmit(placement, .pixels);
         defer if (transmit.owned) transmit.image.deinit();
-        try terminal_image.writeKittyTransmit(writer, transmit.image, image_id, self.terminal.isInTmux());
+        // Scrollback has no retained source to retry after a failed file upload.
+        // Keep it self-contained; compression still applies when explicitly requested.
+        self.kittyTransport.effective = try terminal_image.writeKittyTransmitEncoded(
+            self.allocator,
+            writer,
+            transmit.image,
+            image_id,
+            self.terminal.isInTmux(),
+            self.kittyTransport.mode == .zlib,
+        );
+        self.kittyTransport.fallback = if (self.kittyTransport.mode == .file)
+            .unavailable
+        else if (self.kittyTransport.mode == .zlib and self.kittyTransport.effective == .raw)
+            .compression
+        else
+            .none;
         try terminal_image.writeKittyPlacementAtCursor(
             writer,
             image_id,
@@ -1515,7 +1569,7 @@ pub const CliRenderer = struct {
                     }
                     currentLinkId = linkId;
                     if (currentLinkId != 0) {
-                        const lp = self.nextRenderBuffer.link_pool;
+                        const lp = snapshot.link_pool;
                         if (lp.get(currentLinkId)) |url_bytes| {
                             writer.print("\x1b]8;id={d};{s}\x1b\\", .{ currentLinkId, url_bytes }) catch {};
                         } else |_| {
@@ -2130,7 +2184,8 @@ pub const CliRenderer = struct {
                 if (retransmit) try terminal_image.writeKittyDelete(writer, image_id, null, true, tmux);
                 const transmit = try self.kittyPlacementTransmit(placement, .escape);
                 defer if (transmit.owned) transmit.image.deinit();
-                try terminal_image.writeKittyTransmit(writer, transmit.image, image_id, tmux);
+                const directory = if (self.kittyTransport.mode == .file) self.kittyTempDirectory() else "";
+                try self.kittyTransport.transmit(self.allocator, writer, transmit.image, image_id, tmux, directory);
             } else if (force_place or previous.?.x != placement.x or previous.?.y != placement.y or previous.?.width != placement.width or previous.?.height != placement.height or
                 previous.?.source_x != placement.source_x or previous.?.source_y != placement.source_y or previous.?.source_width != placement.source_width or
                 previous.?.source_height != placement.source_height)
@@ -2357,6 +2412,7 @@ pub const CliRenderer = struct {
         requested_region: ?RenderRegion,
         clear_next: bool,
     ) void {
+        _ = self.pollKittyImageTransport();
         const renderStartTime = std.Io.Clock.now(.awake, io).toMicroseconds();
         var cellsUpdated: u32 = 0;
         const palette_force = self.last_rendered_palette_epoch == null or self.last_rendered_palette_epoch.? != self.palette_epoch;
@@ -2402,6 +2458,7 @@ pub const CliRenderer = struct {
                 frame_started = true;
             }
             self.writeKittyImages(writer, should_force) catch {
+                self.kittyTransport.cancel(.io_error);
                 self.force_full_repaint = true;
                 self.imageRenderFailed = true;
             };
@@ -2504,6 +2561,14 @@ pub const CliRenderer = struct {
                     currentAttributes = null;
                     runStart = -1;
                     runLength = 0;
+                    self.currentRenderBuffer.syncCell(x, y, cell);
+                    cellsUpdated += 1;
+                    continue;
+                }
+
+                if (cell_type == gp.CHAR_FLAG_CONTINUATION) {
+                    // A continuation has no bytes to emit. Starting a run here can
+                    // position the next printable cell inside the wide grapheme.
                     self.currentRenderBuffer.syncCell(x, y, cell);
                     cellsUpdated += 1;
                     continue;
@@ -3195,6 +3260,64 @@ pub const CliRenderer = struct {
         const useKitty = self.terminal.opts.kitty_keyboard_flags > 0;
         self.terminal.enableDetectedFeatures(&writer, useKitty) catch {};
         self.writeOut(writer.buffered());
+    }
+
+    fn kittyTempDirectory(self: *const CliRenderer) []const u8 {
+        if (builtin.os.tag == .windows) return "";
+        const env_map = self.terminal.opts.env_map orelse return "/tmp";
+        return env_map.get("TMPDIR") orelse "/tmp";
+    }
+
+    pub fn setKittyImageTransport(self: *CliRenderer, mode: u32) bool {
+        const requested = std.enums.fromInt(kitty_transport.Mode, mode) orelse return false;
+        if (self.kittyTransport.mode == requested) return true;
+        self.kittyTransport.mode = requested;
+        self.invalidateKittyImages();
+        self.startKittyFileProbe();
+        return true;
+    }
+
+    fn startKittyFileProbe(self: *CliRenderer) void {
+        if (!self.terminalSetup or self.terminalSuspended or self.kittyTransport.mode != .file) return;
+        _ = self.pollKittyImageTransport();
+        if (self.kittyTransport.file_state != .disabled) return;
+        if (self.reserveKittyHistoryImageIds(2)) |base| {
+            var buffer: [4096]u8 = undefined;
+            var writer: std.Io.Writer = .fixed(&buffer);
+            self.kittyTransport.startProbe(&writer, base + 1, self.kittyTempDirectory()) catch {};
+            self.backend.writeOut(writer.buffered());
+        } else self.kittyTransport.cancel(.unsupported);
+    }
+
+    pub fn pollKittyImageTransport(self: *CliRenderer) bool {
+        if (self.backend == .buffered) {
+            if (self.backend.buffered.ownedStdoutOutput) |stdout| {
+                if (stdout.failed.load(.acquire)) self.kittyTransport.cancel(.io_error);
+            }
+        }
+        if (builtin.os.tag == .windows or self.terminal.remote or self.terminal.multiplexer != .none or !self.terminal.graphics_enabled) {
+            self.kittyTransport.cancel(.unsupported);
+        }
+        self.kittyTransport.expire(kitty_transport.Transport.nowMs());
+        if (!self.kittyTransport.retry_images) return false;
+        self.kittyTransport.retry_images = false;
+        self.invalidateKittyImages();
+        return true;
+    }
+
+    fn invalidateKittyImages(self: *CliRenderer) void {
+        // A custom sink can reply synchronously while pending images are being published.
+        for ([_][]CommittedImage{ self.currentImages.items, self.pendingImages.items }) |images| {
+            for (images) |*image| {
+                if (image.protocol == .kitty) image.image_handle = 0;
+            }
+        }
+        self.force_full_repaint = true;
+    }
+
+    pub fn processKittyImageReply(self: *CliRenderer, response: []const u8) u32 {
+        if (!self.kittyTransport.handleReply(response)) return 0;
+        return if (self.pollKittyImageTransport()) 2 else 1;
     }
 
     pub fn setKittyKeyboardFlags(self: *CliRenderer, flags: u8) void {

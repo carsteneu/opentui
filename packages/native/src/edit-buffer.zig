@@ -40,16 +40,21 @@ const CursorMeta = struct {
     row: u32,
     col: u32,
     desired_col: u32,
+    tab_width: ?u8 = null,
 
-    fn fromCursor(cursor: Cursor) CursorMeta {
+    fn fromCursor(cursor: Cursor, tab_width: u8) CursorMeta {
         return .{
             .row = cursor.row,
             .col = cursor.col,
             .desired_col = cursor.desired_col,
+            .tab_width = tab_width,
         };
     }
 
     fn encode(self: CursorMeta, out_buffer: []u8) ![]const u8 {
+        if (self.tab_width) |tab_width| {
+            return std.fmt.bufPrint(out_buffer, "cursor:{d}:{d}:{d}:{d}", .{ self.row, self.col, self.desired_col, tab_width });
+        }
         return std.fmt.bufPrint(out_buffer, "cursor:{d}:{d}:{d}", .{ self.row, self.col, self.desired_col });
     }
 
@@ -64,6 +69,10 @@ const CursorMeta = struct {
         const row = std.fmt.parseInt(u32, parts.next() orelse return null, 10) catch return null;
         const col = std.fmt.parseInt(u32, parts.next() orelse return null, 10) catch return null;
         const desired_col = std.fmt.parseInt(u32, parts.next() orelse return null, 10) catch return null;
+        const tab_width = if (parts.next()) |part|
+            std.fmt.parseInt(u8, part, 10) catch return null
+        else
+            null;
 
         if (parts.next() != null) {
             return null;
@@ -73,7 +82,15 @@ const CursorMeta = struct {
             .row = row,
             .col = col,
             .desired_col = desired_col,
+            .tab_width = tab_width,
         };
+    }
+
+    fn publicBytes(bytes: []const u8) []const u8 {
+        const decoded = decode(bytes) orelse return bytes;
+        if (decoded.tab_width == null) return bytes;
+        const last_separator = std.mem.lastIndexOfScalar(u8, bytes, ':') orelse return bytes;
+        return bytes[0..last_separator];
     }
 };
 
@@ -234,6 +251,59 @@ pub const EditBuffer = struct {
         try self.setCursor(coords.row, coords.col);
     }
 
+    fn remapCol(self: *EditBuffer, row: u32, target_col: u32, old_tab_width: u8) ?u32 {
+        const linestart = self.tb.rope().getMarker(.linestart, row) orelse return null;
+        var seg_idx = linestart.leaf_index + 1;
+        var old_col: u32 = 0;
+        var new_col: u32 = 0;
+
+        while (seg_idx < self.tb.rope().count()) : (seg_idx += 1) {
+            const seg = self.tb.rope().get(seg_idx) orelse break;
+            if (seg.isBreak() or seg.isLineStart()) break;
+            const chunk = seg.asText() orelse continue;
+            const bytes = chunk.getBytes(self.tb.memRegistry());
+            // The restored root's cached widths use the current policy, not the checkpoint's.
+            const next_col = old_col +| utf8.calculateTextWidth(bytes, old_tab_width, chunk.isAsciiOnly(), self.tb.widthMethod());
+            if (target_col <= next_col) {
+                const pos = utf8.findPosByWidth(
+                    bytes,
+                    target_col -| old_col,
+                    old_tab_width,
+                    chunk.isAsciiOnly(),
+                    false,
+                    self.tb.widthMethod(),
+                );
+                return new_col +| utf8.calculateTextWidth(
+                    bytes[0..pos.byte_offset],
+                    self.tb.tabWidth(),
+                    chunk.isAsciiOnly(),
+                    self.tb.widthMethod(),
+                );
+            }
+            old_col = next_col;
+            new_col +|= chunk.width_cols;
+        }
+
+        return if (target_col == old_col) new_col else null;
+    }
+
+    pub fn setTabWidth(self: *EditBuffer, width: u8) void {
+        const old_width = self.tb.tabWidth();
+        self.tb.setTabWidth(width);
+        if (old_width == self.tb.tabWidth()) return;
+
+        for (self.cursors.items) |*cursor| {
+            const new_col = self.remapCol(cursor.row, cursor.col, old_width) orelse
+                @min(cursor.col, iter_mod.lineWidthAt(self.tb.rope(), cursor.row));
+            if (cursor.desired_col == cursor.col) cursor.desired_col = new_col;
+            cursor.col = new_col;
+            cursor.offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, new_col) orelse 0;
+        }
+
+        self.events.emit(.cursorChanged);
+        self.emitNativeEvent("cursor-changed");
+    }
+
     fn ensureAddCapacity(self: *EditBuffer, need: usize) !void {
         try self.add_buffer.ensureCapacity(self.tb, need);
     }
@@ -244,17 +314,17 @@ pub const EditBuffer = struct {
         chunk: *const TextChunk,
         weight: u32,
     ) error{ OutOfBounds, OutOfMemory }!struct { left: TextChunk, right: TextChunk } {
-        const chunk_weight = chunk.width;
+        const chunk_weight = chunk.width_cols;
 
         if (weight == 0) {
             return .{
-                .left = TextChunk{ .mem_id = 0, .byte_start = 0, .byte_end = 0, .width = 0 },
+                .left = TextChunk{ .mem_id = 0, .byte_start = 0, .byte_end = 0, .width_cols = 0 },
                 .right = chunk.*,
             };
         } else if (weight >= chunk_weight) {
             return .{
                 .left = chunk.*,
-                .right = TextChunk{ .mem_id = 0, .byte_start = 0, .byte_end = 0, .width = 0 },
+                .right = TextChunk{ .mem_id = 0, .byte_start = 0, .byte_end = 0, .width_cols = 0 },
             };
         }
 
@@ -321,7 +391,7 @@ pub const EditBuffer = struct {
         var result = try self.tb.textToSegments(self.allocator, bytes, base_mem_id, base_start, false);
         defer result.segments.deinit(result.allocator);
 
-        const inserted_width = result.total_width;
+        const inserted_width_cols = result.total_width_cols;
 
         // Calculate width after last break
         var width_after_last_break: u32 = 0;
@@ -331,7 +401,7 @@ pub const EditBuffer = struct {
                 num_breaks += 1;
                 width_after_last_break = 0;
             } else if (seg.asText()) |chunk| {
-                width_after_last_break += chunk.width;
+                width_after_last_break += chunk.width_cols;
             }
         }
 
@@ -349,7 +419,7 @@ pub const EditBuffer = struct {
                 .offset = new_offset,
             };
         } else {
-            const new_col = cursor.col + inserted_width;
+            const new_col = cursor.col + inserted_width_cols;
             const new_offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, new_col) orelse 0;
             self.cursors.items[0] = .{
                 .row = cursor.row,
@@ -646,17 +716,26 @@ pub const EditBuffer = struct {
         self.tb.debugLogRope();
     }
 
-    fn encodeCurrentCursorMeta(self: *const EditBuffer, out_buffer: []u8) ![]const u8 {
-        return CursorMeta.fromCursor(self.getPrimaryCursor()).encode(out_buffer);
+    fn encodeCurrentCursorMeta(self: *EditBuffer, out_buffer: []u8) ![]const u8 {
+        const cursor = self.getPrimaryCursor();
+        return CursorMeta.fromCursor(cursor, self.tb.tabWidth()).encode(out_buffer);
     }
 
     fn restoreCursorFromMeta(self: *EditBuffer, meta: []const u8) !bool {
         const decodedMeta = CursorMeta.decode(meta) orelse return false;
 
-        try self.setCursor(decodedMeta.row, decodedMeta.col);
+        const width_changed = if (decodedMeta.tab_width) |width| width != self.tb.tabWidth() else false;
+        const col = if (width_changed)
+            self.remapCol(decodedMeta.row, decodedMeta.col, decodedMeta.tab_width.?) orelse decodedMeta.col
+        else
+            decodedMeta.col;
+        try self.setCursor(decodedMeta.row, col);
 
         if (self.cursors.items.len > 0) {
-            self.cursors.items[0].desired_col = decodedMeta.desired_col;
+            self.cursors.items[0].desired_col = if (width_changed and decodedMeta.desired_col == decodedMeta.col)
+                col
+            else
+                decodedMeta.desired_col;
         }
 
         return true;
@@ -671,7 +750,7 @@ pub const EditBuffer = struct {
     pub fn undo(self: *EditBuffer) ![]const u8 {
         var current_meta_buffer: [64]u8 = undefined;
         const current_meta = try self.encodeCurrentCursorMeta(current_meta_buffer[0..]);
-        const prev_meta = try self.tb.rope().undo(current_meta);
+        const prev_meta = try self.tb.undo(current_meta);
 
         const restored = try self.restoreCursorFromMeta(prev_meta);
 
@@ -684,11 +763,11 @@ pub const EditBuffer = struct {
         self.events.emit(.cursorChanged);
         self.emitNativeEvent("cursorChanged");
 
-        return prev_meta;
+        return CursorMeta.publicBytes(prev_meta);
     }
 
     pub fn redo(self: *EditBuffer) ![]const u8 {
-        const next_meta = try self.tb.rope().redo();
+        const next_meta = try self.tb.redo();
 
         const restored = try self.restoreCursorFromMeta(next_meta);
 
@@ -701,7 +780,7 @@ pub const EditBuffer = struct {
         self.events.emit(.cursorChanged);
         self.emitNativeEvent("cursorChanged");
 
-        return next_meta;
+        return CursorMeta.publicBytes(next_meta);
     }
 
     pub fn canUndo(self: *const EditBuffer) bool {
@@ -735,42 +814,42 @@ pub const EditBuffer = struct {
         var seg_idx = linestart.leaf_index + 1;
         var cols_before: u32 = 0;
         var passed_cursor = false;
+        var previous_word_class: utf8.WordClass = .other;
 
         while (seg_idx < self.tb.rope().count()) : (seg_idx += 1) {
             const seg = self.tb.rope().get(seg_idx) orelse break;
             if (seg.isBreak() or seg.isLineStart()) break;
             if (seg.asText()) |chunk| {
-                const next_cols = cols_before + chunk.width;
+                const next_cols = cols_before + chunk.width_cols;
+                const layout = self.tb.getLayoutInfoFor(chunk) catch {
+                    cols_before = next_cols;
+                    passed_cursor = passed_cursor or cursor.col < next_cols;
+                    previous_word_class = .other;
+                    continue;
+                };
+
+                if (utf8.isCjkAsciiTransition(previous_word_class, layout.word_classes.first) and
+                    cols_before > cursor.col and cols_before <= line_width)
+                {
+                    const offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, cols_before) orelse cursor.offset;
+                    return .{ .row = cursor.row, .col = cols_before, .desired_col = cols_before, .offset = offset };
+                }
 
                 // Check this chunk if cursor is within it OR if we've already passed the cursor
                 if (cursor.col < next_cols or passed_cursor) {
-                    const wrap_offsets = self.tb.getWrapOffsetsFor(chunk) catch {
-                        cols_before = next_cols;
-                        passed_cursor = true;
-                        continue;
-                    };
-                    const is_ascii_only = (chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
-                    const graphemes: []const seg_mod.GraphemeInfo = if (is_ascii_only)
-                        &[_]seg_mod.GraphemeInfo{}
-                    else
-                        chunk.getGraphemes(self.tb.getAllocator(), self.tb.memRegistry(), self.tb.tabWidth(), self.tb.widthMethod()) catch &[_]seg_mod.GraphemeInfo{};
-                    var grapheme_idx: usize = 0;
-                    var col_delta: i64 = 0;
+                    const wrap_breaks = layout.wrap_breaks;
 
                     // For chunks containing or after the cursor, find the first break after cursor position
                     const local_cursor_col = if (cursor.col > cols_before) cursor.col - cols_before else 0;
 
-                    for (wrap_offsets) |wrap_break| {
-                        const break_info = iter_mod.charOffsetToColumn(wrap_break.char_offset, graphemes, &grapheme_idx, &col_delta);
-                        const break_col = break_info.col;
+                    for (wrap_breaks) |wrap_break| {
+                        const break_col = wrap_break.col_start;
+                        const target_col = cols_before + wrap_break.colEnd();
 
                         // If we've passed the cursor chunk, any break is valid
                         // If we're in the cursor chunk, break must be after cursor position
                         if (passed_cursor or break_col > local_cursor_col) {
-                            // break_col points at the break grapheme start.
-                            // Adding width moves the cursor to the boundary after it.
-                            const target_col = cols_before + break_col + break_info.width;
-                            if (target_col <= line_width) {
+                            if (target_col > cursor.col and target_col <= line_width) {
                                 const offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, target_col) orelse cursor.offset;
                                 return .{ .row = cursor.row, .col = target_col, .desired_col = target_col, .offset = offset };
                             }
@@ -780,13 +859,12 @@ pub const EditBuffer = struct {
                         // for script-transition cases like "a日", "日a", or "丽abc".
                         // Only accept it when the boundary starts on a word codepoint.
                         if (!passed_cursor and break_col == local_cursor_col) {
-                            const break_byte_offset: usize = @intCast(wrap_break.byte_offset);
+                            const break_byte_offset: usize = @intCast(wrap_break.byte_start);
                             const chunk_bytes = chunk.getBytes(self.tb.memRegistry());
                             if (break_byte_offset < chunk_bytes.len) {
                                 const break_cp = utf8.decodeUtf8Unchecked(chunk_bytes, break_byte_offset).cp;
                                 if (utf8.isWordCodepoint(break_cp)) {
-                                    const target_col = cols_before + break_col + break_info.width;
-                                    if (target_col <= line_width) {
+                                    if (target_col > cursor.col and target_col <= line_width) {
                                         const offset = iter_mod.coordsToOffset(self.tb.rope(), cursor.row, target_col) orelse cursor.offset;
                                         return .{ .row = cursor.row, .col = target_col, .desired_col = target_col, .offset = offset };
                                     }
@@ -798,6 +876,7 @@ pub const EditBuffer = struct {
                     // Mark that we've processed/passed the cursor position
                     passed_cursor = true;
                 }
+                previous_word_class = layout.word_classes.last;
                 cols_before = next_cols;
             }
         }
@@ -821,35 +900,32 @@ pub const EditBuffer = struct {
         var seg_idx = linestart.leaf_index + 1;
         var cols_before: u32 = 0;
         var last_boundary: ?u32 = null;
+        var previous_word_class: utf8.WordClass = .other;
 
         while (seg_idx < self.tb.rope().count()) : (seg_idx += 1) {
             const seg = self.tb.rope().get(seg_idx) orelse break;
             if (seg.isBreak() or seg.isLineStart()) break;
             if (seg.asText()) |chunk| {
-                const next_cols = cols_before + chunk.width;
+                const next_cols = cols_before + chunk.width_cols;
 
-                const wrap_offsets = self.tb.getWrapOffsetsFor(chunk) catch {
+                const layout = self.tb.getLayoutInfoFor(chunk) catch {
                     cols_before = next_cols;
+                    previous_word_class = .other;
                     continue;
                 };
-                const is_ascii_only = (chunk.flags & TextChunk.Flags.ASCII_ONLY) != 0;
-                const graphemes: []const seg_mod.GraphemeInfo = if (is_ascii_only)
-                    &[_]seg_mod.GraphemeInfo{}
-                else
-                    chunk.getGraphemes(self.tb.getAllocator(), self.tb.memRegistry(), self.tb.tabWidth(), self.tb.widthMethod()) catch &[_]seg_mod.GraphemeInfo{};
-                var grapheme_idx: usize = 0;
-                var col_delta: i64 = 0;
 
-                for (wrap_offsets) |wrap_break| {
-                    const break_info = iter_mod.charOffsetToColumn(wrap_break.char_offset, graphemes, &grapheme_idx, &col_delta);
-                    // break_info follows the same convention as getNextWordBoundary:
-                    // use break start + grapheme width to land after the break grapheme.
-                    const boundary_col = cols_before + break_info.col + break_info.width;
+                if (utf8.isCjkAsciiTransition(previous_word_class, layout.word_classes.first) and cols_before < cursor.col) {
+                    last_boundary = cols_before;
+                }
+
+                for (layout.wrap_breaks) |wrap_break| {
+                    const boundary_col = cols_before + wrap_break.colEnd();
                     if (boundary_col < cursor.col) {
                         last_boundary = boundary_col;
                     }
                 }
 
+                previous_word_class = layout.word_classes.last;
                 cols_before = next_cols;
                 if (cursor.col <= cols_before) break;
             }

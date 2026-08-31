@@ -87,6 +87,88 @@ describe("EmbeddedTerminalRenderable", () => {
     expect(terminal.getSelectedText()).toBe("")
   })
 
+  test("waits for a drag to leave its starting cell before selecting", async () => {
+    const terminal = new EmbeddedTerminalRenderable(setup.renderer, { width: 20, height: 4 })
+    setup.renderer.root.add(terminal)
+    terminal.write("hello")
+    await setup.renderOnce()
+    const original = setup.captureSpans().lines
+
+    await setup.mockMouse.pressDown(1, 0)
+    await setup.renderOnce()
+    expect(terminal.hasSelection()).toBe(false)
+    expect(setup.captureSpans().lines).toEqual(original)
+
+    await setup.mockMouse.moveTo(1, 0)
+    await setup.renderOnce()
+    expect(terminal.hasSelection()).toBe(false)
+    expect(setup.captureSpans().lines).toEqual(original)
+    await setup.mockMouse.release(1, 0)
+    await setup.renderOnce()
+    expect(terminal.hasSelection()).toBe(false)
+    expect(terminal.getSelectedText()).toBe("")
+    expect(setup.renderer.getSelection()?.getSelectedText()).toBe("")
+    expect(setup.captureSpans().lines).toEqual(original)
+
+    setup.renderer.clearSelection()
+    await setup.mockMouse.pressDown(1, 0)
+    await setup.mockMouse.moveTo(2, 0)
+    await setup.renderOnce()
+    expect(terminal.hasSelection()).toBe(true)
+    expect(terminal.getSelectedText()).toBe("el")
+    expect(setup.captureSpans().lines).not.toEqual(original)
+
+    // Crossing the threshold once enables normal selection, even back at the anchor.
+    await setup.mockMouse.moveTo(1, 0)
+    await setup.mockMouse.release(1, 0)
+    await setup.renderOnce()
+    expect(terminal.getSelectedText()).toBe("e")
+    expect(setup.captureSpans().lines).not.toEqual(original)
+
+    await setup.mockMouse.pressDown(4, 0)
+    await setup.renderOnce()
+    expect(terminal.hasSelection()).toBe(false)
+    expect(terminal.getSelectedText()).toBe("")
+    expect(setup.captureSpans().lines).toEqual(original)
+    await setup.mockMouse.release(4, 0)
+  })
+
+  test("starts selection on horizontal or vertical movement even when only one text cell is selected", async () => {
+    const terminal = new EmbeddedTerminalRenderable(setup.renderer, { width: 20, height: 4 })
+    setup.renderer.root.add(terminal)
+    terminal.write("hello")
+    await setup.renderOnce()
+    const original = setup.captureSpans().lines
+
+    for (const point of [
+      { x: 5, y: 0 },
+      { x: 4, y: 1 },
+    ]) {
+      setup.renderer.clearSelection()
+      await setup.mockMouse.pressDown(4, 0)
+      expect(terminal.hasSelection()).toBe(false)
+      await setup.mockMouse.moveTo(point.x, point.y)
+      await setup.renderOnce()
+      expect(terminal.hasSelection()).toBe(true)
+      expect(terminal.getSelectedText()).toBe("o")
+      expect(setup.captureSpans().lines).not.toEqual(original)
+      await setup.mockMouse.release(point.x, point.y)
+    }
+  })
+
+  test("does not delay word or line selection gestures", async () => {
+    const terminal = new EmbeddedTerminalRenderable(setup.renderer, { width: 20, height: 4 })
+    setup.renderer.root.add(terminal)
+    terminal.write("hello")
+    await setup.renderOnce()
+
+    for (const behavior of ["word", "line"] as const) {
+      setup.renderer.startSelection(terminal, 0, 0, behavior)
+      expect(terminal.hasSelection()).toBe(true)
+      expect(terminal.getSelectedText()).toBe("h")
+    }
+  })
+
   test("encodes keys and bracketed paste", () => {
     const terminal = new EmbeddedTerminalRenderable(setup.renderer, { width: 20, height: 4 })
     setup.renderer.root.add(terminal)
@@ -98,6 +180,12 @@ describe("EmbeddedTerminalRenderable", () => {
     )
     expect(new TextDecoder().decode(terminal.encodeKey(keyEvent({ name: "😀", sequence: "😀" })))).toBe("😀")
     expect(new TextDecoder().decode(terminal.encodeKey(keyEvent({ name: "space", sequence: " " })))).toBe(" ")
+    expect(new TextDecoder().decode(terminal.encodeKey(keyEvent({ name: "up", sequence: "\x1b[A", code: "[A" })))).toBe(
+      "\x1b[A",
+    )
+    expect(
+      new TextDecoder().decode(terminal.encodeKey(keyEvent({ name: "down", sequence: "\x1b[B", code: "[B" }))),
+    ).toBe("\x1b[B")
     expect(
       new TextDecoder().decode(terminal.encodeKey(keyEvent({ name: "a", sequence: "A", shift: true, raw: "A" }))),
     ).toBe("A")
@@ -167,6 +255,25 @@ describe("EmbeddedTerminalRenderable", () => {
       }),
     )
     expect(new TextDecoder().decode(encoded)).toBe("\x1b[97;9u")
+  })
+
+  test("re-encodes Kitty character and escape keys for nested terminals", () => {
+    const terminal = new EmbeddedTerminalRenderable(setup.renderer, { width: 20, height: 4 })
+    setup.renderer.root.add(terminal)
+    terminal.write("\x1b[>3u")
+
+    expect(
+      new TextDecoder().decode(
+        terminal.encodeKey(keyEvent({ name: "c", sequence: "c", raw: "\x1b[99;5u", source: "kitty", ctrl: true })),
+      ),
+    ).toBe("\x1b[99;5u")
+    expect(
+      new TextDecoder().decode(
+        terminal.encodeKey(
+          keyEvent({ name: "escape", sequence: "\x1b[27u", raw: "\x1b[27u", source: "kitty", code: "[27u" }),
+        ),
+      ),
+    ).toBe("\x1b[27u")
   })
 
   test("drains the preserved response prefix after overflow", () => {

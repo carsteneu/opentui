@@ -3,6 +3,61 @@ const builtin = @import("builtin");
 const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 
+pub const std_options: std.Options = .{
+    .log_level = .debug,
+    .logFn = handleStdLog,
+};
+
+fn handleStdLog(
+    comptime message_level: std.log.Level,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const ghostty_scope = switch (scope) {
+        .parser,
+        .stream,
+        .stream_terminal,
+        .screen,
+        .terminal,
+        .terminal_mem,
+        .terminal_apc,
+        .terminal_dcs,
+        .osc,
+        .osc_color,
+        .osc_iterm2,
+        .kitty_gfx,
+        .key_encode,
+        .mouse_encode,
+        .render_state_c,
+        => true,
+        else => false,
+    };
+    if (!ghostty_scope) return;
+    const configured = ghosttyLogLevel() orelse return;
+    if (@intFromEnum(message_level) > @intFromEnum(configured)) return;
+
+    const level: logger.LogLevel = switch (message_level) {
+        .err => .err,
+        .warn => .warn,
+        .info => .info,
+        .debug => .debug,
+    };
+    logger.logMessage(level, "(" ++ @tagName(scope) ++ ") " ++ format, args);
+}
+
+fn ghosttyLogLevel() ?std.log.Level {
+    const Environment = struct {
+        extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
+    };
+    const value = std.mem.span(Environment.getenv("OTUI_GHOSTTY_LOG_LEVEL") orelse return null);
+    if (std.ascii.eqlIgnoreCase(value, "error") or std.ascii.eqlIgnoreCase(value, "err")) return .err;
+    if (std.ascii.eqlIgnoreCase(value, "warning") or std.ascii.eqlIgnoreCase(value, "warn")) return .warn;
+    if (std.ascii.eqlIgnoreCase(value, "info")) return .info;
+    if (std.ascii.eqlIgnoreCase(value, "debug")) return .debug;
+    return null;
+}
+
 var io_threaded: std.Io.Threaded = .init_single_threaded;
 pub const io = io_threaded.io();
 
@@ -1373,34 +1428,25 @@ export fn commitSplitFooterSnapshot(
     const force = (flags & (1 << 2)) != 0;
     const begin_frame = (flags & (1 << 3)) != 0;
     const finalize_frame = (flags & (1 << 4)) != 0;
+    const control_output = (flags & (1 << 5)) != 0;
 
     // JS passes rowColumns/startOnNewLine/trailingNewline per commit from
     // writeToScrollback or captured stdout chunking. This entrypoint is the ABI
     // boundary where that metadata enters the native split append algorithm.
     // Route all commits through the batched renderer path so sync/cursor framing
     // happens exactly once per JS flush cycle.
-    if (begin_frame and finalize_frame) {
-        return packRenderResult(renderer_ptr.commitSplitFooterSnapshotBatched(
-            snapshot_ptr,
-            rowColumns,
-            start_on_new_line,
-            trailing_newline,
-            pinnedRenderOffset,
-            force,
-            true,
-            true,
-        ));
-    }
-
-    return packRenderResult(renderer_ptr.commitSplitFooterSnapshotBatched(
+    return packRenderResult(renderer_ptr.commitSplitFooterSnapshotWithOptions(
         snapshot_ptr,
         rowColumns,
         start_on_new_line,
         trailing_newline,
         pinnedRenderOffset,
         force,
-        begin_frame,
-        finalize_frame,
+        .{
+            .begin_frame = begin_frame,
+            .finalize_frame = finalize_frame,
+            .control_output = control_output,
+        },
     ));
 }
 
@@ -1535,6 +1581,33 @@ export fn processCapabilityResponse(renderer_handle: NativeHandle, responsePtr: 
     const object_ptr = acquireRenderer(renderer_handle) orelse return;
     const response = sliceFromPtrLen(responsePtr, responseLen);
     object_ptr.processCapabilityResponse(response);
+}
+
+export fn setKittyImageTransport(renderer_handle: NativeHandle, mode: u32) u32 {
+    const object = acquireRenderer(renderer_handle) orelse return 0;
+    return @intFromBool(object.setKittyImageTransport(mode));
+}
+
+export fn getKittyImageTransport(renderer_handle: NativeHandle, out: [*]u32) void {
+    const object = acquireRenderer(renderer_handle) orelse return;
+    const transport = &object.kittyTransport;
+    out[0..6].* = .{ @intFromEnum(transport.mode), @intFromEnum(transport.effective), @intFromEnum(transport.file_state), @intFromEnum(transport.fallback), transport.pendingCount(), @intCast(transport.pendingBytes()) };
+}
+
+export fn pollKittyImageTransport(renderer_handle: NativeHandle) u32 {
+    const object = acquireRenderer(renderer_handle) orelse return 0;
+    return @intFromBool(object.pollKittyImageTransport());
+}
+
+export fn cancelKittyImageTransport(renderer_handle: NativeHandle, failed: u32) void {
+    const object = acquireRenderer(renderer_handle) orelse return;
+    object.kittyTransport.cancel(if (failed != 0) .io_error else .cancelled);
+    _ = object.pollKittyImageTransport();
+}
+
+export fn processKittyImageReply(renderer_handle: NativeHandle, response: [*]const u8, len: u32) u32 {
+    const object = acquireRenderer(renderer_handle) orelse return 0;
+    return object.processKittyImageReply(response[0..len]);
 }
 
 export fn setCursorColor(renderer_handle: NativeHandle, color: [*]const u16) void {
@@ -2209,6 +2282,12 @@ export fn textBufferGetTabWidth(tb_handle: NativeHandle) u8 {
 }
 
 export fn textBufferSetTabWidth(tb_handle: NativeHandle, width: u8) void {
+    if (handles.getOwner(tb_handle, .text_buffer)) |owner| {
+        if (acquireEditBuffer(owner)) |edit_buffer| {
+            edit_buffer.setTabWidth(width);
+            return;
+        }
+    }
     const object_ptr = acquireTextBuffer(tb_handle) orelse return;
     object_ptr.setTabWidth(width);
 }
@@ -2543,6 +2622,11 @@ export fn destroyEditBuffer(edit_handle: NativeHandle) void {
 export fn editBufferGetTextBuffer(edit_handle: NativeHandle) NativeHandle {
     const object_ptr = acquireEditBuffer(edit_handle) orelse return INVALID_HANDLE;
     return handles.getOrInsertBorrowed(.text_buffer, erasePtr(object_ptr.getTextBuffer()), edit_handle) catch INVALID_HANDLE;
+}
+
+export fn editBufferSetTabWidth(edit_handle: NativeHandle, width: u8) void {
+    const object_ptr = acquireEditBuffer(edit_handle) orelse return;
+    object_ptr.setTabWidth(width);
 }
 
 export fn editBufferInsertText(edit_handle: NativeHandle, textPtr: ?[*]const u8, textLen: u32) void {
@@ -3414,22 +3498,126 @@ export fn imageCreateFromRgba(
     stride: u32,
     out_handle: ?*NativeHandle,
 ) u32 {
+    return imageCreateFromPixels(
+        pixels_ptr,
+        pixels_len,
+        width,
+        height,
+        stride,
+        @intFromEnum(native_image.PixelFormat.rgba8),
+        @intFromEnum(native_image.PixelAlpha.straight),
+        out_handle,
+    );
+}
+
+fn pixelImportOptions(stride: u32, format: u32, alpha: u32) !native_image.PixelImportOptions {
+    return .{
+        .stride = stride,
+        .format = std.enums.fromInt(native_image.PixelFormat, format) orelse return error.InvalidArgument,
+        .alpha = std.enums.fromInt(native_image.PixelAlpha, alpha) orelse return error.InvalidArgument,
+    };
+}
+
+export fn imageCreateFromPixels(
+    pixels_ptr: ?[*]const u8,
+    pixels_len: u64,
+    width: u32,
+    height: u32,
+    stride: u32,
+    format: u32,
+    alpha: u32,
+    out_handle: ?*NativeHandle,
+) u32 {
     const output = out_handle orelse return @intFromEnum(native_image.Status.invalid_argument);
     output.* = INVALID_HANDLE;
     if (pixels_len > std.math.maxInt(usize) or (pixels_len > 0 and pixels_ptr == null)) {
         return @intFromEnum(native_image.Status.invalid_argument);
     }
     const pixels = if (pixels_len == 0) "" else pixels_ptr.?[0..@intCast(pixels_len)];
-    const image = native_image.createFromRgba(globalAllocator, pixels, width, height, stride) catch |err| {
+    const options = pixelImportOptions(stride, format, alpha) catch |err| {
+        return @intFromEnum(native_image.statusFromError(err));
+    };
+    const image = native_image.createFromPixels(globalAllocator, pixels, width, height, options) catch |err| {
         return @intFromEnum(native_image.statusFromError(err));
     };
     return @intFromEnum(insertImage(image, output));
+}
+
+test "pixel import FFI validates pointers and enum values without publishing a handle" {
+    const pixels = [_]u8{ 3, 2, 1, 0 };
+    const invalid = @intFromEnum(native_image.Status.invalid_argument);
+    var handle: NativeHandle = 123;
+    try std.testing.expectEqual(invalid, imageCreateFromPixels(&pixels, 4, 1, 1, 4, 2, 0, &handle));
+    try std.testing.expectEqual(INVALID_HANDLE, handle);
+    handle = 123;
+    try std.testing.expectEqual(invalid, imageCreateFromPixels(&pixels, 4, 1, 1, 4, 0, 2, &handle));
+    try std.testing.expectEqual(INVALID_HANDLE, handle);
+    try std.testing.expectEqual(invalid, imageCreateFromPixels(&pixels, 4, 1, 1, 4, 0, 0, null));
+    try std.testing.expectEqual(invalid, imageCreateFromPixels(null, 4, 1, 1, 4, 0, 0, &handle));
+    try std.testing.expectEqual(invalid, imageCreateFromPixels(null, 0, 1, 1, 4, 0, 0, &handle));
+    try std.testing.expectEqual(INVALID_HANDLE, handle);
+
+    try std.testing.expectEqual(@as(u32, 0), imageCreateFromPixels(&pixels, 4, 1, 1, 4, 1, 1, &handle));
+    defer imageDestroy(handle);
+    const value = acquireImage(handle) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 255 }, value.pixels);
+    try std.testing.expectEqual(@as(u32, 0), value.info().has_alpha);
+}
+
+export fn imageUpdatePixels(
+    image_handle: NativeHandle,
+    pixels_ptr: ?[*]const u8,
+    pixels_len: u64,
+    stride: u32,
+    format: u32,
+    alpha: u32,
+) u32 {
+    const image = acquireImage(image_handle) orelse return @intFromEnum(native_image.Status.invalid_handle);
+    if (pixels_len > std.math.maxInt(usize) or (pixels_len > 0 and pixels_ptr == null)) {
+        return @intFromEnum(native_image.Status.invalid_argument);
+    }
+    const pixels = if (pixels_len == 0) "" else pixels_ptr.?[0..@intCast(pixels_len)];
+    const options = pixelImportOptions(stride, format, alpha) catch |err| {
+        return @intFromEnum(native_image.statusFromError(err));
+    };
+    native_image.updatePixels(image, pixels, options) catch |err| {
+        return @intFromEnum(native_image.statusFromError(err));
+    };
+    return @intFromEnum(native_image.Status.ok);
 }
 
 export fn imageDestroy(image_handle: NativeHandle) void {
     const token = handles.beginDestroy(image_handle, .image, native_image.Image) orelse return;
     token.ptr.deinit();
     handles.finishDestroy(token.handle);
+}
+
+test "pixel update FFI rejects invalid input before mutation or busy" {
+    const pixels = [_]u8{ 3, 2, 1, 0 };
+    var handle: NativeHandle = INVALID_HANDLE;
+    try std.testing.expectEqual(@as(u32, 0), imageCreateFromRgba(&pixels, 4, 1, 1, 4, &handle));
+    defer imageDestroy(handle);
+    const value = acquireImage(handle) orelse return error.TestUnexpectedResult;
+    _ = try value.ensureEncodedPng();
+    const encoded = value.encoded_png.?;
+    const metadata = value.info();
+    const invalid = @intFromEnum(native_image.Status.invalid_argument);
+    value.retain();
+    try std.testing.expectEqual(invalid, imageUpdatePixels(handle, &pixels, 4, 4, 2, 0));
+    try std.testing.expectEqual(invalid, imageUpdatePixels(handle, &pixels, 4, 4, 0, 2));
+    try std.testing.expectEqual(invalid, imageUpdatePixels(handle, null, 4, 4, 0, 0));
+    try std.testing.expectEqual(invalid, imageUpdatePixels(handle, null, 0, 4, 0, 0));
+    try std.testing.expectEqual(invalid, imageUpdatePixels(handle, &pixels, 3, 4, 0, 0));
+    try std.testing.expectEqual(invalid, imageUpdatePixels(handle, &pixels, 4, 3, 0, 0));
+    try std.testing.expectEqual(@intFromEnum(native_image.Status.busy), imageUpdatePixels(handle, &pixels, 4, 4, 1, 1));
+    try std.testing.expectEqualSlices(u8, &pixels, value.pixels);
+    try std.testing.expectEqual(metadata, value.info());
+    try std.testing.expectEqual(encoded.ptr, value.encoded_png.?.ptr);
+    value.deinit();
+    try std.testing.expectEqual(@as(u32, 0), imageUpdatePixels(handle, &pixels, 4, 4, 1, 1));
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 255 }, value.pixels);
+    try std.testing.expect(value.encoded_png == null);
+    try std.testing.expectEqual(@intFromEnum(native_image.Status.invalid_handle), imageUpdatePixels(INVALID_HANDLE, &pixels, 4, 4, 1, 1));
 }
 
 export fn imageRetain(image_handle: NativeHandle, out_handle: ?*NativeHandle) u32 {
@@ -3682,13 +3870,13 @@ export fn encodeUnicode(
     // Check if ASCII only for optimization
     const is_ascii_only = utf8.isAsciiOnly(text);
 
-    // Find grapheme info
-    var grapheme_list: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .empty;
-    defer grapheme_list.deinit(globalAllocator);
+    // Find sparse render-cluster metadata.
+    var render_cluster_list: std.ArrayListUnmanaged(utf8.RenderClusterInfo) = .empty;
+    defer render_cluster_list.deinit(globalAllocator);
 
     const tab_width: u8 = 2;
-    utf8.findGraphemeInfo(globalAllocator, text, tab_width, is_ascii_only, wMethod, &grapheme_list) catch return false;
-    const specials = grapheme_list.items;
+    utf8.findRenderClusterInfo(globalAllocator, text, tab_width, is_ascii_only, wMethod, &render_cluster_list) catch return false;
+    const render_clusters = render_cluster_list.items;
 
     // Allocate output array
     const estimated_count = if (is_ascii_only) text.len else text.len * 2;
@@ -3724,27 +3912,27 @@ export fn encodeUnicode(
     var special_idx: usize = 0;
 
     while (byte_offset < text.len) {
-        const at_special = special_idx < specials.len and specials[special_idx].col_offset == col;
+        const at_special = special_idx < render_clusters.len and render_clusters[special_idx].col_start == col;
 
         var grapheme_bytes: []const u8 = undefined;
-        var g_width: u8 = undefined;
+        var cluster_width_cols: u32 = undefined;
 
         if (at_special) {
-            const g = specials[special_idx];
-            grapheme_bytes = text[g.byte_offset .. g.byte_offset + g.byte_len];
-            g_width = g.width;
-            byte_offset = g.byte_offset + g.byte_len;
+            const g = render_clusters[special_idx];
+            grapheme_bytes = text[g.byte_start .. g.byte_start + g.byte_len];
+            cluster_width_cols = g.width_cols;
+            byte_offset = g.byte_start + g.byte_len;
             special_idx += 1;
         } else {
             if (byte_offset >= text.len) break;
             grapheme_bytes = text[byte_offset .. byte_offset + 1];
-            g_width = 1;
+            cluster_width_cols = 1;
             byte_offset += 1;
         }
 
-        const cell_width = utf8.getWidthAt(text, if (at_special) specials[special_idx - 1].byte_offset else byte_offset - 1, tab_width, wMethod);
+        const cell_width = utf8.getWidthAt(text, if (at_special) render_clusters[special_idx - 1].byte_start else byte_offset - 1, tab_width, wMethod);
         if (cell_width == 0) {
-            col += g_width;
+            col += cluster_width_cols;
             continue;
         }
 
@@ -3778,7 +3966,7 @@ export fn encodeUnicode(
         };
         pending_gid = null; // Successfully stored, no longer pending
         result_idx += 1;
-        col += g_width;
+        col += cluster_width_cols;
     }
 
     // Trim to actual size

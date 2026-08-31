@@ -1479,7 +1479,7 @@ test("feed-idle retry records the actual telemetry wait span", async () => {
   }
 })
 
-test("split-footer custom stdout can flush captured commits while feed writes are in flight", async () => {
+test("split-footer custom stdout waits for feed credit before flushing captured commits", async () => {
   const stdin = createTestStdin()
   const stdout = createCollectingStdout(80, 24)
   stdout.delayMs = 100
@@ -1503,10 +1503,12 @@ test("split-footer custom stdout can flush captured commits while feed writes ar
   stdout.write("captured\n")
   await (renderer as any).loop()
 
-  expect((renderer as any).externalOutputQueue.size).toBe(0)
+  expect((renderer as any).externalOutputQueue.size).toBe(1)
 
   stdout.delayMs = 0
+  await renderer.idle()
   await feed.idle()
+  expect((renderer as any).externalOutputQueue.size).toBe(0)
   expect(stdout.getWrittenBytes().toString("binary")).toContain("captured")
 })
 
