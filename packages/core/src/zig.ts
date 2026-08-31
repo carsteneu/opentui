@@ -1184,7 +1184,7 @@ const opentuiSymbolDefs = {
   },
   editorViewGetViewport: {
     args: ["u32", "buffer", "buffer", "buffer", "buffer"],
-    returns: "void",
+    returns: "bool",
   },
   editorViewSetScrollMargin: {
     args: ["u32", "f32"],
@@ -1316,8 +1316,8 @@ const opentuiSymbolDefs = {
     args: ["u32"],
     returns: "u32",
   },
-    editBufferSetTabWidth: { args: ["u32", "u8"], returns: "void" },
-    editBufferDebugLogRope: {
+  editBufferSetTabWidth: { args: ["u32", "u8"], returns: "void" },
+  editBufferDebugLogRope: {
     args: ["u32"],
     returns: "void",
   },
@@ -1535,10 +1535,10 @@ const opentuiSymbolDefs = {
   imageReleaseIccCache: { args: [], returns: "void" },
   imageTestFailIccProfileCopyAllocationOnce: { args: [], returns: "void" },
   imageDecode: { args: ["ptr", "u32", "buffer"], returns: "u32" },
-    imageCreateFromRgba: { args: ["ptr", "u64", "u32", "u32", "u32", "buffer"], returns: "u32" },
-    imageCreateFromPixels: { args: ["buffer", "u64", "u32", "u32", "u32", "u32", "u32", "buffer"], returns: "u32" },
-    imageUpdatePixels: { args: ["u32", "buffer", "u64", "u32", "u32", "u32"], returns: "u32" },
-    imageDestroy: { args: ["u32"], returns: "void" },
+  imageCreateFromRgba: { args: ["ptr", "u64", "u32", "u32", "u32", "buffer"], returns: "u32" },
+  imageCreateFromPixels: { args: ["buffer", "u64", "u32", "u32", "u32", "u32", "u32", "buffer"], returns: "u32" },
+  imageUpdatePixels: { args: ["u32", "buffer", "u64", "u32", "u32", "u32"], returns: "u32" },
+  imageDestroy: { args: ["u32"], returns: "void" },
   imageRetain: { args: ["u32", "buffer"], returns: "u32" },
   imageGetInfo: { args: ["u32", "ptr"], returns: "u32" },
   imageMaterialize: { args: ["u32"], returns: "u32" },
@@ -1550,14 +1550,14 @@ const opentuiSymbolDefs = {
   imageExtract: { args: ["u32", "u32", "u32", "u32", "u32", "buffer"], returns: "u32" },
   imageExtend: { args: ["u32", "u32", "u32", "u32", "u32", "buffer", "buffer"], returns: "u32" },
   imageTransform: { args: ["u32", "u32", "buffer"], returns: "u32" },
-    imageComposite: { args: ["u32", "u32", "i32", "i32", "u32", "u8", "buffer"], returns: "u32" },
+  imageComposite: { args: ["u32", "u32", "i32", "i32", "u32", "u8", "buffer"], returns: "u32" },
 
-    // Kitty image transport
-    setKittyImageTransport: { args: ["u32", "u32"], returns: "u32" },
-    getKittyImageTransport: { args: ["u32", "buffer"], returns: "void" },
-    pollKittyImageTransport: { args: ["u32"], returns: "u32" },
-    cancelKittyImageTransport: { args: ["u32", "u32"], returns: "void" },
-    processKittyImageReply: { args: ["u32", "buffer", "u32"], returns: "u32" },
+  // Kitty image transport
+  setKittyImageTransport: { args: ["u32", "u32"], returns: "u32" },
+  getKittyImageTransport: { args: ["u32", "buffer"], returns: "void" },
+  pollKittyImageTransport: { args: ["u32"], returns: "u32" },
+  cancelKittyImageTransport: { args: ["u32", "u32"], returns: "void" },
+  processKittyImageReply: { args: ["u32", "buffer", "u32"], returns: "u32" },
 
   // Terminal capability functions
   getTerminalCapabilities: {

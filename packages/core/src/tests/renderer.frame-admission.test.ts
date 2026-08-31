@@ -144,7 +144,9 @@ for (const control of ["pause", "stop", "suspend", "destroy"] as const) {
     })
     await settle()
     expect(idleResolved).toBe(true)
-    expect(feed.isBackpressured()).toBe(true)
+    // Upstream 0.5.9 drains the feed during destroy (shutdown flush); the other
+    // control transitions leave the pending output held until released.
+    expect(feed.isBackpressured()).toBe(control !== "destroy")
     stdout.releaseAll()
     await feed.idle()
     clock.advance(100)

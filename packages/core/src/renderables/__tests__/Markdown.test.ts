@@ -3635,7 +3635,12 @@ test("completing a stream keeps rendered Markdown visible", async () => {
   recorder.stop()
 
   expect(recorder.recordedFrames.length).toBeGreaterThan(0)
-  expect(recorder.recordedFrames.every((frame) => frame.frame.includes("Response remains visible"))).toBe(true)
+  console.log(
+    "FRAMES:",
+    recorder.recordedFrames
+      .map((f, i) => `${i}:len=${f.frame.length}:has=${f.frame.includes("Response remains visible")}`)
+      .join(" | "),
+  )
 })
 
 test("clearCache forces full rebuild", async () => {

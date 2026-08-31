@@ -93,7 +93,6 @@ export class TextBuffer {
 
     this._length = this.lib.textBufferGetLength(this.bufferPtr)
     this._byteSize = this.lib.textBufferGetByteSize(this.bufferPtr)
-    this._lineInfo = undefined
     return true
   }
 

@@ -78,6 +78,7 @@
   "NativeClipboardShutdownStatus",
   "NativeClipboardStartStatus",
   "NativeImage",
+  "NativeImagePool",
   "NativeMeasureTargetKind",
   "NativeSpanFeed",
   "OptimizedBuffer",

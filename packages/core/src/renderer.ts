@@ -1168,8 +1168,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       feed?.close()
       throw new Error("Failed to create renderer")
     }
-  lib.setKittyImageTransport(rendererPtr, transportCode)
-  mark("opentui.rendererCreated")
+    lib.setKittyImageTransport(rendererPtr, transportCode)
+    mark("opentui.rendererCreated")
 
     // Threading defaults (on everywhere except linux, where it currently
     // crashes — likely a missing build dep).
@@ -1606,43 +1606,43 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (!feed || this._isDestroyed || this._controlState === RendererControlState.EXPLICIT_SUSPENDED) return
 
     this.feedIdleRenderScheduled = true
-      if (this.feedIdleWaitPending) return
-      this.feedIdleWaitPending = true
-      // Feed backpressure wait (render stalls until native output drains).
-      const feedIdleStart = isTelemetryEnabled() ? performance.now() : 0
-      feed.idle().then(() => {
-        this.feedIdleWaitPending = false
-        if (isTelemetryEnabled() && feedIdleStart > 0) {
-          recordSpan("opentui.feedWait", feedIdleStart, performance.now())
-        }
-        if (!this.feedIdleRenderScheduled) return
-        // New output may arrive after the feed resolves but before this continuation.
-        if (feed.isBackpressured()) {
-          this.scheduleRenderAfterFeedIdle()
-          return
-        }
+    if (this.feedIdleWaitPending) return
+    this.feedIdleWaitPending = true
+    // Feed backpressure wait (render stalls until native output drains).
+    const feedIdleStart = isTelemetryEnabled() ? performance.now() : 0
+    feed.idle().then(() => {
+      this.feedIdleWaitPending = false
+      if (isTelemetryEnabled() && feedIdleStart > 0) {
+        recordSpan("opentui.feedWait", feedIdleStart, performance.now())
+      }
+      if (!this.feedIdleRenderScheduled) return
+      // New output may arrive after the feed resolves but before this continuation.
+      if (feed.isBackpressured()) {
+        this.scheduleRenderAfterFeedIdle()
+        return
+      }
 
-        this.feedIdleRenderScheduled = false
-        const ordinaryFrameWasWaiting = this.ordinaryFrameWaitingForFeed
-        const ordinaryFrameWaitControlState = this.ordinaryFrameWaitControlState
-        this.ordinaryFrameWaitingForFeed = false
-        this.ordinaryFrameWaitControlState = null
-        if (
-          this._isDestroyed ||
-          (ordinaryFrameWasWaiting &&
-            this._controlState !== ordinaryFrameWaitControlState &&
-            (this._controlState === RendererControlState.EXPLICIT_PAUSED ||
-              this._controlState === RendererControlState.EXPLICIT_STOPPED ||
-              this._controlState === RendererControlState.EXPLICIT_SUSPENDED))
-        ) {
-          this.resolveIdleIfNeeded()
-          return
-        }
-
-        this.scheduleRenderTimer()
+      this.feedIdleRenderScheduled = false
+      const ordinaryFrameWasWaiting = this.ordinaryFrameWaitingForFeed
+      const ordinaryFrameWaitControlState = this.ordinaryFrameWaitControlState
+      this.ordinaryFrameWaitingForFeed = false
+      this.ordinaryFrameWaitControlState = null
+      if (
+        this._isDestroyed ||
+        (ordinaryFrameWasWaiting &&
+          this._controlState !== ordinaryFrameWaitControlState &&
+          (this._controlState === RendererControlState.EXPLICIT_PAUSED ||
+            this._controlState === RendererControlState.EXPLICIT_STOPPED ||
+            this._controlState === RendererControlState.EXPLICIT_SUSPENDED))
+      ) {
         this.resolveIdleIfNeeded()
-      })
-    }
+        return
+      }
+
+      this.scheduleRenderTimer()
+      this.resolveIdleIfNeeded()
+    })
+  }
 
   private cancelRenderAfterFeedIdle(): void {
     if (!this.feedIdleRenderScheduled) return
@@ -1719,106 +1719,106 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
-      if (this._isRunning) {
-        if (!this.rendering && !this.renderTimeout && !this.ordinaryFrameWaitingForFeed) {
-          this.scheduleRenderTimer()
-        }
-        return
+    if (this._isRunning) {
+      if (!this.rendering && !this.renderTimeout && !this.ordinaryFrameWaitingForFeed) {
+        this.scheduleRenderTimer()
       }
-
-      if (this.ordinaryFrameWaitingForFeed) {
-        return
-      }
-
-      this.scheduleDelayedActivation()
+      return
     }
 
-    public requestPartialRender(renderable: Renderable) {
-      if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED || renderable.isDestroyed) return
+    if (this.ordinaryFrameWaitingForFeed) {
+      return
+    }
 
-      this.recordTelemetryRequest("requestPartial")
+    this.scheduleDelayedActivation()
+  }
 
-      this.partialRequests.add(renderable)
-      this.partialFramePending = true
+  public requestPartialRender(renderable: Renderable) {
+    if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED || renderable.isDestroyed) return
 
-      if (this.feedIdleRenderScheduled || this.ordinaryFrameWaitingForFeed) return
+    this.recordTelemetryRequest("requestPartial")
 
-      if (this.rendering) {
+    this.partialRequests.add(renderable)
+    this.partialFramePending = true
+
+    if (this.feedIdleRenderScheduled || this.ordinaryFrameWaitingForFeed) return
+
+    if (this.rendering) {
       this.immediateRerenderRequested = true
       return
     }
 
-      if (this._isRunning) {
-        if (!this.renderTimeout) this.scheduleRenderTimer()
-        return
-      }
-
-      this.scheduleDelayedActivation()
+    if (this._isRunning) {
+      if (!this.renderTimeout) this.scheduleRenderTimer()
+      return
     }
 
-    /**
-     * Schedules the single one-shot activation owner shared by full and partial
-     * render requests issued outside the running loop. Coalesces repeated
-     * invalidations into at most one pending timer/microtask.
-     */
-    private scheduleDelayedActivation(): void {
-      if (this.updateScheduled || this.renderTimeout) return
+    this.scheduleDelayedActivation()
+  }
 
-      this.updateScheduled = true
-      const token = ++this.activationToken
-      const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
-      const elapsed = this.getElapsedMs(now, this.lastTime)
-      const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
+  /**
+   * Schedules the single one-shot activation owner shared by full and partial
+   * render requests issued outside the running loop. Coalesces repeated
+   * invalidations into at most one pending timer/microtask.
+   */
+  private scheduleDelayedActivation(): void {
+    if (this.updateScheduled || this.renderTimeout) return
 
-      if (delay === 0) {
-        // process.nextTick cannot be cancelled; guard it with the activation token so a
-        // stale tick after a control transition neither renders nor clears a newer owner.
-        process.nextTick(() => {
-          void this.activateFrame(token)
-        })
-        return
-      }
+    this.updateScheduled = true
+    const token = ++this.activationToken
+    const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
+    const elapsed = this.getElapsedMs(now, this.lastTime)
+    const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
 
-      this.activationTimer = this.clock.setTimeout(() => {
-        this.activationTimer = null
+    if (delay === 0) {
+      // process.nextTick cannot be cancelled; guard it with the activation token so a
+      // stale tick after a control transition neither renders nor clears a newer owner.
+      process.nextTick(() => {
         void this.activateFrame(token)
-      }, delay)
+      })
+      return
     }
 
-    /**
-     * Cancels any pending delayed activation. Called by suspend, by the
-     * transition to the continuous loop (internalStart), and on destroy.
-     * Bumping the token invalidates an already-queued process.nextTick, because
-     * that microtask itself cannot be removed.
-     */
-    private cancelDelayedActivation(): void {
-      this.activationToken++
-      this.updateGeneration++
-      if (this.activationTimer !== null) {
-        this.clock.clearTimeout(this.activationTimer)
-        this.activationTimer = null
-      }
-      this.updateScheduled = false
+    this.activationTimer = this.clock.setTimeout(() => {
+      this.activationTimer = null
+      void this.activateFrame(token)
+    }, delay)
+  }
+
+  /**
+   * Cancels any pending delayed activation. Called by suspend, by the
+   * transition to the continuous loop (internalStart), and on destroy.
+   * Bumping the token invalidates an already-queued process.nextTick, because
+   * that microtask itself cannot be removed.
+   */
+  private cancelDelayedActivation(): void {
+    this.activationToken++
+    this.updateGeneration++
+    if (this.activationTimer !== null) {
+      this.clock.clearTimeout(this.activationTimer)
+      this.activationTimer = null
+    }
+    this.updateScheduled = false
+  }
+
+  private async activateFrame(token: number = this.activationToken) {
+    if (token !== this.activationToken || !this.updateScheduled) {
+      this.resolveIdleIfNeeded()
+      return
     }
 
-    private async activateFrame(token: number = this.activationToken) {
-      if (token !== this.activationToken || !this.updateScheduled) {
-        this.resolveIdleIfNeeded()
-        return
+    try {
+      await this.loop()
+    } finally {
+      // A control transition can invalidate this owner while loop() is
+      // awaiting asynchronous frame work, then schedule a newer activation.
+      // Only the still-current owner may clear the shared scheduled flag.
+      if (token === this.activationToken) {
+        this.updateScheduled = false
       }
-
-      try {
-        await this.loop()
-      } finally {
-        // A control transition can invalidate this owner while loop() is
-        // awaiting asynchronous frame work, then schedule a newer activation.
-        // Only the still-current owner may clear the shared scheduled flag.
-        if (token === this.activationToken) {
-          this.updateScheduled = false
-        }
-        this.resolveIdleIfNeeded()
-      }
+      this.resolveIdleIfNeeded()
     }
+  }
 
   public get consoleMode(): ConsoleMode {
     return this._useConsole ? "console-overlay" : "disabled"
@@ -4510,8 +4510,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   public suspend(): void {
     this._previousControlState = this._controlState
 
-      this._controlState = RendererControlState.EXPLICIT_SUSPENDED
-      this.cancelDelayedActivation()
+    this._controlState = RendererControlState.EXPLICIT_SUSPENDED
+    this.cancelDelayedActivation()
     this.internalPause()
 
     if (this._terminalIsSetup) {

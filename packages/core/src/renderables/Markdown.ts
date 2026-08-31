@@ -1812,7 +1812,14 @@ export class MarkdownRenderable extends Renderable {
       const block = blocks[i]
       const existing = this._blockStates[blockIndex]
 
-      if (existing && existing.token === block.token && !forceTableRefresh) {
+      // Upstream 0.5.9 (#1469): token-identical blocks update in place even on
+      // forceTableRefresh — a rebuild wipes the frame mid-stream. Wave features
+      // still need their re-application semantics on force: retained rendering
+      // rebuilds to flip the flag, a tree-sitter client re-highlights.
+      if (existing && existing.token === block.token && !this._retainedRendering) {
+        if (forceTableRefresh && this._treeSitterClient) {
+          this.updateBlockRenderable(existing, block.token, blockIndex, blocks[i + 1]?.token)
+        }
         if (existing.marginTop !== block.marginTop) {
           this.applyMargins(existing.renderable, block.marginTop, 0)
         }
@@ -1825,8 +1832,11 @@ export class MarkdownRenderable extends Renderable {
         existing &&
         existing.tokenRaw === block.token.raw &&
         existing.token.type === block.token.type &&
-        !forceTableRefresh
+        !this._retainedRendering
       ) {
+        if (forceTableRefresh && this._treeSitterClient) {
+          this.updateBlockRenderable(existing, block.token, blockIndex, blocks[i + 1]?.token)
+        }
         if (existing.marginTop !== block.marginTop) {
           this.applyMargins(existing.renderable, block.marginTop, 0)
         }
@@ -2098,6 +2108,12 @@ export class MarkdownRenderable extends Renderable {
   private rerenderBlocks(): void {
     if (this._internalBlockMode === "top-level") {
       this.updateBlocks(true)
+      // updateBlocks only syncs state for token-identical blocks (in-place since
+      // #1469); a theme refresh must actually re-apply the styled text.
+      for (let i = 0; i < this._blockStates.length; i++) {
+        const state = this._blockStates[i]
+        this.updateBlockRenderable(state, state.token, i, this._blockStates[i + 1]?.token)
+      }
       return
     }
 
