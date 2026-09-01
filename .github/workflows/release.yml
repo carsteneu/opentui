@@ -377,10 +377,8 @@ jobs:
           fi
           test -n "$NATIVE_DIR" || (echo "core-linux-x64 package dir not found" && exit 1)
           (cd "$NATIVE_DIR" && npm pack --pack-destination "$OLDPWD/packs")
-          for f in packs/*.tgz; do
-            base=$(basename "$f")
-            renamed=$(echo "$base" | sed 's/^opentui-//; s/@opentui-//')
-            mv "$f" "packs/$renamed" 2>/dev/null || true
+          for want in opentui-core opentui-core-linux-x64 opentui-keymap opentui-solid; do
+            ls packs/${want}-*.tgz >/dev/null 2>&1 || (echo "missing $want tarball" && exit 1)
           done
           ls -lah packs/
       - name: Upload tarballs artifact
@@ -478,6 +476,15 @@ jobs:
 
           cd "$WORK_DIR"
 
+          # Copy npm tarballs (the four pin-relevant packages)
+          echo "Processing npm tarballs..."
+          if [ -d "artifacts/npm-tarballs-$FULL_TAG" ]; then
+            cp artifacts/npm-tarballs-"$FULL_TAG"/*.tgz "$WORK_DIR/release-assets/"
+            ls -lah "$WORK_DIR/release-assets/" | grep tgz || true
+          else
+            echo "❌ npm-tarballs artifact directory not found!" && exit 1
+          fi
+
           # Verify all expected release assets exist
           echo ""
           echo "Verifying all release assets..."
@@ -489,6 +496,14 @@ jobs:
             ls -lah release-assets/ || echo "No release assets found"
             exit 1
           fi
+
+          TARBALL_COUNT=$(ls -1 release-assets/*.tgz 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$TARBALL_COUNT" -ne 4 ]; then
+            echo "❌ Expected 4 npm tarballs, found $TARBALL_COUNT"
+            exit 1
+          fi
+
+          echo "✅ All release assets prepared:"
 
           echo "✅ All $ACTUAL_ASSETS release assets prepared:"
           echo "   - 8 native binaries (all targets)"
