@@ -218,7 +218,7 @@ jobs:
           exclude-interactive-browser-credential: true
 
       - name: Verify Windows DLL signatures
-        if: needs.prepare.outputs.isDryRun != 'true'
+        if: needs.prepare.outputs.isDryRun != 'true' && vars.WINDOWS_SIGNING == 'true'
         shell: pwsh
         run: |
           $files = @(
@@ -348,6 +348,11 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+          use-cache: false
       - name: Install dependencies
         run: bun i
       - name: Build packages
