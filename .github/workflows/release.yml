@@ -340,7 +340,7 @@ jobs:
     name: Pack NPM Tarballs
     if: ${{ !contains(github.ref_name, 'snapshot') }}
     needs: [prepare, build-native]
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
