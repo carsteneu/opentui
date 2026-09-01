@@ -17,7 +17,7 @@ jobs:
   prepare:
     name: Prepare Release
     if: ${{ !contains(github.ref_name, 'snapshot') }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.extract.outputs.version }}
       fullTag: ${{ steps.extract.outputs.fullTag }}
@@ -60,7 +60,7 @@ jobs:
     name: Validate Version
     if: ${{ !contains(github.ref_name, 'snapshot') }}
     needs: prepare
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
@@ -125,7 +125,7 @@ jobs:
   # Publish to npm
   npm-publish:
     name: NPM Publish
-    if: ${{ !contains(github.ref_name, 'snapshot') }}
+    if: ${{ !contains(github.ref_name, 'snapshot') && vars.NPM_PUBLISH == 'true' }}
     needs: [prepare, sign-windows-artifacts]
     uses: ./.github/workflows/npm-latest-release.yml
     permissions:
@@ -139,7 +139,7 @@ jobs:
     name: Sign Windows DLL Artifacts
     if: ${{ !contains(github.ref_name, 'snapshot') }}
     needs: [prepare, build-native]
-    runs-on: blacksmith-8vcpu-windows-2025
+    runs-on: windows-2025
     permissions:
       id-token: write
       contents: read
@@ -186,7 +186,7 @@ jobs:
           Expand-Archive -Path (Join-Path $artifactRoot "npm\npm-packages.zip") -DestinationPath $signedNpmRoot -Force
 
       - name: Azure login
-        if: needs.prepare.outputs.isDryRun != 'true'
+        if: needs.prepare.outputs.isDryRun != 'true' && vars.WINDOWS_SIGNING == 'true'
         uses: azure/login@v3
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
@@ -194,7 +194,7 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign Windows DLLs
-        if: needs.prepare.outputs.isDryRun != 'true'
+        if: needs.prepare.outputs.isDryRun != 'true' && vars.WINDOWS_SIGNING == 'true'
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ env.AZURE_TRUSTED_SIGNING_ENDPOINT }}
@@ -234,7 +234,7 @@ jobs:
           }
 
       - name: Copy signed DLLs into npm packages
-        if: needs.prepare.outputs.isDryRun != 'true'
+        if: needs.prepare.outputs.isDryRun != 'true' && vars.WINDOWS_SIGNING == 'true'
         shell: pwsh
         run: |
           $pairs = @(
@@ -298,7 +298,7 @@ jobs:
   snapshot-prepare:
     name: Prepare NPM Snapshot
     if: ${{ contains(github.ref_name, 'snapshot') }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
 
@@ -335,12 +335,64 @@ jobs:
       prepareVersion: ${{ needs.snapshot-prepare.outputs.version }}
       isDryRun: false
 
+  # Build the four pin-relevant npm tarballs (core, core-linux-x64, keymap, solid)
+  npm-tarballs:
+    name: Pack NPM Tarballs
+    if: ${{ !contains(github.ref_name, 'snapshot') }}
+    needs: [prepare, build-native]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install dependencies
+        run: bun i
+      - name: Build packages
+        run: |
+          cd packages/core
+          bun run build:native --all
+          bun run build:lib
+          cd ../solid && bun run build
+          cd ../keymap && bun run build
+      - name: Pack tarballs
+        run: |
+          set -e
+          VER="${{ needs.prepare.outputs.fullTag }}"
+          mkdir -p packs
+          (cd packages/core && npm pack --pack-destination "$OLDPWD/packs")
+          for pkg in keymap solid; do
+            (cd packages/$pkg && npm pack --pack-destination "$OLDPWD/packs")
+          done
+          NATIVE_DIR=$(ls -d packages/core/node_modules/@opentui/core-linux-x64 2>/dev/null || true)
+          if [ -z "$NATIVE_DIR" ]; then
+            NATIVE_DIR=$(find node_modules -maxdepth 4 -type d -name 'core-linux-x64' | head -1)
+          fi
+          test -n "$NATIVE_DIR" || (echo "core-linux-x64 package dir not found" && exit 1)
+          (cd "$NATIVE_DIR" && npm pack --pack-destination "$OLDPWD/packs")
+          for f in packs/*.tgz; do
+            base=$(basename "$f")
+            renamed=$(echo "$base" | sed 's/^opentui-//; s/@opentui-//')
+            mv "$f" "packs/$renamed" 2>/dev/null || true
+          done
+          ls -lah packs/
+      - name: Upload tarballs artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-tarballs-${{ needs.prepare.outputs.fullTag }}
+          path: packs/*.tgz
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
   # Create GitHub release with assets
   github-release:
     name: Create GitHub Release
     if: ${{ !contains(github.ref_name, 'snapshot') }}
-    needs: [prepare, build-examples, npm-publish]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [prepare, build-examples, npm-tarballs]
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
@@ -442,7 +494,9 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           name: ${{ needs.prepare.outputs.releaseTitle }}
-          files: release-assets/*.zip
+          files: |
+            release-assets/*.zip
+            release-assets/*.tgz
           generate_release_notes: true
           draft: false
           prerelease: ${{ needs.prepare.outputs.isDryRun == 'true' }}
