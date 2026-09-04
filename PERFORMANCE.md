@@ -1,6 +1,6 @@
 # OpenTUI Performance Program — Results & Evidence
 
-This branch (`fastpatchv2`, released here as **v0.5.6-perf.7**) is a performance-hardening line
+This branch (`fastpatchv2`, released here as **v0.5.6-perf.8**) is a performance-hardening line
 maintained on top of upstream [anomalyco/opentui](https://github.com/anomalyco/opentui) v0.5.9.
 It contains seven engineering waves, each gated by paired A/B measurements with confidence
 intervals, full raw-data provenance, and a documented acceptance record.
