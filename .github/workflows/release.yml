@@ -365,11 +365,10 @@ jobs:
       - name: Pack tarballs
         run: |
           set -e
-          VER="${{ needs.prepare.outputs.fullTag }}"
           mkdir -p packs
-          (cd packages/core && npm pack --pack-destination "$OLDPWD/packs")
+          (cd packages/core/dist && npm pack --pack-destination "$OLDPWD/packs")
           for pkg in keymap solid; do
-            (cd packages/$pkg && npm pack --pack-destination "$OLDPWD/packs")
+            (cd packages/$pkg/dist && npm pack --pack-destination "$OLDPWD/packs")
           done
           NATIVE_DIR=$(ls -d packages/core/node_modules/@opentui/core-linux-x64 2>/dev/null || true)
           if [ -z "$NATIVE_DIR" ]; then
@@ -377,6 +376,14 @@ jobs:
           fi
           test -n "$NATIVE_DIR" || (echo "core-linux-x64 package dir not found" && exit 1)
           (cd "$NATIVE_DIR" && npm pack --pack-destination "$OLDPWD/packs")
+          # Gate: tarballs must ship compiled dist (JS mains), not raw TS sources
+          for tgz in packs/opentui-core-*.tgz packs/opentui-keymap-*.tgz packs/opentui-solid-*.tgz; do
+            main="$(tar xzf "$tgz" package/package.json -O | grep -o '"main": "[^"]*"' | cut -d'"' -f4)"
+            case "$main" in
+              *.ts) echo "❌ $(basename "$tgz") packs raw TS (main: $main) - dist manifest missing?" && exit 1 ;;
+            esac
+            tar -tzf "$tgz" "package/$main" >/dev/null || (echo "❌ $(basename "$tgz") missing main entry $main" && exit 1)
+          done
           for want in opentui-core opentui-core-linux-x64 opentui-keymap opentui-solid; do
             ls packs/${want}-*.tgz >/dev/null 2>&1 || (echo "missing $want tarball" && exit 1)
           done
