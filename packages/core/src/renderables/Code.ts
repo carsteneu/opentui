@@ -176,7 +176,11 @@ export class CodeRenderable extends TextBufferRenderable {
         return
       }
 
-      if (this._initialStyledText && this._initialStyledTextContent === value && this._drawUnstyledText) {
+      // With deferred streaming highlight the styled snapshot can lag the content,
+      // so only reuse it when it still matches. Otherwise the styled text and content
+      // arrive as a pair (updateStreamingPreview), so prefer the styled text.
+      const preferStyled = !this._deferStreamingHighlight || this._initialStyledTextContent === value
+      if (value && this._initialStyledText && this._drawUnstyledText && preferStyled) {
         this.setInitialStyledTextContent(this._initialStyledText, value)
       } else {
         this.setPlainTextContent(value)

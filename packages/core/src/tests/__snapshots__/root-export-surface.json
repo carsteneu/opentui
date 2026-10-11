@@ -63,6 +63,7 @@
   "LineNumberRenderable",
   "LinearScrollAccel",
   "LogLevel",
+  "MAX_LINK_URL_BYTES",
   "MacOSScrollAccel",
   "MarkdownRenderable",
   "MouseButton",
