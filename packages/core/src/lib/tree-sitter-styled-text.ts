@@ -11,6 +11,7 @@ registerEnvVar({ name: "OTUI_TS_STYLE_WARN", default: false, description: "Enabl
 interface TextChunkOptions {
   enabled?: boolean
   baseHighlight?: string
+  ranges?: Array<{ start: number; end: number }>
 }
 
 interface Boundary {
@@ -43,6 +44,7 @@ export function treeSitterToTextChunks(
   options?: TextChunkOptions,
 ): TextChunk[] {
   const chunks: TextChunk[] = []
+  const ranges = options?.ranges
   const defaultStyle = syntaxStyle.getStyle("default")
   const concealEnabled = options?.enabled ?? true
   const baseStyle = options?.baseHighlight ? syntaxStyle.getStyle(options.baseHighlight) : undefined
@@ -168,6 +170,7 @@ export function treeSitterToTextChunks(
                 })
               : 0,
           })
+          ranges?.push({ start: currentOffset, end: boundary.offset })
         }
       } else {
         // Later-wins by (specificity, index) rank means the fold result equals, per
@@ -270,6 +273,7 @@ export function treeSitterToTextChunks(
               })
             : 0,
         })
+        ranges?.push({ start: currentOffset, end: boundary.offset })
       }
     } else if (currentOffset < boundary.offset) {
       const text = content.slice(currentOffset, boundary.offset)
@@ -288,6 +292,7 @@ export function treeSitterToTextChunks(
             })
           : 0,
       })
+      ranges?.push({ start: currentOffset, end: boundary.offset })
     }
 
     if (boundary.type === "start") {
@@ -359,6 +364,7 @@ export function treeSitterToTextChunks(
           })
         : 0,
     })
+    ranges?.push({ start: currentOffset, end: content.length })
   }
 
   return chunks

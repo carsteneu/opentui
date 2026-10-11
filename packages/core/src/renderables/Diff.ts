@@ -66,6 +66,7 @@ export class DiffRenderable extends Renderable {
   private _fg?: RGBA
   private _filetype?: string
   private _syntaxStyle?: SyntaxStyle
+  private _defaultSyntaxStyle?: SyntaxStyle
   private _wrapMode?: "word" | "char" | "none"
   private _conceal: boolean
   private _selectionBg?: RGBA
@@ -99,7 +100,7 @@ export class DiffRenderable extends Renderable {
   private rightCodeRenderable: CodeRenderable | null = null
 
   private pendingRebuild: boolean = false
-  private _lastWidth: number = 0
+  private _lastCodeWidths: [number, number] = [0, 0]
 
   private errorTextRenderable: TextRenderable | null = null
   private errorCodeRenderable: CodeRenderable | null = null
@@ -218,17 +219,6 @@ export class DiffRenderable extends Renderable {
     return false
   }
 
-  protected override onResize(width: number, height: number): void {
-    super.onResize(width, height)
-
-    if (this._view === "split" && this._wrapMode !== "none" && this._wrapMode !== undefined) {
-      if (this._lastWidth !== width) {
-        this._lastWidth = width
-        this.requestRebuild()
-      }
-    }
-  }
-
   private requestRebuild(): void {
     if (this.pendingRebuild) {
       return
@@ -260,8 +250,19 @@ export class DiffRenderable extends Renderable {
     // Wrapping or async concealment can change the visual row for an existing hunk anchor.
     this.invalidateHunkRowOffsets()
 
-    if (!this._waitingForHighlight) return
     if (!this.leftCodeRenderable || !this.rightCodeRenderable) return
+
+    // View changes and gutter remeasurement can resize panes without resizing the Diff.
+    if (
+      this._view === "split" &&
+      (this._wrapMode === "word" || this._wrapMode === "char") &&
+      (this.leftCodeRenderable.width !== this._lastCodeWidths[0] ||
+        this.rightCodeRenderable.width !== this._lastCodeWidths[1])
+    ) {
+      this.requestRebuild()
+    }
+
+    if (!this._waitingForHighlight) return
 
     const leftIsHighlighting = this.leftCodeRenderable.isHighlighting
     const rightIsHighlighting = this.rightCodeRenderable.isHighlighting
@@ -299,12 +300,27 @@ export class DiffRenderable extends Renderable {
     this._lineInfoChangeHandler = null
   }
 
-  public override destroyRecursively(): void {
+  protected override destroySelf(): void {
     this.detachLineInfoListeners()
     this.pendingRebuild = false
     this.leftSideAdded = false
     this.rightSideAdded = false
-    super.destroyRecursively()
+    for (const node of [this.leftSide, this.rightSide, this.errorTextRenderable, this.errorCodeRenderable]) {
+      node?.destroyRecursively()
+    }
+    this.leftSide = null
+    this.rightSide = null
+    this.leftCodeRenderable = null
+    this.rightCodeRenderable = null
+    this.errorTextRenderable = null
+    this.errorCodeRenderable = null
+    this._defaultSyntaxStyle?.destroy()
+    this._defaultSyntaxStyle = undefined
+    super.destroySelf()
+  }
+
+  private getCodeSyntaxStyle(): SyntaxStyle {
+    return this._syntaxStyle ?? (this._defaultSyntaxStyle ??= SyntaxStyle.create())
   }
 
   private buildErrorView(): void {
@@ -342,7 +358,7 @@ export class DiffRenderable extends Renderable {
         id: this.id ? `${this.id}-error-code` : undefined,
         content: this._diff,
         filetype: "diff",
-        syntaxStyle: this._syntaxStyle ?? SyntaxStyle.create(),
+        syntaxStyle: this.getCodeSyntaxStyle(),
         wrapMode: this._wrapMode,
         conceal: this._conceal,
         width: "100%",
@@ -379,7 +395,7 @@ export class DiffRenderable extends Renderable {
         filetype: this._filetype,
         wrapMode,
         conceal: this._conceal,
-        syntaxStyle: this._syntaxStyle ?? SyntaxStyle.create(),
+        syntaxStyle: this.getCodeSyntaxStyle(),
         width: "100%",
         height: "100%",
         ...(this._fg !== undefined && { fg: this._fg }),
@@ -465,6 +481,9 @@ export class DiffRenderable extends Renderable {
       sideRef.fg = this._lineNumberFg
       sideRef.bg = this._lineNumberBg
       sideRef.setLineColors(lineColors)
+      // Preserve the viewer's width-only gutter reservation across alignment rebuilds.
+      const padding = sideRef.getLineSigns().get(-1)
+      if (padding) lineSigns.set(-1, padding)
       sideRef.setLineSigns(lineSigns)
       sideRef.setLineNumbers(lineNumbers)
       sideRef.setHideLineNumbers(hideLineNumbers)
@@ -716,6 +735,7 @@ export class DiffRenderable extends Renderable {
 
     const preLeftContent = leftLogicalLines.map((l) => l.content).join("\n")
     const preRightContent = rightLogicalLines.map((l) => l.content).join("\n")
+    this._lastCodeWidths = [this.leftCodeRenderable?.width ?? 0, this.rightCodeRenderable?.width ?? 0]
 
     const needsConsistentConcealing =
       (this._wrapMode === "word" || this._wrapMode === "char") && this._conceal && this._filetype

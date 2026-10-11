@@ -237,13 +237,11 @@ function createNodeWorkerConstructor(node: NodeWorkerThreadsModule): PlatformWor
       }
 
       this.worker.off("message", this.handleMessage)
-      this.worker.off("error", this.handleError)
-      this.worker.off("exit", this.handleExit)
+      // Keep the error listener so a worker that fails during terminate() cannot
+      // become an uncaught exception (Node emits 'error' with no listeners).
       const termination = this.worker.terminate().catch((error: unknown) => {
         this.terminationPromise = undefined
         this.worker.on("message", this.handleMessage)
-        this.worker.on("error", this.handleError)
-        this.worker.on("exit", this.handleExit)
         throw error
       })
       this.terminationPromise = termination

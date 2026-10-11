@@ -30,6 +30,7 @@ export type OnHighlightCallback = (
 
 export interface ChunkRenderContext extends HighlightContext {
   highlights: SimpleHighlight[]
+  sourceRanges?: Array<{ start: number; end: number }>
 }
 
 export type OnChunksCallback = (
@@ -276,6 +277,15 @@ export class CodeRenderable extends TextBufferRenderable {
     this.coalesceRender()
   }
 
+  public updateStreamingPreview(content: string, initialStyledText: StyledText): void {
+    this._content = content
+    this._initialStyledText = initialStyledText
+    this.invalidateHighlights()
+    this.textBuffer.setStyledText(initialStyledText)
+    this.setRenderedLineSources(undefined)
+    this.updateTextInfo()
+  }
+
   public override get lineInfo(): LineInfo {
     if (!this._renderedLineSources) return super.lineInfo
     if (this._mappedLineInfo) return this._mappedLineInfo
@@ -289,6 +299,15 @@ export class CodeRenderable extends TextBufferRenderable {
       lineSources: lineInfo.lineSources.map((line) => renderedLineSources[line] ?? line),
     }
     return this._mappedLineInfo
+  }
+
+  public override getLineSources(startLine: number, lineCount: number): number[] {
+    if (this.needsLineInfoFallback(CodeRenderable.prototype)) {
+      return this.lineInfo.lineSources.slice(startLine, startLine + lineCount)
+    }
+    const sources = this.textBufferView.getLineSources(startLine, lineCount)
+    const renderedLineSources = this._renderedLineSources
+    return renderedLineSources ? sources.map((line) => renderedLineSources[line] ?? line) : sources
   }
 
   public override get wrapMode(): "none" | "char" | "word" {
@@ -375,6 +394,10 @@ export class CodeRenderable extends TextBufferRenderable {
 
   set initialStyledText(value: StyledText | undefined) {
     if (this._initialStyledText === value) return
+    if (value && this._streaming && this._drawUnstyledText && this._isHighlighting) {
+      this.updateStreamingPreview(this._content, value)
+      return
+    }
     this.setInitialStyledText(value, value?.chunks.map((chunk) => chunk.text).join(""))
   }
 
@@ -560,16 +583,19 @@ export class CodeRenderable extends TextBufferRenderable {
       const scrollHeight = this.scrollHeight
 
       if (highlights.length > 0 || this._onChunks || this._baseHighlight) {
+        const sourceRanges: Array<{ start: number; end: number }> | undefined = this._onChunks ? [] : undefined
         const context: ChunkRenderContext = {
           content,
           filetype,
           syntaxStyle: this._syntaxStyle,
           highlights,
+          sourceRanges,
         }
 
         let chunks = treeSitterToTextChunks(content, highlights, this._syntaxStyle, {
           enabled: this._conceal,
           baseHighlight: this._baseHighlight,
+          ranges: sourceRanges,
         })
         // onChunks may rewrite text arbitrarily, so the conceal-only source map would be invalid.
         const renderedLineSources = this._onChunks ? undefined : this.getConcealLinesSourceMap(content, highlights)

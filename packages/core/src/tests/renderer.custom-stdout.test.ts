@@ -3,6 +3,8 @@ import { Writable } from "stream"
 import { createCliRenderer, CliRenderer, CliRenderEvents } from "../renderer.js"
 import { BoxRenderable } from "../renderables/Box.js"
 import { ImageRenderable } from "../renderables/Image.js"
+import { MarkdownRenderable } from "../renderables/Markdown.js"
+import { SyntaxStyle } from "../syntax-style.js"
 import { ManualClock } from "../testing/manual-clock.js"
 import { createTestStdin, TestWriteStream } from "../testing/test-streams.js"
 import { getTelemetrySnapshot, resetTelemetry, setTelemetryEnabled } from "../telemetry.js"
@@ -168,6 +170,129 @@ test("non-process stdout: rendered bytes flow to the custom Writable", async () 
   expect(received.length).toBeGreaterThan(0)
   // ANSI escape sequences contain ESC (0x1b).
   expect(received.includes(0x1b)).toBe(true)
+})
+
+test("late Ghostty capability detection emits OSC 8 for compact Markdown links", async () => {
+  const stdin = createTestStdin()
+  const stdout = createCollectingStdout(100, 8)
+  const renderer = await createCliRenderer({ stdin, stdout, useMouse: true })
+  destroyFns.push(() => renderer.destroy())
+
+  const syntaxStyle = SyntaxStyle.fromStyles({ default: { fg: "#ffffff" } })
+  destroyFns.push(() => syntaxStyle.destroy())
+
+  renderer.root.add(
+    new MarkdownRenderable(renderer, {
+      content: "| Link |\n| --- |\n| [OpenTUI](https://github.com/anomalyco/opentui) |\n| https://example.com/path |",
+      syntaxStyle,
+      tableOptions: { style: "columns", widthMode: "content" },
+    }),
+  )
+  await renderer.idle()
+  await flushWritable(stdout)
+
+  const initialFrame = new TextDecoder().decode(renderer.currentRenderBuffer.getRealCharBytes(true))
+  expect(initialFrame).toContain("OpenTUI (https://github.com/anomalyco/opentui)")
+  expect(initialFrame.match(/https:\/\/example\.com\/path/g)).toHaveLength(1)
+  expect(stdout.getWrittenBytes().toString("binary")).not.toContain("\x1b]8;id=")
+
+  stdout.clearWrites()
+  stdin.emit("data", Buffer.from("\x1bP>|ghostty 1.1.3\x1b\\"))
+  await renderer.idle()
+  await flushWritable(stdout)
+
+  const finalFrame = new TextDecoder().decode(renderer.currentRenderBuffer.getRealCharBytes(true))
+  const output = stdout.getWrittenBytes().toString("binary")
+  expect(renderer.capabilities?.hyperlinks).toBe(true)
+  expect(finalFrame).toContain("OpenTUI")
+  expect(finalFrame).not.toContain("github.com/anomalyco/opentui")
+  expect(finalFrame.match(/https:\/\/example\.com\/path/g)).toHaveLength(1)
+  expect(output).toContain(";https://github.com/anomalyco/opentui\x1b\\")
+  expect(output).toContain(";https://example.com/path\x1b\\")
+  expect(output).toContain("\x1b]8;;\x1b\\")
+})
+
+test("unidentified truecolor terminals preserve the visible Markdown link fallback", async () => {
+  const previousTerm = process.env.TERM
+  const previousColorTerm = process.env.COLORTERM
+  process.env.TERM = "xterm-256color"
+  process.env.COLORTERM = "truecolor"
+
+  try {
+    const stdout = createCollectingStdout(80, 6)
+    const renderer = await createCliRenderer({
+      stdin: createTestStdin(),
+      stdout,
+      remote: false,
+      forwardEnvKeys: ["TERM", "COLORTERM"],
+    })
+    destroyFns.push(() => renderer.destroy())
+
+    const syntaxStyle = SyntaxStyle.fromStyles({ default: { fg: "#ffffff" } })
+    destroyFns.push(() => syntaxStyle.destroy())
+    renderer.root.add(
+      new MarkdownRenderable(renderer, {
+        content: "| Link |\n|---|\n| [OpenTUI](https://example.com/docs) |",
+        syntaxStyle,
+        tableOptions: { style: "columns", widthMode: "content" },
+      }),
+    )
+
+    await renderer.idle()
+    await flushWritable(stdout)
+
+    expect(renderer.capabilities?.rgb).toBe(true)
+    expect(renderer.capabilities?.hyperlinks).toBe(false)
+    expect(new TextDecoder().decode(renderer.currentRenderBuffer.getRealCharBytes(true))).toContain(
+      "OpenTUI (https://example.com/docs)",
+    )
+    expect(stdout.getWrittenBytes().toString("binary")).not.toContain("\x1b]8;id=")
+  } finally {
+    if (previousTerm === undefined) delete process.env.TERM
+    else process.env.TERM = previousTerm
+    if (previousColorTerm === undefined) delete process.env.COLORTERM
+    else process.env.COLORTERM = previousColorTerm
+  }
+})
+
+test("VS Code receives a wrapped Markdown URL as an OSC 8 hyperlink", async () => {
+  const previousTerm = process.env.TERM
+  const previousTermProgram = process.env.TERM_PROGRAM
+  process.env.TERM = "xterm-256color"
+  process.env.TERM_PROGRAM = "vscode"
+  const url = "https://example.com/catalog/moparts,2004,dodge,ram+1500,4.7l+v8,1432463,brake+pad"
+
+  try {
+    const stdout = createCollectingStdout(32, 8)
+    const renderer = await createCliRenderer({
+      stdin: createTestStdin(),
+      stdout,
+      remote: false,
+      forwardEnvKeys: ["TERM", "TERM_PROGRAM"],
+    })
+    destroyFns.push(() => renderer.destroy())
+
+    const syntaxStyle = SyntaxStyle.fromStyles({ default: { fg: "#ffffff" } })
+    destroyFns.push(() => syntaxStyle.destroy())
+    renderer.root.add(new MarkdownRenderable(renderer, { content: `See ${url} now.`, syntaxStyle }))
+
+    const frame = () => new TextDecoder().decode(renderer.currentRenderBuffer.getRealCharBytes(true))
+    for (let attempt = 0; attempt < 100 && !frame().replace(/\s/g, "").includes(url); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      await renderer.idle()
+    }
+    await flushWritable(stdout)
+
+    expect(renderer.capabilities?.hyperlinks).toBe(true)
+    expect(frame().replace(/\s/g, "")).toContain(url)
+    expect(frame()).not.toContain(url)
+    expect(stdout.getWrittenBytes().toString("binary")).toContain(`;${url}\x1b\\`)
+  } finally {
+    if (previousTerm === undefined) delete process.env.TERM
+    else process.env.TERM = previousTerm
+    if (previousTermProgram === undefined) delete process.env.TERM_PROGRAM
+    else process.env.TERM_PROGRAM = previousTermProgram
+  }
 })
 
 test("auto images use detected Kitty graphics and delete cleared placements", async () => {
@@ -368,7 +493,60 @@ test("split-footer Kitty scrollback does not rasterize images to terminal pixel 
   expect(output).toContain("after-image")
 })
 
-test("split-footer queues native image scrollback until the footer is pinned", async () => {
+test.each([
+  { name: "Kitty", response: "\x1b_Gi=31337;OK\x1b\\", placement: "\x1b_Ga=p" },
+  { name: "Sixel", response: "\x1b[?1;4c", placement: "\x1bP0;1;0q" },
+])("split-footer preserves $name images after resize replay resets", async ({ response, placement }) => {
+  const stdin = createTestStdin()
+  const stdout = createCollectingStdout(80, 24)
+  const renderer = await createCliRenderer({
+    stdin,
+    stdout,
+    screenMode: "split-footer",
+    footerHeight: 3,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+  destroyFns.push(() => renderer.destroy())
+  stdin.emit("data", Buffer.from(response + "\x1b[4;480;800t\x1b[21;1R"))
+  await renderer.idle()
+
+  for (const size of [undefined, { width: 90, height: 28 }, { width: 20, height: 8 }]) {
+    if (size) {
+      renderer.resize(size.width, size.height)
+      stdin.emit("data", Buffer.from(`\x1b[4;${size.height * 20};${size.width * 10}t`))
+      renderer.resetSplitFooterForReplay({ clearSavedLines: true })
+      await renderer.idle()
+    }
+    await flushWritable(stdout)
+    stdout.clearWrites()
+
+    const surface = renderer.createScrollbackSurface({ startOnNewLine: true })
+    try {
+      const image = new ImageRenderable(surface.renderContext, {
+        source: PNG_1X1,
+        width: 2,
+        height: 5,
+        fit: "fill",
+      })
+      surface.root.add(image)
+      await image.loadPromise
+      surface.render()
+      surface.commitRows(0, surface.height, { trailingNewline: true })
+    } finally {
+      surface.destroy()
+    }
+    await renderer.idle()
+    await flushWritable(stdout)
+
+    const output = stdout.getWrittenBytes().toString("utf8")
+    expect(output).toContain(placement)
+    expect(output).toContain("\x1b[4A\r")
+    expect(output).not.toContain("\u2588")
+  }
+})
+
+test("split-footer queues native image scrollback until the startup cursor reply", async () => {
   const stdin = createTestStdin()
   const stdout = createCollectingStdout(8, 6)
   const renderer = await createCliRenderer({
