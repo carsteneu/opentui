@@ -12,7 +12,9 @@ runs:
   steps:
     - shell: bash
       working-directory: ${{ github.workspace }}
-      run: bun scripts/native-bottle.ts stage --zig "${{ inputs.zig-version }}"
+      env:
+        ZIG_VERSION: ${{ inputs.zig-version }}
+      run: bun scripts/native-bottle.ts stage --zig "$ZIG_VERSION"
 
     - uses: actions/cache/save@v5
       continue-on-error: true

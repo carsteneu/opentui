@@ -284,6 +284,8 @@ export class CodeRenderable extends TextBufferRenderable {
   public updateStreamingPreview(content: string, initialStyledText: StyledText): void {
     this._content = content
     this._initialStyledText = initialStyledText
+    this._initialStyledTextContent = content
+    this.commitStyledSnapshot(content, initialStyledText.chunks)
     this.invalidateHighlights()
     this.textBuffer.setStyledText(initialStyledText)
     this.setRenderedLineSources(undefined)

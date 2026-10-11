@@ -14,9 +14,11 @@ runs:
     - id: hash
       shell: bash
       working-directory: ${{ github.workspace }}
+      env:
+        ZIG_VERSION: ${{ inputs.zig-version }}
       run: |
         set -euo pipefail
-        key="$(bun scripts/native-bottle.ts host-key --zig "${{ inputs.zig-version }}")"
+        key="$(bun scripts/native-bottle.ts host-key --zig "$ZIG_VERSION")"
         echo "key=$key" >> "$GITHUB_OUTPUT"
         echo "Native host bottle key: $key"
 
@@ -30,11 +32,13 @@ runs:
     - id: decide
       shell: bash
       working-directory: ${{ github.workspace }}
+      env:
+        ZIG_VERSION: ${{ inputs.zig-version }}
       run: |
         set -euo pipefail
         hit=false
         if [ "${{ steps.restore.outputs.cache-hit }}" = "true" ] &&
-          bun scripts/native-bottle.ts host-verify --zig "${{ inputs.zig-version }}"; then
+          bun scripts/native-bottle.ts host-verify --zig "$ZIG_VERSION"; then
           hit=true
         else
           echo "Native host bottle miss; the native library will be built"
