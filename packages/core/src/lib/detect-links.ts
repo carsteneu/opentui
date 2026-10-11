@@ -3,7 +3,9 @@ import type { SimpleHighlight } from "./tree-sitter/types.js"
 
 const URL_SCOPES = ["markup.link.url", "string.special.url"]
 const HTTP_URL_PREFIX = /https?:\/\//i
-const BARE_URL = /https?:\/\/[^\s<>"`]+/gi
+// Control characters terminate a bare URL: the native layer writes link targets
+// verbatim into the OSC 8 sequence, so an embedded escape would break out of it.
+const BARE_URL = /https?:\/\/[^\s<>"`\x00-\x1f\x7f-\x9f]+/gi
 
 export function normalizeMarkdownLinkTarget(destination: string): string {
   return destination.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, "$1")
