@@ -385,10 +385,13 @@ jobs:
           done
           # Gate: tarballs must ship compiled dist (JS mains), not raw TS sources
           for tgz in packs/opentui-core-*.tgz packs/opentui-keymap-*.tgz packs/opentui-solid-*.tgz; do
-            main="$(tar xzf "$tgz" package/package.json -O | tr -d '\n' | grep -o '"main"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)"
-            # An unreadable main would make both checks below pass vacuously: an empty
-            # member matches the "package/" directory entry. Require it explicitly.
-            test -n "$main" || (echo "❌ $(basename "$tgz") has no readable main in package.json" && exit 1)
+            # -xOf, not "xzf ... -O": the BSD tar on the macOS runner reads an option
+            # placed after the archive as a member name, which left main empty and made
+            # both checks below pass vacuously.
+            manifest="$(tar -xOf "$tgz" package/package.json || true)"
+            test -n "$manifest" || (echo "❌ $(basename "$tgz") manifest is not readable" && exit 1)
+            main="$(printf '%s' "$manifest" | tr -d '\n' | grep -o '"main"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)"
+            test -n "$main" || (echo "❌ $(basename "$tgz") has no main in package.json" && exit 1)
             case "$main" in
               *.ts) echo "❌ $(basename "$tgz") packs raw TS (main: $main) - dist manifest missing?" && exit 1 ;;
             esac
