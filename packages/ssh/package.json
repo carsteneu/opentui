@@ -1,6 +1,6 @@
 {
   "name": "@opentui/ssh",
-  "version": "0.5.17-perf.4",
+  "version": "0.5.17-perf.5",
   "description": "Serve OpenTUI apps over SSH",
   "license": "MIT",
   "repository": {

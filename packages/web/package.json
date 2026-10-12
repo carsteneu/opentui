@@ -1,6 +1,6 @@
 {
   "name": "@opentui/web",
-  "version": "0.5.17-perf.4",
+  "version": "0.5.17-perf.5",
   "private": true,
   "type": "module",
   "scripts": {
