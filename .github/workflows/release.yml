@@ -335,7 +335,7 @@ jobs:
       prepareVersion: ${{ needs.snapshot-prepare.outputs.version }}
       isDryRun: false
 
-  # Build the four pin-relevant npm tarballs (core, core-linux-x64, keymap, solid)
+  # Build the pin-relevant npm tarballs (core, keymap, solid, and every native platform package)
   npm-tarballs:
     name: Pack NPM Tarballs
     if: ${{ !contains(github.ref_name, 'snapshot') }}
@@ -368,25 +368,42 @@ jobs:
         run: |
           set -e
           mkdir -p packs
-          (cd packages/core/dist && npm pack --pack-destination "$OLDPWD/packs")
+          PACK_ROOT="$PWD"
+          (cd packages/core/dist && npm pack --pack-destination "$PACK_ROOT/packs")
           for pkg in keymap solid; do
-            (cd packages/$pkg/dist && npm pack --pack-destination "$OLDPWD/packs")
+            (cd packages/$pkg/dist && npm pack --pack-destination "$PACK_ROOT/packs")
           done
-          NATIVE_DIR=$(ls -d packages/core/node_modules/@opentui/core-linux-x64 2>/dev/null || true)
-          if [ -z "$NATIVE_DIR" ]; then
-            NATIVE_DIR=$(find node_modules -maxdepth 4 -type d -name 'core-linux-x64' | head -1)
-          fi
-          test -n "$NATIVE_DIR" || (echo "core-linux-x64 package dir not found" && exit 1)
-          (cd "$NATIVE_DIR" && npm pack --pack-destination "$OLDPWD/packs")
+          # Every native platform package ships as a tarball too, so a consumer on
+          # darwin or windows resolves this fork instead of a registry package.
+          for platform in darwin-x64 darwin-arm64 linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl win32-x64 win32-arm64; do
+            dir="packages/core/node_modules/@opentui/core-$platform"
+            if [ ! -d "$dir" ]; then
+              dir=$(find node_modules -maxdepth 4 -type d -name "core-$platform" | head -1)
+            fi
+            test -n "$dir" && test -d "$dir" || (echo "core-$platform package dir not found" && exit 1)
+            (cd "$dir" && npm pack --pack-destination "$PACK_ROOT/packs")
+          done
           # Gate: tarballs must ship compiled dist (JS mains), not raw TS sources
           for tgz in packs/opentui-core-*.tgz packs/opentui-keymap-*.tgz packs/opentui-solid-*.tgz; do
-            main="$(tar xzf "$tgz" package/package.json -O | grep -o '"main": "[^"]*"' | cut -d'"' -f4)"
+            main="$(tar xzf "$tgz" package/package.json -O | tr -d '\n' | grep -o '"main"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)"
+            # An unreadable main would make both checks below pass vacuously: an empty
+            # member matches the "package/" directory entry. Require it explicitly.
+            test -n "$main" || (echo "❌ $(basename "$tgz") has no readable main in package.json" && exit 1)
             case "$main" in
               *.ts) echo "❌ $(basename "$tgz") packs raw TS (main: $main) - dist manifest missing?" && exit 1 ;;
             esac
             tar -tzf "$tgz" "package/$main" >/dev/null || (echo "❌ $(basename "$tgz") missing main entry $main" && exit 1)
           done
-          for want in opentui-core opentui-core-linux-x64 opentui-keymap opentui-solid; do
+          # Gate: every platform tarball must carry its own native library
+          for tgz in packs/opentui-core-darwin-*.tgz packs/opentui-core-linux-*.tgz packs/opentui-core-win32-*.tgz; do
+            case "$(basename "$tgz")" in
+              *darwin*) binary=libopentui.dylib ;;
+              *win32*) binary=opentui.dll ;;
+              *) binary=libopentui.so ;;
+            esac
+            tar -tzf "$tgz" "package/$binary" >/dev/null || (echo "❌ $(basename "$tgz") is missing $binary" && exit 1)
+          done
+          for want in opentui-core opentui-keymap opentui-solid opentui-core-darwin-x64 opentui-core-darwin-arm64 opentui-core-linux-x64 opentui-core-linux-arm64 opentui-core-linux-x64-musl opentui-core-linux-arm64-musl opentui-core-win32-x64 opentui-core-win32-arm64; do
             ls packs/${want}-*.tgz >/dev/null 2>&1 || (echo "missing $want tarball" && exit 1)
           done
           ls -lah packs/
