@@ -521,7 +521,7 @@ export class CodeRenderable extends TextBufferRenderable {
     if (this._streaming && !isInitialContent) {
       this._shouldRenderTextBuffer = true
     } else if (shouldDrawUnstyledNow) {
-      if (this._initialStyledText && this._initialStyledTextContent === content) {
+      if (this._initialStyledText && (!this._deferStreamingHighlight || this._initialStyledTextContent === content)) {
         this.setInitialStyledTextContent(this._initialStyledText, content)
       } else {
         this.setPlainTextContent(content)
