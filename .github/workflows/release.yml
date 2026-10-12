@@ -11,6 +11,9 @@ permissions:
 
 env:
   NODE_VERSION: 26.7.0
+  # Every npm tarball a release publishes: core, keymap, solid, plus one per native
+  # platform. The pack gate and the release asset check both derive from this list.
+  OPENTUI_TARBALLS: opentui-core opentui-keymap opentui-solid opentui-core-darwin-x64 opentui-core-darwin-arm64 opentui-core-linux-x64 opentui-core-linux-arm64 opentui-core-linux-x64-musl opentui-core-linux-arm64-musl opentui-core-win32-x64 opentui-core-win32-arm64
 
 jobs:
   # Extract version and check if it's a dry run
@@ -406,7 +409,7 @@ jobs:
             esac
             tar -tzf "$tgz" "package/$binary" >/dev/null || (echo "❌ $(basename "$tgz") is missing $binary" && exit 1)
           done
-          for want in opentui-core opentui-keymap opentui-solid opentui-core-darwin-x64 opentui-core-darwin-arm64 opentui-core-linux-x64 opentui-core-linux-arm64 opentui-core-linux-x64-musl opentui-core-linux-arm64-musl opentui-core-win32-x64 opentui-core-win32-arm64; do
+          for want in $OPENTUI_TARBALLS; do
             ls packs/${want}-*.tgz >/dev/null 2>&1 || (echo "missing $want tarball" && exit 1)
           done
           ls -lah packs/
@@ -505,7 +508,7 @@ jobs:
 
           cd "$WORK_DIR"
 
-          # Copy npm tarballs (the four pin-relevant packages)
+          # Copy npm tarballs (core, keymap, solid, and one per native platform)
           echo "Processing npm tarballs..."
           if [ -d "artifacts/npm-tarballs-$FULL_TAG" ]; then
             cp artifacts/npm-tarballs-"$FULL_TAG"/*.tgz "$WORK_DIR/release-assets/"
@@ -526,9 +529,10 @@ jobs:
             exit 1
           fi
 
+          EXPECTED_TARBALLS=$(echo $OPENTUI_TARBALLS | wc -w | tr -d ' ')
           TARBALL_COUNT=$(ls -1 release-assets/*.tgz 2>/dev/null | wc -l | tr -d ' ')
-          if [ "$TARBALL_COUNT" -ne 4 ]; then
-            echo "❌ Expected 4 npm tarballs, found $TARBALL_COUNT"
+          if [ "$TARBALL_COUNT" -ne "$EXPECTED_TARBALLS" ]; then
+            echo "❌ Expected $EXPECTED_TARBALLS npm tarballs, found $TARBALL_COUNT"
             exit 1
           fi
 

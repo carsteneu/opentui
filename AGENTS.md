@@ -71,10 +71,10 @@ Detailed procedure and history: `.yesmem/bench/v059-merge/README.md` and the rel
   (`chore: perf release bumps 0.5.6-perf.N → 0.5.6-perf.N+1`), push the branch, then push the tag.
 - Workflow edits must be part of the tagged commit — Actions reads the workflow from the tag. Delete and re-push the
   tag to pick them up.
-- `build-native` runs on macOS 15 (`build:native --all` needs the macOS SDK for Darwin cross-builds) and packs the four
-  pin-relevant npm tarballs: `core`, `core-linux-x64`, `keymap`, `solid`.
+- `build-native` runs on macOS 15 (`build:native --all` needs the macOS SDK for Darwin cross-builds) and packs the
+  pin-relevant npm tarballs: `core`, `keymap`, `solid`, and one native package per platform.
 - npm publishing and Windows DLL signing are opt-in via repo variables (`NPM_PUBLISH`, `WINDOWS_SIGNING`); both are off
   on this fork. Releases are consumed from the GitHub release assets, never from npm.
-- Verify after the run: all four tarball assets (`opentui-core-…`, `opentui-core-linux-x64-…`,
-  `opentui-keymap-…`, `opentui-solid-…`) return HTTP 200, then run the consumer startup smoke before re-pinning
-  consumers such as OpenCode.
+- Verify after the run: every npm tarball asset (`opentui-core-…`, `opentui-core-<platform>-…`, `opentui-keymap-…`,
+  `opentui-solid-…`) returns HTTP 200, then run the consumer startup smoke before re-pinning consumers such as
+  OpenCode.
